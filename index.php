@@ -1,0 +1,314 @@
+<?php
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+ini_set('max_execution_time', 300);
+error_reporting(E_ALL);
+
+date_default_timezone_set('America/Bogota');
+
+// ===================================================================
+// CONFIGURACIÓN CORS - DEBE ESTAR PRIMERO
+// ===================================================================
+header("Access-Control-Allow-Origin: *");
+header("Access-Control-Allow-Headers: X-Tenant, x-tenant, X-API-KEY, X-Silent, X-Skip-Tenant, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Request-Method, Authorization");
+header("Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE, PATCH");
+header("Allow: GET, POST, OPTIONS, PUT, DELETE, PATCH");
+
+$method = $_SERVER['REQUEST_METHOD'];
+if($method == "OPTIONS") {
+    http_response_code(200);
+    exit(0);
+}
+
+// ===================================================================
+// 🛡️ AUDITORÍA - Punto único de captura (antes de cualquier ruta)
+// ===================================================================
+require_once __DIR__ . '/config/audit.env.php';
+require_once __DIR__ . '/services/audit.service.php';
+AuditService::iniciar('GENIALISIS');
+
+// ===================================================================
+// 🔓 RUTAS PÚBLICAS - NO REQUIEREN X-TENANT
+// ===================================================================
+$requestUri = $_SERVER['REQUEST_URI'] ?? '';
+
+// Webhook Firma Digital
+if (strpos($requestUri, '/webhooks/firma') !== false) {
+    require 'flight/Flight.php';
+    require_once __DIR__ . '/services/firma-webhook.service.php';
+    require_once __DIR__ . '/routes/firma-webhook.routes.php';
+    
+    Flight::start();
+    exit(0);
+}
+// Webhook WhatsApp Business
+if (strpos($requestUri, '/webhooks/whatsapp') !== false) {
+    require __DIR__ . '/webhook/index.php';
+    exit(0);
+}
+// Login biométrico directo (sin tenant)
+if (strpos($requestUri, '/auth/webauthn') !== false) {
+    require 'flight/Flight.php';
+    require_once __DIR__ . '/config/master.env.php';
+    require_once __DIR__ . '/vendor/firebase/php-jwt/src/JWT.php';
+    require_once __DIR__ . '/vendor/firebase/php-jwt/src/Key.php';
+    require_once __DIR__ . '/services/jwt.service.php';
+    require_once __DIR__ . '/services/webauthn.service.php';
+    require_once __DIR__ . '/routes/auth-webauthn.routes.php';
+    
+    Flight::start();
+    exit(0);
+}
+// Pre-Login (autenticación sin tenant)
+if (strpos($requestUri, '/auth/pre-login') !== false) {
+    require 'flight/Flight.php';
+    require_once __DIR__ . '/config/master.env.php';
+    require_once __DIR__ . '/services/auth-master.service.php';
+    require_once __DIR__ . '/routes/auth-master.routes.php';
+    
+    Flight::start();
+    exit(0);
+}
+// Callback Google Calendar OAuth (sin tenant, viene en el state)
+if (strpos($requestUri, '/google-calendar/callback') !== false) {
+    require 'flight/Flight.php';
+    require_once __DIR__ . '/services/google-configuracion.service.php';
+    require_once __DIR__ . '/services/google-calendar.service.php';
+
+    Flight::route('GET /google-calendar/callback', [GoogleCalendarService::class, 'callback']);
+
+    Flight::start();
+    exit(0);
+}
+
+require 'flight/Flight.php';
+
+
+// ===================================================================
+// 🔒 CARGAR TENANT - SIN VALORES POR DEFECTO
+// ===================================================================
+$tenant = null;
+
+// 1. Primero intentar desde query string (para <img src="">)
+if (isset($_GET['tenant']) && !empty($_GET['tenant'])) {
+    $tenant = $_GET['tenant'];
+}
+// 2. Si no, buscar en header
+elseif (isset($_SERVER['HTTP_X_TENANT'])) {
+    $tenant = $_SERVER['HTTP_X_TENANT'];
+} elseif (function_exists('getallheaders')) {
+    $headers = getallheaders();
+    foreach ($headers as $key => $value) {
+        if (strtolower($key) === 'x-tenant') {
+            $tenant = $value;
+            break;
+        }
+    }
+}
+
+// 🚨 VALIDACIÓN ESTRICTA: Si no hay tenant, devolver error 400
+if (empty($tenant)) {
+    header('Content-Type: application/json; charset=utf-8');
+    http_response_code(400);
+    echo json_encode([
+        'error' => true,
+        'message' => 'Header X-Tenant es requerido',
+        'code' => 'MISSING_TENANT_HEADER'
+    ], JSON_UNESCAPED_UNICODE);
+    exit(1);
+}
+
+// Sanitizar el tenant (solo permitir caracteres seguros)
+$tenant = preg_replace('/[^a-z0-9\-_]/i', '', $tenant);
+
+// Validar que después de sanitizar aún tengamos algo
+if (empty($tenant)) {
+    header('Content-Type: application/json; charset=utf-8');
+    http_response_code(400);
+    echo json_encode([
+        'error' => true,
+        'message' => 'Formato de tenant inválido',
+        'code' => 'INVALID_TENANT_FORMAT'
+    ], JSON_UNESCAPED_UNICODE);
+    exit(1);
+}
+
+// Construir ruta del archivo de configuración
+$configFile = __DIR__ . "/config/tenants/{$tenant}.env.php";
+
+// 🚨 VALIDACIÓN ESTRICTA: Si el archivo no existe, devolver error 404
+if (!file_exists($configFile)) {
+    error_log("❌ Archivo de configuración no encontrado para tenant: {$tenant}");
+    header('Content-Type: application/json; charset=utf-8');
+    http_response_code(404);
+    echo json_encode([
+        'error' => true,
+        'message' => "Configuración no encontrada para la institución: {$tenant}",
+        'code' => 'TENANT_CONFIG_NOT_FOUND',
+        'tenant' => $tenant
+    ], JSON_UNESCAPED_UNICODE);
+    exit(1);
+}
+
+// ✅ Si llegamos aquí, cargar la configuración
+require_once $configFile;
+// error_log("✅ Tenant cargado exitosamente: {$tenant} -> BD: " . DB_NAME);
+
+function convertirNumerosEnArray(&$array) {
+    if (!is_array($array)) return;
+    
+    foreach ($array as $key => &$value) {
+        if (is_array($value)) {
+            convertirNumerosEnArray($value);
+        } elseif (is_string($value) && is_numeric($value)) {
+            $camposString = ['telefono', 'celular', 'documento', 'ruc', 'codigo_postal', 'nit', 'clave', 'fecha'];
+            
+            if (!in_array($key, $camposString)) {
+                $value = strpos($value, '.') !== false ? (float)$value : (int)$value;
+            }
+        }
+    }
+}
+
+function responderJSON($data, $code = 200) {
+    convertirNumerosEnArray($data);
+    Flight::response()->status($code);
+    Flight::response()->header('Content-Type: application/json; charset=utf-8');
+    Flight::response()->write(json_encode($data, JSON_UNESCAPED_UNICODE));
+    Flight::response()->send();
+    exit;
+}
+
+Flight::before('json_convert', function(&$params, &$output) {
+    $method = Flight::request()->method;
+    
+    if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
+        try {
+            $contentType = isset($_SERVER['CONTENT_TYPE']) ? $_SERVER['CONTENT_TYPE'] : '';
+            if (empty($contentType) && isset($_SERVER['HTTP_CONTENT_TYPE'])) {
+                $contentType = $_SERVER['HTTP_CONTENT_TYPE'];
+            }
+            
+            if (stripos($contentType, 'application/json') !== false) {
+                $body = Flight::request()->getBody();
+                
+                if (!empty($body)) {
+                    $data = json_decode($body, true);
+                    
+                    if (json_last_error() === JSON_ERROR_NONE && $data !== null) {
+                        convertirNumerosEnArray($data);
+                        Flight::request()->data->setData($data);
+                    } else {
+                        error_log("Error al decodificar JSON: " . json_last_error_msg());
+                    }
+                }
+            }
+        } catch (Exception $e) {
+            error_log("ERROR en middleware: " . $e->getMessage());
+        }
+    }
+});
+
+foreach (glob(__DIR__ . '/services/*.service.php') as $serviceFile) {
+    require_once $serviceFile;
+}
+
+foreach (glob(__DIR__ . '/routes/*.routes.php') as $routeFile) {
+    require_once $routeFile;
+}
+
+Flight::route('/', function () {
+    $tenant = isset($_SERVER['HTTP_X_TENANT']) ? $_SERVER['HTTP_X_TENANT'] : 'NO_TENANT';
+    echo "API v1.0 Multi-Tenant - Tenant activo: {$tenant}";
+});
+
+$options = [
+    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci; SET time_zone = '-05:00';",
+    PDO::ATTR_STRINGIFY_FETCHES => false,
+    PDO::ATTR_EMULATE_PREPARES => false
+];
+
+Flight::register('db', 'PDO', array(
+    DB_DSN,
+    DB_USERNAME,
+    DB_PASSWORD,
+    $options
+));
+
+Flight::after('db', function($db) {
+    try {
+        $db->exec("SET time_zone = '-05:00'");
+    } catch (Exception $e) {
+        error_log("Error configurando zona horaria MySQL: " . $e->getMessage());
+    }
+});
+
+// ===================================================================
+// 📌 REGISTRAR CONEXIÓN BD MAESTRA
+// ===================================================================
+require_once __DIR__ . '/config/master.env.php';
+
+Flight::register('db_master', 'PDO', array(
+    DB_MASTER_DSN,
+    DB_MASTER_USERNAME,
+    DB_MASTER_PASSWORD,
+    $options
+));
+
+Flight::after('db_master', function($db) {
+    try {
+        $db->exec("SET time_zone = '-05:00'");
+    } catch (Exception $e) {
+        error_log("Error configurando zona horaria MySQL (master): " . $e->getMessage());
+    }
+});
+
+// ===================================================================
+// 📌 REGISTRAR CONEXIÓN BD PORTAL (SI EXISTE)
+// ===================================================================
+if (defined('DB_PORTAL_DSN')) {
+    Flight::register('db_portal', 'PDO', array(
+        DB_PORTAL_DSN,
+        DB_PORTAL_USERNAME,
+        DB_PORTAL_PASSWORD,
+        $options
+    ));
+    
+    Flight::after('db_portal', function($db) {
+        try {
+            $db->exec("SET time_zone = '-05:00'");
+        } catch (Exception $e) {
+            error_log("Error configurando zona horaria MySQL (portal): " . $e->getMessage());
+        }
+    });
+    
+    // error_log("✅ Conexión al portal configurada: " . DB_PORTAL_NAME);
+    
+    // Cargar services y routes del portal desde subcarpetas
+    foreach (glob(__DIR__ . '/services/portal/*.service.php') as $serviceFile) {
+        require_once $serviceFile;
+    }
+    
+    foreach (glob(__DIR__ . '/routes/portal/*.routes.php') as $routeFile) {
+        require_once $routeFile;
+    }
+} else {
+    error_log("ℹ️ Tenant sin BD portal configurada");
+}
+
+Flight::map('json', function($data, $code = 200, $encode = true) {
+    convertirNumerosEnArray($data);
+    $json = $encode ? json_encode($data, JSON_UNESCAPED_UNICODE) : $data;
+
+    Flight::response()
+        ->status($code)
+        ->header('Content-Type', 'application/json; charset=utf-8')
+        ->write($json)
+        ->send();
+});
+
+Flight::start();

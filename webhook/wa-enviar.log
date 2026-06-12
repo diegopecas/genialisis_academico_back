@@ -1,0 +1,39 @@
+[2026-02-11 13:11:01] === INICIO enviarArchivo ===
+[2026-02-11 13:11:03] Archivo: fondo_login.png (59712 bytes, image/png)
+[2026-02-11 13:11:04] Conversación: 9, Tipo: image
+[2026-02-11 13:11:04] Tmp: C:\xampp\tmp\php1F49.tmp (existe: SI, size: 59712)
+[2026-02-11 13:11:05] Media subida a Meta OK: 2081053005791857
+[2026-02-11 13:11:05] Ruta: C:\xampp\htdocs\lumen_academico_back/uploads/lumen/wa-media/9
+[2026-02-11 13:11:05] uploadPath base: C:\xampp\htdocs\lumen_academico_back/uploads
+[2026-02-11 13:11:05] dirname(__DIR__): C:\xampp\htdocs\lumen_academico_back
+[2026-02-11 13:11:05] Carpeta ya existe
+[2026-02-11 13:11:05] Tmp antes de leer: existe=1
+[2026-02-11 13:11:05] Bytes leídos del tmp: 59712
+[2026-02-11 13:11:05] Bytes escritos en C:\xampp\htdocs\lumen_academico_back/uploads/lumen/wa-media/9/1770833465_fondo_login.png: 59712
+[2026-02-11 13:11:08] OK - WA: wamid.HBgMNTczMTU4MzQ3MzIxFQIAERgSQjczNEMxMzM5M0E1REQ4MTBDAA==, Local: 0, Archivo: lumen/wa-media/9/1770833465_fondo_login.png
+[2026-02-11 13:16:50] === INICIO enviarArchivo ===
+[2026-02-11 13:16:53] Archivo: historia.png (134749 bytes, image/png)
+[2026-02-11 13:16:54] Conversación: 9, Tipo: image
+[2026-02-11 13:16:54] Tmp: C:\xampp\tmp\php760D.tmp (existe: SI, size: 134749)
+[2026-02-11 13:16:55] Media subida a Meta OK: 907213521677586
+[2026-02-11 13:16:55] Ruta: C:\xampp\htdocs\lumen_academico_back/uploads/lumen/wa-media/9
+[2026-02-11 13:16:55] uploadPath base: C:\xampp\htdocs\lumen_academico_back/uploads
+[2026-02-11 13:16:55] dirname(__DIR__): C:\xampp\htdocs\lumen_academico_back
+[2026-02-11 13:16:55] Carpeta ya existe
+[2026-02-11 13:16:55] Tmp antes de leer: existe=1
+[2026-02-11 13:16:55] Bytes leídos del tmp: 134749
+[2026-02-11 13:16:55] Bytes escritos en C:\xampp\htdocs\lumen_academico_back/uploads/lumen/wa-media/9/1770833815_historia.png: 134749
+[2026-02-11 13:16:58] OK - WA: wamid.HBgMNTczMTU4MzQ3MzIxFQIAERgSMjRCNjM0RDQ5RTkzMEI1REU1AA==, Local: 0, Archivo: lumen/wa-media/9/1770833815_historia.png
+[2026-02-11 13:20:16] === INICIO enviarArchivo ===
+[2026-02-11 13:20:18] Archivo: logo_basico (1).png (194004 bytes, image/png)
+[2026-02-11 13:20:19] Conversación: 9, Tipo: image
+[2026-02-11 13:20:19] Tmp: C:\xampp\tmp\php9743.tmp (existe: SI, size: 194004)
+[2026-02-11 13:20:21] Media subida a Meta OK: 1594460041889655
+[2026-02-11 13:20:21] Ruta: C:\xampp\htdocs\lumen_academico_back/uploads/lumen/wa-media/9
+[2026-02-11 13:20:21] uploadPath base: C:\xampp\htdocs\lumen_academico_back/uploads
+[2026-02-11 13:20:21] dirname(__DIR__): C:\xampp\htdocs\lumen_academico_back
+[2026-02-11 13:20:21] Carpeta ya existe
+[2026-02-11 13:20:21] Tmp antes de leer: existe=1
+[2026-02-11 13:20:21] Bytes leídos del tmp: 194004
+[2026-02-11 13:20:21] Bytes escritos en C:\xampp\htdocs\lumen_academico_back/uploads/lumen/wa-media/9/1770834021_logo_basico__1_.png: 194004
+[2026-02-11 13:20:23] OK - WA: wamid.HBgMNTczMTU4MzQ3MzIxFQIAERgSREVCQUZBMDg3NEM4N0UxMDFFAA==, Local: 0, Archivo: lumen/wa-media/9/1770834021_logo_basico__1_.png
