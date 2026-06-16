@@ -468,10 +468,31 @@ class Personas
     {
         try {
             $db = Flight::db();
+            $cumpleaneros = [];
 
-            // Colaboradores activos que cumplen años hoy
-            // NÚCLEO: la consulta de estudiantes y el JOIN a docentes pertenecen al dominio educativo;
-            // se conservan los campos del contrato (tipo, es_docente, cargo_corto) para no romper el front.
+            // 1. Estudiantes activos que cumplen años hoy
+            $stmtEstudiantes = $db->prepare("
+                SELECT 
+                    p.id AS id_persona,
+                    p.primer_nombre,
+                    p.primer_apellido,
+                    p.id_genero,
+                    'estudiante' AS tipo,
+                    NULL AS sobrenombre,
+                    0 AS es_docente,
+                    NULL AS cargo_corto
+                FROM personas p
+                INNER JOIN estudiantes e ON e.id_persona = p.id AND e.activo = 1
+                WHERE DAY(p.fecha_nacimiento) = DAY(CURDATE())
+                AND MONTH(p.fecha_nacimiento) = MONTH(CURDATE())
+                ORDER BY p.primer_nombre ASC
+            ");
+            $stmtEstudiantes->execute();
+            $estudiantesCumple = $stmtEstudiantes->fetchAll();
+
+            // 2. Colaboradores activos que cumplen años hoy
+            //    LEFT JOIN con docentes para saber si es docente
+            //    LEFT JOIN con cargos para obtener nombre_corto
             $stmtColaboradores = $db->prepare("
                 SELECT 
                     p.id AS id_persona,
@@ -480,17 +501,20 @@ class Personas
                     p.id_genero,
                     'colaborador' AS tipo,
                     col.sobrenombre,
-                    0 AS es_docente,
+                    CASE WHEN d.id IS NOT NULL AND d.activo = 1 THEN 1 ELSE 0 END AS es_docente,
                     ca.nombre_corto AS cargo_corto
                 FROM personas p
                 INNER JOIN colaboradores col ON col.id_persona = p.id AND col.activo = 1
+                LEFT JOIN docentes d ON d.id_colaborador = col.id AND d.id_persona = p.id
                 LEFT JOIN cargos ca ON col.id_cargo = ca.id
                 WHERE DAY(p.fecha_nacimiento) = DAY(CURDATE())
                 AND MONTH(p.fecha_nacimiento) = MONTH(CURDATE())
                 ORDER BY p.primer_nombre ASC
             ");
             $stmtColaboradores->execute();
-            $cumpleaneros = $stmtColaboradores->fetchAll();
+            $colaboradoresCumple = $stmtColaboradores->fetchAll();
+
+            $cumpleaneros = array_merge($estudiantesCumple, $colaboradoresCumple);
 
             Flight::json($cumpleaneros);
         } catch (Exception $e) {

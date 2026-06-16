@@ -20,12 +20,23 @@ Flight::route('GET /ia-configuracion/@id', [IaConfiguracion::class, 'getById']);
 Flight::route('PUT /ia-configuracion', [IaConfiguracion::class, 'replace']);
 
 // GINI
+Flight::route('POST /gini/session', [Gini::class, 'generarSesion']);
 
 // IA-COBERTURA CURRICULAR
+Flight::route('GET /ia-cobertura-curricular/obtener', [IaCoberturaCurricular::class, 'obtenerAnalisisGuardado']);
+Flight::route('POST /ia-cobertura-curricular/guardar', [IaCoberturaCurricular::class, 'guardarAnalisis']);
+Flight::route('POST /ia-cobertura-curricular/analizar', [IaCoberturaCurricular::class, 'analizarCobertura']);
 
-// IA-MÃQUINA DE ACTIVIDADES
+// IA-MÁQUINA DE ACTIVIDADES
+Flight::route('POST /ia-maquina-actividades/generar', [IaMaquinaActividades::class, 'generarActividades']);
+Flight::route('POST /ia-maquina-actividades/grabar', [IaMaquinaActividades::class, 'grabarActividades']);
+Flight::route('POST /ia-maquina-actividades/sugerir-individual', [IaMaquinaActividades::class, 'sugerirIndividual']);
 
-// IA-MÃQUINA DE ACTIVIDADES DE EVALUACIÃ“N (por logros del corte)
+// IA-MÁQUINA DE ACTIVIDADES DE EVALUACIÓN (por logros del corte)
+Flight::route('POST /ia-maquina-actividades/logros-evaluacion', [IaMaquinaActividades::class, 'obtenerLogrosEvaluacion']);
+Flight::route('GET /ia-maquina-actividades/actividades-por-logro/@id_sprint', [IaMaquinaActividades::class, 'obtenerActividadesPorLogroEnSprint']);
+Flight::route('POST /ia-maquina-actividades/generar-evaluacion', [IaMaquinaActividades::class, 'generarActividadesEvaluacion']);
+Flight::route('POST /ia-maquina-actividades/grabar-evaluacion', [IaMaquinaActividades::class, 'grabarActividadesEvaluacion']);
 
 // IA-MEJORAR TEXTO
 Flight::route('POST /ia-mejorar-texto/mejorar', [IaMejorarTexto::class, 'mejorar']);

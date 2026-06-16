@@ -195,9 +195,9 @@ class Usuarios
                     g.nombre nombre_genero, 
                     p.direccion, 
                     u.activo, 
-                    NULL id_docente, 
-                    NULL id_casa_docente, 
-                    NULL nombre_casa_docente,
+                    d.id id_docente, 
+                    cd.id id_casa_docente, 
+                    cd.nombre nombre_casa_docente,
                     u.acceso_institucional,
                     u.acceso_chat_wa,
                     u.acceso_portal_padres,
@@ -210,6 +210,8 @@ class Usuarios
                 INNER JOIN personas p ON u.id_persona = p.id
                 LEFT JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
                 LEFT JOIN generos g ON p.id_genero = g.id
+                LEFT JOIN docentes d ON p.id = d.id_persona
+                LEFT JOIN casas_docentes cd ON d.id_casa_docente = cd.id
                 LEFT JOIN colaboradores c ON p.id = c.id_persona
                 WHERE u.usuario = :usuario
                 AND u.clave = :clave

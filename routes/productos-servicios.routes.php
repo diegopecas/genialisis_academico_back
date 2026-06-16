@@ -30,6 +30,17 @@ Flight::route('PUT /periodicidad-cobro', [PeriodicidadCobro::class, 'replace']);
 Flight::route('DELETE /periodicidad-cobro', [PeriodicidadCobro::class, 'delete']);
 
 // horarios-alimentacion
+Flight::route('GET /horarios-alimentacion', [HorariosAlimentacion::class, 'getAll']);
+Flight::route('GET /horarios-alimentacion/@id', [HorariosAlimentacion::class, 'getById']);
+Flight::route('GET /horarios-alimentacion/max-orden', [HorariosAlimentacion::class, 'getMaxOrden']);
+Flight::route('POST /horarios-alimentacion', [HorariosAlimentacion::class, 'new']);
+Flight::route('PUT /horarios-alimentacion', [HorariosAlimentacion::class, 'replace']);
+Flight::route('DELETE /horarios-alimentacion', [HorariosAlimentacion::class, 'delete']);
 
 // ONCES
+Flight::route('GET /onces', [Onces::class, 'getAll']);
 // ONCES-PERSONAS
+Flight::route('GET /onces-personas', [OncesPersonas::class, 'getAll']);
+Flight::route('GET /onces-personas/@id', [OncesPersonas::class, 'getById']);
+Flight::route('GET /onces-personas-per/@id', [OncesPersonas::class, 'getByIdPersona']);
+Flight::route('POST /onces-personas', [OncesPersonas::class, 'new']);

@@ -42,7 +42,7 @@ class WaConversaciones
                     WHEN p.id IS NOT NULL THEN CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.primer_apellido, ''))
                     ELSE wc.nombre_whatsapp
                 END AS nombre_display,
-                NULL AS info_acudiente,
+                acud_info.info_acudiente,
                 ult.contenido AS ultimo_mensaje_contenido,
                 ult.tipo AS ultimo_mensaje_tipo,
                 ult.direccion AS ultimo_mensaje_direccion,
@@ -52,6 +52,27 @@ class WaConversaciones
             FROM wa_conversaciones wconv
             INNER JOIN wa_contactos wc ON wconv.id_contacto = wc.id
             LEFT JOIN personas p ON wc.id_persona = p.id
+            LEFT JOIN (
+                SELECT 
+                    a.id_persona,
+                    GROUP_CONCAT(
+                        DISTINCT CONCAT(
+                            ta.nombre, ' de ', 
+                            IFNULL(pe.primer_nombre, ''), ' ', IFNULL(pe.primer_apellido, ''),
+                            IFNULL(CONCAT(' (', g.nombre, ')'), '')
+                        )
+                        ORDER BY e.id ASC
+                        SEPARATOR ' | '
+                    ) AS info_acudiente
+                FROM acudientes a
+                INNER JOIN tipos_acudiente ta ON a.id_tipo_acudiente = ta.id
+                INNER JOIN estudiantes e ON a.id_estudiante = e.id
+                INNER JOIN personas pe ON e.id_persona = pe.id
+                LEFT JOIN estudiantes_x_grupos exg ON e.id = exg.id_estudiante AND exg.activo = 1
+                LEFT JOIN grupos g ON exg.id_grupo = g.id
+                WHERE a.activo = 1 AND e.activo = 1
+                GROUP BY a.id_persona
+            ) acud_info ON wc.id_persona = acud_info.id_persona
             LEFT JOIN (
                 SELECT wm1.id_conversacion, wm1.contenido, wm1.tipo, wm1.direccion, wm1.fecha_creacion, wm1.estado
                 FROM wa_mensajes wm1

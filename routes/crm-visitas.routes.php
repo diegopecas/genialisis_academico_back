@@ -4,6 +4,8 @@
 // RUTAS DEL BACKEND
 // =====================================================
 
+
+
 // ============================================
 // CATÁLOGOS - TIPOS
 // ============================================
@@ -96,6 +98,7 @@ Flight::route('PUT /protocolo-contenido-perfil', [ProtocoloContenidoPerfil::clas
 Flight::route('DELETE /protocolo-contenido-perfil', [ProtocoloContenidoPerfil::class, 'delete']);
 Flight::route('GET /protocolo-contenido-perfil-por-perfil/@perfil', [ProtocoloContenidoPerfil::class, 'getByPerfil']);
 
+
 // TIPOS DE OBJECIONES
 Flight::route('GET /tipos-objeciones', [TiposObjeciones::class, 'getAll']);
 Flight::route('GET /tipos-objeciones/@id', [TiposObjeciones::class, 'getById']);
@@ -111,6 +114,11 @@ Flight::route('PUT /tipos-resultado-visita', [TiposResultadoVisita::class, 'repl
 Flight::route('DELETE /tipos-resultado-visita', [TiposResultadoVisita::class, 'delete']);
 
 // SERVICIOS DEL JARDÍN
+Flight::route('GET /servicios-jardin', [ServiciosJardin::class, 'getAll']);
+Flight::route('GET /servicios-jardin/@id', [ServiciosJardin::class, 'getById']);
+Flight::route('POST /servicios-jardin', [ServiciosJardin::class, 'new']);
+Flight::route('PUT /servicios-jardin', [ServiciosJardin::class, 'replace']);
+Flight::route('DELETE /servicios-jardin', [ServiciosJardin::class, 'delete']);
 
 // TIPOS DE IMPORTANCIA DEL DETALLE
 Flight::route('GET /tipos-importancia-detalle', [TiposImportanciaDetalle::class, 'getAll']);
@@ -125,6 +133,20 @@ Flight::route('GET /tipos-nivel-agradecimiento/@id', [TiposNivelAgradecimiento::
 Flight::route('POST /tipos-nivel-agradecimiento', [TiposNivelAgradecimiento::class, 'new']);
 Flight::route('PUT /tipos-nivel-agradecimiento', [TiposNivelAgradecimiento::class, 'replace']);
 Flight::route('DELETE /tipos-nivel-agradecimiento', [TiposNivelAgradecimiento::class, 'delete']);
+
+// SERVICIOS FALTANTES
+Flight::route('GET /servicios-faltantes', [ServiciosFaltantes::class, 'getAll']);
+Flight::route('GET /servicios-faltantes/@id', [ServiciosFaltantes::class, 'getById']);
+Flight::route('POST /servicios-faltantes', [ServiciosFaltantes::class, 'new']);
+Flight::route('PUT /servicios-faltantes', [ServiciosFaltantes::class, 'replace']);
+Flight::route('DELETE /servicios-faltantes', [ServiciosFaltantes::class, 'delete']);
+
+// TIPOS DE IMPORTANCIA DE SERVICIO FALTANTE
+Flight::route('GET /tipos-importancia-servicio-faltante', [TiposImportanciaServicioFaltante::class, 'getAll']);
+Flight::route('GET /tipos-importancia-servicio-faltante/@id', [TiposImportanciaServicioFaltante::class, 'getById']);
+Flight::route('POST /tipos-importancia-servicio-faltante', [TiposImportanciaServicioFaltante::class, 'new']);
+Flight::route('PUT /tipos-importancia-servicio-faltante', [TiposImportanciaServicioFaltante::class, 'replace']);
+Flight::route('DELETE /tipos-importancia-servicio-faltante', [TiposImportanciaServicioFaltante::class, 'delete']);
 
 // ASPECTOS A MEJORAR
 Flight::route('GET /aspectos-mejorar', [AspectosMejorar::class, 'getAll']);
@@ -190,6 +212,19 @@ Flight::route('GET /visitantes/@id', [Visitantes::class, 'getById']);
 Flight::route('POST /visitantes', [Visitantes::class, 'new']);
 Flight::route('PUT /visitantes', [Visitantes::class, 'replace']);
 Flight::route('DELETE /visitantes', [Visitantes::class, 'delete']);
+
+// VISITAS - NIÑOS
+Flight::route('GET /visitas-ninos/por-visita/@id_visita', [VisitasNinos::class, 'getByVisita']);
+Flight::route('GET /visitas-ninos', [VisitasNinos::class, 'getAll']);
+Flight::route('GET /visitas-ninos/@id', [VisitasNinos::class, 'getById']);
+Flight::route('POST /visitas-ninos', [VisitasNinos::class, 'new']);
+Flight::route('PUT /visitas-ninos', [VisitasNinos::class, 'replace']);
+Flight::route('DELETE /visitas-ninos', [VisitasNinos::class, 'delete']);
+// Necesidades de niños
+Flight::route('GET /visitas-ninos-necesidades/nino/@id_visita_nino', [VisitasNinosNecesidades::class, 'getByNino']);
+Flight::route('POST /visitas-ninos-necesidades', [VisitasNinosNecesidades::class, 'new']);
+Flight::route('PUT /visitas-ninos-necesidades', [VisitasNinosNecesidades::class, 'replace']);
+Flight::route('DELETE /visitas-ninos-necesidades', [VisitasNinosNecesidades::class, 'delete']);
 
 // VISITAS - RAZONES DE BÚSQUEDA
 Flight::route('POST /visitas-razones-busqueda/multiples', [VisitasRazonesBusqueda::class, 'guardarMultiples']);
@@ -300,6 +335,15 @@ Flight::route('POST /visitas-resultado', [VisitasResultado::class, 'new']);
 Flight::route('PUT /visitas-resultado', [VisitasResultado::class, 'replace']);
 Flight::route('DELETE /visitas-resultado', [VisitasResultado::class, 'delete']);
 
+// VISITAS - SERVICIOS QUE GUSTARON
+Flight::route('GET /visitas-servicios-gustaron/mas-valorados', [VisitasServiciosGustaron::class, 'getServiciosMasValorados']);
+Flight::route('POST /visitas-servicios-gustaron/multiples', [VisitasServiciosGustaron::class, 'guardarMultiples']);
+Flight::route('GET /visitas-servicios-gustaron/por-visita/@id_visita', [VisitasServiciosGustaron::class, 'getByVisita']);
+Flight::route('GET /visitas-servicios-gustaron', [VisitasServiciosGustaron::class, 'getAll']);
+Flight::route('GET /visitas-servicios-gustaron/@id', [VisitasServiciosGustaron::class, 'getById']);
+Flight::route('POST /visitas-servicios-gustaron', [VisitasServiciosGustaron::class, 'new']);
+Flight::route('DELETE /visitas-servicios-gustaron', [VisitasServiciosGustaron::class, 'delete']);
+
 // VISITAS - ASPECTOS POSITIVOS
 Flight::route('POST /visitas-aspectos-positivos/guardar', [VisitasAspectosPositivos::class, 'guardar']);
 Flight::route('GET /visitas-aspectos-positivos/por-visita/@id_visita', [VisitasAspectosPositivos::class, 'getByVisita']);
@@ -317,6 +361,16 @@ Flight::route('GET /visitas-detalle-obsequio/@id', [VisitasDetalleObsequio::clas
 Flight::route('POST /visitas-detalle-obsequio', [VisitasDetalleObsequio::class, 'new']);
 Flight::route('PUT /visitas-detalle-obsequio', [VisitasDetalleObsequio::class, 'replace']);
 Flight::route('DELETE /visitas-detalle-obsequio', [VisitasDetalleObsequio::class, 'delete']);
+
+// VISITAS - SERVICIOS QUE NO TENEMOS
+Flight::route('GET /visitas-servicios-no-tenemos/mas-solicitados', [VisitasServiciosNoTenemos::class, 'getServiciosMasSolicitados']);
+Flight::route('POST /visitas-servicios-no-tenemos/multiples', [VisitasServiciosNoTenemos::class, 'guardarMultiples']);
+Flight::route('GET /visitas-servicios-no-tenemos/por-visita/@id_visita', [VisitasServiciosNoTenemos::class, 'getByVisita']);
+Flight::route('GET /visitas-servicios-no-tenemos', [VisitasServiciosNoTenemos::class, 'getAll']);
+Flight::route('GET /visitas-servicios-no-tenemos/@id', [VisitasServiciosNoTenemos::class, 'getById']);
+Flight::route('POST /visitas-servicios-no-tenemos', [VisitasServiciosNoTenemos::class, 'new']);
+Flight::route('PUT /visitas-servicios-no-tenemos', [VisitasServiciosNoTenemos::class, 'replace']);
+Flight::route('DELETE /visitas-servicios-no-tenemos', [VisitasServiciosNoTenemos::class, 'delete']);
 
 // VISITAS - FEEDBACK PARA MEJORAR
 Flight::route('GET /visitas-feedback-mejorar/mas-mencionados', [VisitasFeedbackMejorar::class, 'getAspectosMasMencionados']);
@@ -356,6 +410,7 @@ Flight::route('GET /visitas-aprendizajes/@id', [VisitasAprendizajes::class, 'get
 Flight::route('POST /visitas-aprendizajes', [VisitasAprendizajes::class, 'new']);
 Flight::route('PUT /visitas-aprendizajes', [VisitasAprendizajes::class, 'replace']);
 Flight::route('DELETE /visitas-aprendizajes', [VisitasAprendizajes::class, 'delete']);
+
 
 Flight::route('GET /visitas-catalogos', [Visitas::class, 'getAllCatalogos']);
 Flight::route('POST /visitas/crear-completa', [Visitas::class, 'crearVisitaCompleta']);

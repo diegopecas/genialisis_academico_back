@@ -69,3 +69,9 @@ Flight::route('GET /tipos-pagos/@id', [TiposPagos::class, 'getById']);
 Flight::route('POST /tipos-pagos', [TiposPagos::class, 'new']);
 Flight::route('PUT /tipos-pagos', [TiposPagos::class, 'replace']);
 Flight::route('DELETE /tipos-pagos', [TiposPagos::class, 'delete']);
+
+// Historial de recordatorios de pago
+Flight::route('GET /historial-recordatorios-pago', [HistorialRecordatoriosPago::class, 'getAll']);
+Flight::route('GET /historial-recordatorios-pago/estudiante/@id', [HistorialRecordatoriosPago::class, 'getByEstudiante']);
+Flight::route('POST /historial-recordatorios-pago', [HistorialRecordatoriosPago::class, 'new']);
+Flight::route('PUT /historial-recordatorios-pago', [HistorialRecordatoriosPago::class, 'replace']);

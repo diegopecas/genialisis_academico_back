@@ -1,0 +1,99 @@
+<?php
+class EstandaresBasicos
+{
+    public static function getAll()
+    {
+        $db = Flight::db();
+        $sentence = $db->prepare("SELECT * FROM estandares_basicos ORDER BY nombre ASC");
+        $sentence->execute();
+        $response = $sentence->fetchAll();
+        Flight::json($response);
+    }
+
+    public static function getById($id)
+    {
+        $db = Flight::db();
+        $sentence = $db->prepare("SELECT * FROM estandares_basicos WHERE id = :id");
+        $sentence->bindParam(':id', $id);
+        $sentence->execute();
+        $response = $sentence->fetchAll();
+        Flight::json($response);
+    }
+
+    public static function new()
+    {
+        try {
+            $db = Flight::db();
+            $nombre = Flight::request()->data['nombre'];
+            $descripcion = Flight::request()->data['descripcion'];
+            
+            error_log("Creando estándar básico: nombre=$nombre");
+            
+            $sentence = $db->prepare("INSERT INTO estandares_basicos (nombre, descripcion) VALUES (:nombre, :descripcion)");
+            $sentence->bindParam(':nombre', $nombre);
+            $sentence->bindParam(':descripcion', $descripcion);
+            $sentence->execute();
+            
+            $id = $db->lastInsertId();
+            error_log("Estándar básico creado con ID: $id");
+            
+            Flight::json(array('id' => $id));
+        } catch (Exception $e) {
+            error_log("Error al crear estándar básico: " . $e->getMessage());
+            Flight::json(array('error' => 'Error al crear el estándar básico'), 500);
+        }
+    }
+
+    public static function replace()
+    {
+        try {
+            $db = Flight::db();
+            $id = Flight::request()->data['id'];
+            $nombre = Flight::request()->data['nombre'];
+            $descripcion = Flight::request()->data['descripcion'];
+            
+            error_log("Actualizando estándar básico ID: $id");
+            
+            if (!$id || !$nombre) {
+                Flight::json(array('error' => 'Faltan datos obligatorios'), 400);
+                return;
+            }
+            
+            $sentence = $db->prepare("UPDATE estandares_basicos SET nombre = :nombre, descripcion = :descripcion WHERE id = :id");
+            $sentence->bindParam(':id', $id);
+            $sentence->bindParam(':nombre', $nombre);
+            $sentence->bindParam(':descripcion', $descripcion);
+            $sentence->execute();
+            
+            if ($sentence->rowCount() == 0) {
+                Flight::json(array('error' => 'No se encontró el estándar básico con el ID especificado'), 404);
+                return;
+            }
+            
+            error_log("Estándar básico actualizado: $id");
+            Flight::json(array('id' => $id));
+        } catch (Exception $e) {
+            error_log("Error al actualizar estándar básico: " . $e->getMessage());
+            Flight::json(array('error' => 'Error al actualizar el estándar básico'), 500);
+        }
+    }
+
+    public static function delete()
+    {
+        try {
+            $db = Flight::db();
+            $id = Flight::request()->data['id'];
+            
+            error_log("Eliminando estándar básico ID: $id");
+            
+            $sentence = $db->prepare("DELETE FROM estandares_basicos WHERE id = :id");
+            $sentence->bindParam(':id', $id);
+            $sentence->execute();
+            
+            Flight::json(array('id' => $id));
+        } catch (Exception $e) {
+            error_log("Error al eliminar estándar básico: " . $e->getMessage());
+            Flight::json(array('error' => 'Error al eliminar el estándar básico'), 500);
+        }
+    }
+}
