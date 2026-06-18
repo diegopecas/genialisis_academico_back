@@ -29,8 +29,10 @@ class Logros
             ON l.id_estandar_basico = estb.id
         LEFT JOIN cortes_academicos cac
             ON l.id_corte_academico = cac.id
+        WHERE l.id_tenant = :id_tenant
         ORDER BY l.id DESC
     ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -40,8 +42,9 @@ class Logros
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM logros WHERE id = :id");
+        $sentence = $db->prepare("SELECT * FROM logros WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -65,17 +68,22 @@ class Logros
             // Log para depuración
             error_log("Datos recibidos para crear logro: grado=$id_grado, area=$id_area_academica, nombre=$nombre");
 
+            $idNew = Uuid::generar();
             $sentence = $db->prepare("INSERT INTO logros(
+                id, id_tenant,
                 id_grado, id_area_academica, id_esfera_desarrollo, 
                 id_eje_curricular, id_competencia_cognitiva, id_estandar_basico, 
                 id_corte_academico, nombre
             ) VALUES (
+                :id, :id_tenant,
                 :id_grado, :id_area_academica, :id_esfera_desarrollo,
                 :id_eje_curricular, :id_competencia_cognitiva, :id_estandar_basico,
                 :id_corte_academico, :nombre
             )");
 
             // Vincular parámetros
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_grado', $id_grado);
             $sentence->bindParam(':id_area_academica', $id_area_academica);
             $sentence->bindParam(':id_esfera_desarrollo', $id_esfera_desarrollo);
@@ -89,7 +97,7 @@ class Logros
             $sentence->execute();
 
             // Obtener ID insertado
-            $id = $db->lastInsertId();
+            $id = $idNew;
 
             error_log("Logro creado con ID: $id");
 
@@ -125,8 +133,9 @@ class Logros
             }
 
             // Verificar que el registro exista antes de actualizar
-            $check = $db->prepare("SELECT id FROM logros WHERE id = :id");
+            $check = $db->prepare("SELECT id FROM logros WHERE id = :id AND id_tenant = :id_tenant");
             $check->bindParam(':id', $id);
+            $check->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $check->execute();
             if ($check->rowCount() == 0) {
                 Flight::json(array('error' => 'No se encontró el logro con el ID especificado'), 404);
@@ -142,10 +151,11 @@ class Logros
                 id_estandar_basico = :id_estandar_basico,
                 id_corte_academico = :id_corte_academico,
                 nombre = :nombre
-                WHERE id = :id");
+                WHERE id = :id AND id_tenant = :id_tenant");
 
             // Vincular parámetros
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_grado', $id_grado);
             $sentence->bindParam(':id_area_academica', $id_area_academica);
             $sentence->bindParam(':id_esfera_desarrollo', $id_esfera_desarrollo);
@@ -175,8 +185,9 @@ class Logros
 
             error_log("Eliminando logro ID: $id");
 
-            $sentence = $db->prepare("DELETE FROM logros WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM logros WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -193,10 +204,11 @@ class Logros
         $db = Flight::db();
         $sentence = $db->prepare("SELECT id, nombre, nombre as descripcion
                                   FROM indicadores_logros
-                                  WHERE id_logro = :id_logro
+                                  WHERE id_logro = :id_logro AND id_tenant = :id_tenant
                                   ORDER BY id");
 
         $sentence->bindParam(':id_logro', $id_logro);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         $response = $sentence->fetchAll();
@@ -214,9 +226,10 @@ class Logros
                                   FROM logros l
                                   LEFT JOIN grupos g ON l.id_grupo = g.id
                                   LEFT JOIN areas_academicas aa ON l.id_area_academica = aa.id
-                                  WHERE l.id_grupo = :id_grupo
+                                  WHERE l.id_grupo = :id_grupo AND l.id_tenant = :id_tenant
                                   ORDER BY l.orden");
         $sentence->bindParam(':id_grupo', $id_grupo);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -229,9 +242,10 @@ class Logros
                                   FROM logros l
                                   LEFT JOIN grados gr ON l.id_grado = gr.id
                                   LEFT JOIN areas_academicas aa ON l.id_area_academica = aa.id
-                                  WHERE l.id_area_academica = :id_area_academica
+                                  WHERE l.id_area_academica = :id_area_academica AND l.id_tenant = :id_tenant
                                   ORDER BY l.orden");
         $sentence->bindParam(':id_area_academica', $id_area_academica);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -246,8 +260,10 @@ class Logros
                                   LEFT JOIN areas_academicas aa ON l.id_area_academica = aa.id
                                   WHERE l.id_grupo = :id_grupo 
                                   AND l.id_area_academica = :id_area_academica
+                                  AND l.id_tenant = :id_tenant
                                   ORDER BY l.orden");
         $sentence->bindParam(':id_grupo', $id_grupo);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_area_academica', $id_area_academica);
         $sentence->execute();
         $response = $sentence->fetchAll();
@@ -275,9 +291,11 @@ class Logros
             LEFT JOIN esferas_desarrollo ed ON l.id_esfera_desarrollo = ed.id
             WHERE gxg.id_grupo = :id_grupo
             AND l.id_area_academica = :id_area_academica
+            AND l.id_tenant = :id_tenant
             ORDER BY l.nombre, il.nombre
         ");
         $sentence->bindParam(':id_grupo', $id_grupo);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_area_academica', $id_area_academica);
         $sentence->execute();
         $rows = $sentence->fetchAll(PDO::FETCH_ASSOC);
@@ -287,14 +305,14 @@ class Logros
             $lid = $row['logro_id'];
             if (!isset($logrosAgrupados[$lid])) {
                 $logrosAgrupados[$lid] = [
-                    'id' => (int)$lid,
+                    'id' => $lid,
                     'nombre' => $row['logro_nombre'],
                     'esfera' => $row['esfera_nombre'],
                     'indicadores' => []
                 ];
             }
             $logrosAgrupados[$lid]['indicadores'][] = [
-                'id' => (int)$row['indicador_id'],
+                'id' => $row['indicador_id'],
                 'nombre' => $row['indicador_nombre']
             ];
         }
@@ -325,10 +343,12 @@ class Logros
         LEFT JOIN esferas_desarrollo ed ON l.id_esfera_desarrollo = ed.id
         LEFT JOIN indicadores_logros il ON l.id = il.id_logro
         WHERE l.id_corte_academico = :id_corte_academico
+        AND l.id_tenant = :id_tenant
         GROUP BY l.id
         ORDER BY l.nombre
     ");
         $sentence->bindParam(':id_corte_academico', $id_corte_academico);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
 
@@ -364,8 +384,9 @@ class Logros
 
         try {
             // Primero obtener la información del sprint
-            $sprintQuery = $db->prepare("SELECT id_corte_academico FROM sprints WHERE id = :id_sprint");
+            $sprintQuery = $db->prepare("SELECT id_corte_academico FROM sprints WHERE id = :id_sprint AND id_tenant = :id_tenant");
             $sprintQuery->bindParam(':id_sprint', $id_sprint);
+            $sprintQuery->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sprintQuery->execute();
             $sprint = $sprintQuery->fetch();
 
@@ -408,6 +429,7 @@ class Logros
             GROUP BY l2.nombre, il.id_logro
         ) actividades_sprint ON l.nombre = actividades_sprint.nombre_logro
         WHERE l.id_corte_academico = :id_corte
+        AND l.id_tenant = :id_tenant
         GROUP BY l.nombre
         ORDER BY l.nombre
         ";
@@ -415,6 +437,7 @@ class Logros
             $sentence = $db->prepare($sql);
             $sentence->bindParam(':id_sprint', $id_sprint);
             $sentence->bindParam(':id_corte', $id_corte);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             $logros = $sentence->fetchAll();
@@ -493,12 +516,14 @@ class Logros
             GROUP BY il.id_logro
         ) actividades_corte ON l.id = actividades_corte.id_logro
         WHERE l.id_corte_academico = :id_corte_main
+        AND l.id_tenant = :id_tenant
         ORDER BY l.nombre
         ";
 
             $sentence = $db->prepare($sql);
             $sentence->bindParam(':id_corte_sub', $id_corte_academico);
             $sentence->bindParam(':id_corte_main', $id_corte_academico);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             $logros = $sentence->fetchAll();
@@ -557,12 +582,14 @@ class Logros
         LEFT JOIN estados_tareas et ON txs.id_estado_tarea = et.id
         WHERE il.id_logro = :id_logro 
         AND txs.id_sprint = :id_sprint
+        AND aa.id_tenant = :id_tenant
         ORDER BY aa.titulo
         ";
 
             $sentence = $db->prepare($sql);
             $sentence->bindParam(':id_logro', $id_logro);
             $sentence->bindParam(':id_sprint', $id_sprint);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             $actividades = $sentence->fetchAll();
@@ -588,8 +615,9 @@ class Logros
 
         try {
             // Primero obtener la información del sprint
-            $sprintQuery = $db->prepare("SELECT id_corte_academico FROM sprints WHERE id = :id_sprint");
+            $sprintQuery = $db->prepare("SELECT id_corte_academico FROM sprints WHERE id = :id_sprint AND id_tenant = :id_tenant");
             $sprintQuery->bindParam(':id_sprint', $id_sprint);
+            $sprintQuery->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sprintQuery->execute();
             $sprint = $sprintQuery->fetch();
 
@@ -623,6 +651,7 @@ class Logros
             GROUP BY il.id_logro
         ) actividades_sprint ON l.id = actividades_sprint.id_logro
         WHERE l.id_corte_academico = :id_corte
+        AND aa.id_tenant = :id_tenant
         GROUP BY aa.id, aa.nombre
         ORDER BY aa.nombre
         ";
@@ -630,6 +659,7 @@ class Logros
             $sentence = $db->prepare($sql);
             $sentence->bindParam(':id_sprint_sub', $id_sprint);
             $sentence->bindParam(':id_corte', $id_corte);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             $areas = $sentence->fetchAll();
@@ -686,6 +716,7 @@ class Logros
             GROUP BY il.id_logro
         ) actividades_corte ON l.id = actividades_corte.id_logro
         WHERE l.id_corte_academico = :id_corte_main
+        AND aa.id_tenant = :id_tenant
         GROUP BY aa.id, aa.nombre
         ORDER BY aa.nombre
         ";
@@ -693,6 +724,7 @@ class Logros
             $sentence = $db->prepare($sql);
             $sentence->bindParam(':id_corte', $id_corte_academico);
             $sentence->bindParam(':id_corte_main', $id_corte_academico);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             $areas = $sentence->fetchAll();
@@ -751,6 +783,7 @@ class Logros
                 LEFT JOIN actividades_academicas act ON aaxil.id_actividad_academica = act.id
                 WHERE l.id_corte_academico = :id_corte
                 AND l.id_area_academica = :id_area
+                AND l.id_tenant = :id_tenant
             ";
 
             // Filtrar por grados del grupo si se especifica
@@ -763,6 +796,7 @@ class Logros
             $sentence = $db->prepare($sql);
             $sentence->bindParam(':id_corte', $id_corte);
             $sentence->bindParam(':id_area', $id_area);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             if ($id_grupo) {
                 $sentence->bindParam(':id_grupo', $id_grupo);
             }
@@ -776,6 +810,7 @@ class Logros
                 FROM tareas_x_sprints txs
                 INNER JOIN sprints s ON txs.id_sprint = s.id
                 WHERE s.id_corte_academico = :id_corte
+                AND txs.id_tenant = :id_tenant
             ";
             if ($id_grupo) {
                 $sqlTareasCorte .= " AND txs.id_grupo = :id_grupo";
@@ -787,6 +822,7 @@ class Logros
 
             $stmtCorte = $db->prepare($sqlTareasCorte);
             $stmtCorte->bindParam(':id_corte', $id_corte);
+            $stmtCorte->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             if ($id_grupo) $stmtCorte->bindParam(':id_grupo', $id_grupo);
             if ($id_area) $stmtCorte->bindParam(':id_area', $id_area);
             $stmtCorte->execute();
@@ -801,6 +837,7 @@ class Logros
                     SELECT txs.id_actividad_academica, COUNT(*) as total
                     FROM tareas_x_sprints txs
                     WHERE txs.id_sprint = :id_sprint
+                    AND txs.id_tenant = :id_tenant
                 ";
                 if ($id_grupo) $sqlTareasSprint .= " AND txs.id_grupo = :id_grupo";
                 if ($id_area) $sqlTareasSprint .= " AND txs.id_area_academica = :id_area";
@@ -808,6 +845,7 @@ class Logros
 
                 $stmtSprint = $db->prepare($sqlTareasSprint);
                 $stmtSprint->bindParam(':id_sprint', $id_sprint);
+                $stmtSprint->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 if ($id_grupo) $stmtSprint->bindParam(':id_grupo', $id_grupo);
                 if ($id_area) $stmtSprint->bindParam(':id_area', $id_area);
                 $stmtSprint->execute();
@@ -823,7 +861,7 @@ class Logros
 
                 if (!isset($logrosMap[$idLogro])) {
                     $logrosMap[$idLogro] = [
-                        'id' => (int)$idLogro,
+                        'id' => $idLogro,
                         'nombre' => $row['nombre_logro'],
                         'nombre_area' => $row['nombre_area'],
                         'nombre_esfera' => $row['nombre_esfera'],
@@ -842,14 +880,14 @@ class Logros
                 }
                 if (!$indicadorExists) {
                     $logrosMap[$idLogro]['indicadores'][] = [
-                        'id' => (int)$idIndicador,
+                        'id' => $idIndicador,
                         'nombre' => $row['nombre_indicador']
                     ];
                 }
 
                 // Agregar actividad vinculada si existe
                 if ($row['id_actividad_academica']) {
-                    $idAct = (int)$row['id_actividad_academica'];
+                    $idAct = $row['id_actividad_academica'];
                     if (!in_array($idAct, $logrosMap[$idLogro]['actividades_ids'])) {
                         $logrosMap[$idLogro]['actividades_ids'][] = $idAct;
                     }

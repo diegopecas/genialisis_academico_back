@@ -11,8 +11,10 @@ class VisitasAprendizajes
                     v.fecha as fecha_visita
                 FROM visitas_aprendizajes va
                 INNER JOIN visitas v ON va.id_visita = v.id
+                WHERE va.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -33,8 +35,10 @@ class VisitasAprendizajes
                 FROM visitas_aprendizajes va
                 INNER JOIN visitas v ON va.id_visita = v.id
                 WHERE va.id = :id
+                AND va.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -51,8 +55,10 @@ class VisitasAprendizajes
             $sentence = $db->prepare("
                 SELECT * FROM visitas_aprendizajes 
                 WHERE id_visita = :id_visita
+                AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -67,17 +73,20 @@ class VisitasAprendizajes
         try {
             $db = Flight::db();
             $data = $dataParam ?? Flight::request()->data;
+            $id = Uuid::generar();
 
             $sentence = $db->prepare("
             INSERT INTO visitas_aprendizajes (
-                id_visita, que_salio_bien, que_mejorar_proximo, que_sorprendio,
+                id, id_tenant, id_visita, que_salio_bien, que_mejorar_proximo, que_sorprendio,
                 recomendaciones_equipo, resumen_ejecutivo
             ) VALUES (
-                :id_visita, :que_salio_bien, :que_mejorar_proximo, :que_sorprendio,
+                :id, :id_tenant, :id_visita, :que_salio_bien, :que_mejorar_proximo, :que_sorprendio,
                 :recomendaciones_equipo, :resumen_ejecutivo
             )
         ");
 
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $data['id_visita']);
             $sentence->bindParam(':que_salio_bien', $data['que_salio_bien']);
             $sentence->bindParam(':que_mejorar_proximo', $data['que_mejorar_proximo']);
@@ -86,7 +95,6 @@ class VisitasAprendizajes
             $sentence->bindParam(':resumen_ejecutivo', $data['resumen_ejecutivo']);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             if ($dataParam !== null) {
                 return $id;
@@ -118,6 +126,7 @@ class VisitasAprendizajes
                 recomendaciones_equipo = :recomendaciones_equipo,
                 resumen_ejecutivo = :resumen_ejecutivo
             WHERE id = :id
+            AND id_tenant = :id_tenant
         ");
 
             $sentence->bindParam(':id', $data['id']);
@@ -126,6 +135,7 @@ class VisitasAprendizajes
             $sentence->bindParam(':que_sorprendio', $data['que_sorprendio']);
             $sentence->bindParam(':recomendaciones_equipo', $data['recomendaciones_equipo']);
             $sentence->bindParam(':resumen_ejecutivo', $data['resumen_ejecutivo']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
 
@@ -151,8 +161,9 @@ class VisitasAprendizajes
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_aprendizajes WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_aprendizajes WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -172,8 +183,8 @@ class VisitasAprendizajes
             $id_visita = $data['id_visita'];
 
             // Verificar si ya existe
-            $stmt = $db->prepare("SELECT id FROM visitas_aprendizajes WHERE id_visita = :id_visita");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt = $db->prepare("SELECT id FROM visitas_aprendizajes WHERE id_visita = :id_visita AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
             $existe = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($existe) {
@@ -214,10 +225,12 @@ class VisitasAprendizajes
                 INNER JOIN usuarios u ON v.id_usuario_registro = u.id
                 LEFT JOIN personas p ON u.id_persona = p.id
                 WHERE va.recomendaciones_equipo IS NOT NULL AND va.recomendaciones_equipo != ''
+                AND va.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC
                 LIMIT :limite
             ");
             $sentence->bindParam(':limite', $limite, PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);

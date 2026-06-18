@@ -26,10 +26,11 @@ class ContratosMatriculaValores
             FROM contratos_matricula_valores cmv
             INNER JOIN productos_servicios ps ON cmv.id_producto_servicio = ps.id
             INNER JOIN periodicidad_cobro pc ON ps.id_periodicidad_cobro = pc.id
-            WHERE cmv.id_contrato_matricula = :id_contrato
+            WHERE cmv.id_contrato_matricula = :id_contrato AND cmv.id_tenant = :id_tenant
             ORDER BY cmv.fecha, ps.id_periodicidad_cobro
         ");
         $sentence->bindParam(':id_contrato', $idContrato);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
         Flight::json($response);
@@ -57,10 +58,11 @@ class ContratosMatriculaValores
             FROM contratos_matricula_valores cmv
             INNER JOIN productos_servicios ps ON cmv.id_producto_servicio = ps.id
             INNER JOIN periodicidad_cobro pc ON ps.id_periodicidad_cobro = pc.id
-            WHERE cmv.id_contrato_matricula = :id_contrato
+            WHERE cmv.id_contrato_matricula = :id_contrato AND cmv.id_tenant = :id_tenant
             GROUP BY ps.id, ps.nombre, ps.id_periodicidad_cobro, pc.nombre
         ");
         $sentence->bindParam(':id_contrato', $idContrato);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
         Flight::json($response);
@@ -82,16 +84,18 @@ class ContratosMatriculaValores
             $valores = Flight::request()->data['valores']; // Array de valores
 
             // Eliminar valores existentes
-            $sentenceDelete = $db->prepare("DELETE FROM contratos_matricula_valores WHERE id_contrato_matricula = :id_contrato");
+            $sentenceDelete = $db->prepare("DELETE FROM contratos_matricula_valores WHERE id_contrato_matricula = :id_contrato AND id_tenant = :id_tenant");
             $sentenceDelete->bindParam(':id_contrato', $id_contrato);
+            $sentenceDelete->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentenceDelete->execute();
 
             // Insertar nuevos valores
             $sentenceInsert = $db->prepare("
                 INSERT INTO contratos_matricula_valores 
-                (id_contrato_matricula, id_producto_servicio, fecha, valor) 
-                VALUES (:id_contrato, :id_producto, :fecha, :valor)
+                (id_tenant, id_contrato_matricula, id_producto_servicio, fecha, valor) 
+                VALUES (:id_tenant, :id_contrato, :id_producto, :fecha, :valor)
             ");
+            $sentenceInsert->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $totalMatricula = 0;
             $totalPension = 0;
@@ -122,8 +126,9 @@ class ContratosMatriculaValores
                     valor_pension = :valor_pension,
                     numero_cuotas = :numero_cuotas,
                     valor_total = :valor_total
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
+            $sentenceUpdate->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentenceUpdate->bindParam(':valor_matricula', $totalMatricula);
             $sentenceUpdate->bindParam(':valor_pension', $totalPension);
             $sentenceUpdate->bindParam(':numero_cuotas', $numeroCuotas);
@@ -162,14 +167,16 @@ class ContratosMatriculaValores
             $id = Flight::request()->data['id'];
             $valor = Flight::request()->data['valor'];
 
-            $sentence = $db->prepare("UPDATE contratos_matricula_valores SET valor = :valor WHERE id = :id");
+            $sentence = $db->prepare("UPDATE contratos_matricula_valores SET valor = :valor WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':valor', $valor);
             $sentence->execute();
 
             // Recalcular totales del contrato
-            $sentenceContrato = $db->prepare("SELECT id_contrato_matricula FROM contratos_matricula_valores WHERE id = :id");
+            $sentenceContrato = $db->prepare("SELECT id_contrato_matricula FROM contratos_matricula_valores WHERE id = :id AND id_tenant = :id_tenant");
             $sentenceContrato->bindParam(':id', $id);
+            $sentenceContrato->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentenceContrato->execute();
             $row = $sentenceContrato->fetch(PDO::FETCH_ASSOC);
             
@@ -195,8 +202,9 @@ class ContratosMatriculaValores
         try {
             $db = Flight::db();
             
-            $sentence = $db->prepare("DELETE FROM contratos_matricula_valores WHERE id_contrato_matricula = :id_contrato");
+            $sentence = $db->prepare("DELETE FROM contratos_matricula_valores WHERE id_contrato_matricula = :id_contrato AND id_tenant = :id_tenant");
             $sentence->bindParam(':id_contrato', $idContrato);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('success' => true, 'id_contrato' => $idContrato));
@@ -218,9 +226,10 @@ class ContratosMatriculaValores
                 COUNT(CASE WHEN ps.id_periodicidad_cobro = 2 THEN 1 END) AS numero_cuotas
             FROM contratos_matricula_valores cmv
             INNER JOIN productos_servicios ps ON cmv.id_producto_servicio = ps.id
-            WHERE cmv.id_contrato_matricula = :id_contrato
+            WHERE cmv.id_contrato_matricula = :id_contrato AND cmv.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id_contrato', $idContrato);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $totales = $sentence->fetch(PDO::FETCH_ASSOC);
 
@@ -234,8 +243,9 @@ class ContratosMatriculaValores
                     valor_pension = :valor_pension,
                     numero_cuotas = :numero_cuotas,
                     valor_total = :valor_total
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
+            $sentenceUpdate->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentenceUpdate->bindParam(':valor_matricula', $totales['total_matricula']);
             $sentenceUpdate->bindParam(':valor_pension', $totales['total_pension']);
             $sentenceUpdate->bindParam(':numero_cuotas', $totales['numero_cuotas']);
@@ -276,10 +286,11 @@ class ContratosMatriculaValores
                 FROM tarifas_grupos tg
                 INNER JOIN productos_servicios pm ON tg.id_producto_matricula = pm.id
                 INNER JOIN productos_servicios pp ON tg.id_producto_pension = pp.id
-                WHERE tg.id_grupo = :id_grupo AND tg.anio = :anio
+                WHERE tg.id_grupo = :id_grupo AND tg.anio = :anio AND tg.id_tenant = :id_tenant
             ");
             $sentenceTarifa->bindParam(':id_grupo', $id_grupo);
             $sentenceTarifa->bindParam(':anio', $anio);
+            $sentenceTarifa->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentenceTarifa->execute();
             $tarifa = $sentenceTarifa->fetch(PDO::FETCH_ASSOC);
 

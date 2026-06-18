@@ -12,9 +12,11 @@ class AreasFisicas
             FROM areas_fisicas af
             LEFT JOIN productos_mobiliario_x_areas_fisicas pmaf ON af.id = pmaf.id_area
             LEFT JOIN areas_fisicas_x_procesos_limpieza afpl ON af.id = afpl.id_area_fisica AND afpl.activo = 1
+            WHERE af.id_tenant = :id_tenant
             GROUP BY af.id
             ORDER BY af.nombre ASC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -25,9 +27,10 @@ class AreasFisicas
         $db = Flight::db();
         $sentence = $db->prepare("
             SELECT * FROM areas_fisicas 
-            WHERE activo = 1 
+            WHERE activo = 1 AND id_tenant = :id_tenant
             ORDER BY nombre ASC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -38,9 +41,10 @@ class AreasFisicas
         $db = Flight::db();
         $sentence = $db->prepare("
             SELECT * FROM areas_fisicas 
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -57,6 +61,8 @@ class AreasFisicas
 
         $sentence = $db->prepare("
             INSERT INTO areas_fisicas(
+                id,
+                id_tenant,
                 nombre,
                 descripcion,
                 ubicacion,
@@ -64,6 +70,8 @@ class AreasFisicas
                 activo,
                 fecha_registro
             ) VALUES (
+                :id,
+                :id_tenant,
                 :nombre,
                 :descripcion,
                 :ubicacion,
@@ -73,13 +81,16 @@ class AreasFisicas
             )
         ");
 
+        $idArea = Uuid::generar();
+        $sentence->bindValue(':id', $idArea);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':descripcion', $descripcion);
         $sentence->bindParam(':ubicacion', $ubicacion);
         $sentence->bindParam(':capacidad', $capacidad);
         $sentence->execute();
 
-        $id = $db->lastInsertId();
+        $id = $idArea;
         Flight::json(array('id' => $id));
     }
 
@@ -101,7 +112,7 @@ class AreasFisicas
                 ubicacion = :ubicacion,
                 capacidad = :capacidad,
                 activo = :activo
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
 
         $sentence->bindParam(':nombre', $nombre);
@@ -110,6 +121,7 @@ class AreasFisicas
         $sentence->bindParam(':capacidad', $capacidad);
         $sentence->bindParam(':activo', $activo);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         self::getById($id);
@@ -124,9 +136,10 @@ class AreasFisicas
         $sentence = $db->prepare("
             SELECT COUNT(*) as total 
             FROM productos_mobiliario_x_areas_fisicas 
-            WHERE id_area = :id
+            WHERE id_area = :id AND id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $result = $sentence->fetch();
 
@@ -139,9 +152,10 @@ class AreasFisicas
         $sentence = $db->prepare("
             SELECT COUNT(*) as total 
             FROM areas_fisicas_x_procesos_limpieza 
-            WHERE id_area_fisica = :id AND activo = 1
+            WHERE id_area_fisica = :id AND activo = 1 AND id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $result = $sentence->fetch();
 
@@ -151,8 +165,9 @@ class AreasFisicas
         }
 
         // Eliminar área (soft delete)
-        $sentence = $db->prepare("UPDATE areas_fisicas SET activo = 0 WHERE id = :id");
+        $sentence = $db->prepare("UPDATE areas_fisicas SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json(array('id' => $id));
@@ -190,10 +205,11 @@ class AreasFisicas
                     LIMIT 1
                 )
             )
-            WHERE pmaf.id_area = :id_area
+            WHERE pmaf.id_area = :id_area AND pmaf.id_tenant = :id_tenant
             ORDER BY pmaf.orden_limpieza, p.nombre
         ");
         $sentence->bindParam(':id_area', $id_area);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -222,11 +238,12 @@ class AreasFisicas
         FROM areas_fisicas_x_procesos_limpieza afpl
         INNER JOIN tipos_proceso_limpieza tpl ON afpl.id_tipo_proceso_limpieza = tpl.id
         LEFT JOIN periodicidad p ON afpl.id_periodicidad = p.id
-        WHERE afpl.id_area_fisica = :id_area 
+        WHERE afpl.id_area_fisica = :id_area AND afpl.id_tenant = :id_tenant
         -- Removemos el filtro de activo para traer todos
         ORDER BY afpl.activo DESC, afpl.prioridad DESC, tpl.nombre
     ");
         $sentence->bindParam(':id_area', $id_area);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -241,9 +258,10 @@ class AreasFisicas
             $sentence = $db->prepare("
             UPDATE areas_fisicas_x_procesos_limpieza 
             SET activo = 1 
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('mensaje' => 'Proceso activado correctamente'));
@@ -268,9 +286,11 @@ class AreasFisicas
                 WHERE id_area_fisica = :id_area 
                 AND id_tipo_proceso_limpieza = :id_tipo_proceso
                 AND activo = 1
+                AND id_tenant = :id_tenant
             ");
             $checkSentence->bindParam(':id_area', $data['id_area_fisica']);
             $checkSentence->bindParam(':id_tipo_proceso', $data['id_tipo_proceso_limpieza']);
+            $checkSentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkSentence->execute();
 
             if ($checkSentence->fetch()) {
@@ -281,6 +301,8 @@ class AreasFisicas
             // Insertar nueva asignación
             $sentence = $db->prepare("
                 INSERT INTO areas_fisicas_x_procesos_limpieza (
+                    id,
+                    id_tenant,
                     id_area_fisica,
                     id_tipo_proceso_limpieza,
                     id_periodicidad,
@@ -297,6 +319,8 @@ class AreasFisicas
                     veces_por_dia,
                     activo
                 ) VALUES (
+                    :id,
+                    :id_tenant,
                     :id_area_fisica,
                     :id_tipo_proceso_limpieza,
                     :id_periodicidad,
@@ -316,6 +340,9 @@ class AreasFisicas
             ");
 
             // Bind de parámetros
+            $idAFPL = Uuid::generar();
+            $sentence->bindValue(':id', $idAFPL);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_area_fisica', $data['id_area_fisica']);
             $sentence->bindParam(':id_tipo_proceso_limpieza', $data['id_tipo_proceso_limpieza']);
             $sentence->bindParam(':id_periodicidad', $data['id_periodicidad']);
@@ -345,7 +372,7 @@ class AreasFisicas
             $sentence->bindParam(':veces_por_dia', $veces_por_dia);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
+            $id = $idAFPL;
 
             Flight::json(array('id' => $id, 'mensaje' => 'Proceso asignado correctamente'));
         } catch (Exception $e) {
@@ -377,7 +404,7 @@ class AreasFisicas
                     sabado = :sabado,
                     domingo = :domingo,
                     veces_por_dia = :veces_por_dia
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
 
             // Bind de parámetros
@@ -407,6 +434,7 @@ class AreasFisicas
             $sentence->bindParam(':sabado', $sabado);
             $sentence->bindParam(':domingo', $domingo);
             $sentence->bindParam(':veces_por_dia', $veces_por_dia);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
 
@@ -425,9 +453,10 @@ class AreasFisicas
         try {
             $sentence = $db->prepare("
             DELETE FROM areas_fisicas_x_procesos_limpieza 
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('mensaje' => 'Proceso eliminado correctamente'));
@@ -445,9 +474,10 @@ class AreasFisicas
             $sentence = $db->prepare("
             UPDATE areas_fisicas_x_procesos_limpieza 
             SET activo = 0 
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('mensaje' => 'Proceso inactivado correctamente'));
@@ -475,9 +505,10 @@ class AreasFisicas
                     * tiempo_estimado_minutos * veces_por_dia) as carga_semanal_total
             FROM areas_fisicas_x_procesos_limpieza
             WHERE id_area_fisica = :id_area 
-            AND activo = 1
+            AND activo = 1 AND id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id_area', $id_area);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetch();
 
@@ -502,10 +533,11 @@ class AreasFisicas
                                 INNER JOIN elementos_fisicos ef ON efaf.id_elemento_fisico = ef.id
                                 LEFT JOIN condiciones_elemento ce ON efaf.id_condicion = ce.id
                                 LEFT JOIN unidades_medida um ON ef.id_unidad_medida = um.id
-                                WHERE efaf.id_area_fisica = :id_area
+                                WHERE efaf.id_area_fisica = :id_area AND efaf.id_tenant = :id_tenant
                                 ORDER BY ef.nombre
                             ");
         $sentence->bindParam(':id_area', $id_area);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -536,9 +568,11 @@ class AreasFisicas
             FROM elementos_fisicos_x_areas_fisicas 
             WHERE id_elemento_fisico = :id_elemento 
             AND id_area_fisica = :id_area
+            AND id_tenant = :id_tenant
         ");
             $checkStmt->bindParam(':id_elemento', $data['id_elemento_fisico']);
             $checkStmt->bindParam(':id_area', $data['id_area_fisica']);
+            $checkStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkStmt->execute();
             $existe = $checkStmt->fetch();
 
@@ -550,6 +584,8 @@ class AreasFisicas
             // Si no existe, crear nueva asignación
             $stmt = $db->prepare("
             INSERT INTO elementos_fisicos_x_areas_fisicas (
+                id,
+                id_tenant,
                 id_elemento_fisico,
                 id_area_fisica,
                 cantidad,
@@ -557,6 +593,8 @@ class AreasFisicas
                 observaciones,
                 fecha_ultima_inspeccion
             ) VALUES (
+                :id,
+                :id_tenant,
                 :id_elemento_fisico,
                 :id_area_fisica,
                 :cantidad,
@@ -566,6 +604,9 @@ class AreasFisicas
             )
         ");
 
+            $idEFAF = Uuid::generar();
+            $stmt->bindValue(':id', $idEFAF);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_elemento_fisico', $data['id_elemento_fisico']);
             $stmt->bindParam(':id_area_fisica', $data['id_area_fisica']);
             $stmt->bindParam(':cantidad', $data['cantidad']);
@@ -574,7 +615,7 @@ class AreasFisicas
             $stmt->bindParam(':fecha_inspeccion', $data['fecha_ultima_inspeccion']);
             $stmt->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idEFAF;
             Flight::json(['id' => $id, 'mensaje' => 'Elemento asignado correctamente']);
         } catch (Exception $e) {
             Flight::json(['error' => 'Error al asignar elemento: ' . $e->getMessage()], 500);
@@ -593,7 +634,7 @@ class AreasFisicas
                 id_condicion = :id_condicion,
                 observaciones = :observaciones,
                 fecha_ultima_inspeccion = :fecha_inspeccion
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
 
             $stmt->bindParam(':cantidad', $data['cantidad']);
@@ -601,6 +642,7 @@ class AreasFisicas
             $stmt->bindParam(':observaciones', $data['observaciones']);
             $stmt->bindParam(':fecha_inspeccion', $data['fecha_ultima_inspeccion']);
             $stmt->bindParam(':id', $data['id']);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             Flight::json(['mensaje' => 'Asignación actualizada correctamente']);
@@ -614,8 +656,9 @@ class AreasFisicas
         $db = Flight::db();
 
         try {
-            $stmt = $db->prepare("DELETE FROM elementos_fisicos_x_areas_fisicas WHERE id = :id");
+            $stmt = $db->prepare("DELETE FROM elementos_fisicos_x_areas_fisicas WHERE id = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             Flight::json(['mensaje' => 'Asignación eliminada correctamente']);
@@ -641,9 +684,11 @@ class AreasFisicas
                                         FROM elementos_fisicos_x_areas_fisicas 
                                         WHERE id_area_fisica = :id_area
                                     )
+                                    AND ef.id_tenant = :id_tenant
                                     ORDER BY ef.nombre
                                 ");
         $sentence->bindParam(':id_area', $id_area);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -666,9 +711,11 @@ class AreasFisicas
                                         FROM elementos_fisicos_x_areas_fisicas 
                                         WHERE id_area_fisica = :id_area
                                     )
+                                    AND ef.id_tenant = :id_tenant
                                     ORDER BY ef.nombre
     ");
         $sentence->bindParam(':id_area', $id_area);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);

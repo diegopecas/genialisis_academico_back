@@ -24,8 +24,10 @@ class RegistrosLimpieza
             LEFT JOIN personas ue ON ue_user.id_persona = ue.id
             LEFT JOIN usuarios us_user ON rl.id_usuario_supervisor = us_user.id
             LEFT JOIN personas us ON us_user.id_persona = us.id
+            WHERE rl.id_tenant = :id_tenant
             ORDER BY rl.fecha_programada DESC, rl.id DESC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -53,9 +55,10 @@ class RegistrosLimpieza
             LEFT JOIN personas ue ON ue_user.id_persona = ue.id
             LEFT JOIN usuarios us_user ON rl.id_usuario_supervisor = us_user.id
             LEFT JOIN personas us ON us_user.id_persona = us.id
-            WHERE rl.id = :id
+            WHERE rl.id = :id AND rl.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $registro = $sentence->fetch();
 
@@ -74,9 +77,10 @@ class RegistrosLimpieza
             LEFT JOIN elementos_fisicos ef ON rld.id_elemento_fisico = ef.id
             LEFT JOIN productos_mobiliario pm ON rld.id_producto_mobiliario = pm.id
             LEFT JOIN productos p ON pm.id_producto = p.id
-            WHERE rld.id_registro_limpieza = :id
+            WHERE rld.id_registro_limpieza = :id AND rld.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $registro['detalles'] = $sentence->fetchAll();
 
@@ -90,9 +94,10 @@ class RegistrosLimpieza
             INNER JOIN productos_limpieza pl ON rlc.id_producto_limpieza = pl.id
             INNER JOIN productos p ON pl.id_producto = p.id
             INNER JOIN unidades_medida um ON rlc.id_unidad_medida = um.id
-            WHERE rlc.id_registro_limpieza = :id
+            WHERE rlc.id_registro_limpieza = :id AND rlc.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $registro['consumos'] = $sentence->fetchAll();
 
@@ -116,6 +121,8 @@ class RegistrosLimpieza
             // Crear registro principal - CAMBIO: NO registrar fecha, solo fecha_programada
             $sentence = $db->prepare("
                 INSERT INTO registros_limpieza (
+                    id,
+                    id_tenant,
                     id_area_fisica,
                     id_tipo_proceso_limpieza,
                     fecha_programada,
@@ -123,6 +130,8 @@ class RegistrosLimpieza
                     id_usuario_ejecutor,
                     observaciones
                 ) VALUES (
+                    :id,
+                    :id_tenant,
                     :id_area_fisica,
                     :id_tipo_proceso_limpieza,
                     :fecha_programada,
@@ -132,6 +141,9 @@ class RegistrosLimpieza
                 )
             ");
 
+            $idRL = Uuid::generar();
+            $sentence->bindValue(':id', $idRL);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_area_fisica', $id_area_fisica);
             $sentence->bindParam(':id_tipo_proceso_limpieza', $id_tipo_proceso_limpieza);
             $sentence->bindParam(':fecha_programada', $fecha_programada);
@@ -139,17 +151,19 @@ class RegistrosLimpieza
             $sentence->bindParam(':observaciones', $observaciones);
             $sentence->execute();
 
-            $id_registro = $db->lastInsertId();
+            $id_registro = $idRL;
 
             // Insertar detalles si vienen
             if (isset(Flight::request()->data['detalles'])) {
                 foreach (Flight::request()->data['detalles'] as $detalle) {
                     $sentence = $db->prepare("
                         INSERT INTO registros_limpieza_detalle (
+                            id, id_tenant,
                             id_registro_limpieza,
                             id_elemento_fisico,
                             id_producto_mobiliario
                         ) VALUES (
+                            :id, :id_tenant,
                             :id_registro_limpieza,
                             :id_elemento_fisico,
                             :id_producto_mobiliario
@@ -159,6 +173,9 @@ class RegistrosLimpieza
                     $id_elemento = $detalle['id_elemento_fisico'] ?? null;
                     $id_mobiliario = $detalle['id_producto_mobiliario'] ?? null;
 
+                    $idRLD = Uuid::generar();
+                    $sentence->bindValue(':id', $idRLD);
+                    $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $sentence->bindParam(':id_registro_limpieza', $id_registro);
                     $sentence->bindParam(':id_elemento_fisico', $id_elemento);
                     $sentence->bindParam(':id_producto_mobiliario', $id_mobiliario);
@@ -171,11 +188,13 @@ class RegistrosLimpieza
                 foreach (Flight::request()->data['consumos'] as $consumo) {
                     $sentence = $db->prepare("
                         INSERT INTO registros_limpieza_consumos (
+                            id, id_tenant,
                             id_registro_limpieza,
                             id_producto_limpieza,
                             cantidad_consumida,
                             id_unidad_medida
                         ) VALUES (
+                            :id, :id_tenant,
                             :id_registro_limpieza,
                             :id_producto_limpieza,
                             :cantidad_consumida,
@@ -183,6 +202,9 @@ class RegistrosLimpieza
                         )
                     ");
 
+                    $idRLC = Uuid::generar();
+                    $sentence->bindValue(':id', $idRLC);
+                    $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $sentence->bindParam(':id_registro_limpieza', $id_registro);
                     $sentence->bindParam(':id_producto_limpieza', $consumo['id_producto_limpieza']);
                     $sentence->bindParam(':cantidad_consumida', $consumo['cantidad_consumida']);
@@ -212,12 +234,13 @@ class RegistrosLimpieza
             SET hora_inicio = :hora_inicio,
                 fecha = :fecha,  -- CAMBIO: registrar fecha real
                 id_estado = 2 -- En Proceso
-            WHERE id = :id AND id_estado = 1
+            WHERE id = :id AND id_estado = 1 AND id_tenant = :id_tenant
         ");
 
         $sentence->bindParam(':hora_inicio', $hora_inicio);
         $sentence->bindParam(':fecha', $fecha_actual);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         if ($sentence->rowCount() == 0) {
@@ -253,9 +276,10 @@ class RegistrosLimpieza
                 FROM registros_limpieza_consumos rlc
                 INNER JOIN productos_limpieza pl ON rlc.id_producto_limpieza = pl.id
                 INNER JOIN productos p ON pl.id_producto = p.id
-                WHERE rlc.id_registro_limpieza = :id
+                WHERE rlc.id_registro_limpieza = :id AND rlc.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $consumos = $sentence->fetchAll();
 
@@ -266,24 +290,30 @@ class RegistrosLimpieza
             // Crear movimiento de salida
             $sentence = $db->prepare("
                 INSERT INTO movimientos_productos (
+                    id,
+                    id_tenant,
                     fecha_movimiento,
                     id_concepto_movimiento,
                     id_estado,
                     observaciones,
                     id_usuario_registro
                 ) VALUES (
+                    :id,
+                    :id_tenant,
                     NOW(),
-                    (SELECT id FROM conceptos_movimiento WHERE nombre = 'Salida por Limpieza' LIMIT 1),
+                    (SELECT id FROM conceptos_movimiento WHERE nombre = 'Salida por Limpieza' AND id_tenant = " . TenantContext::id() . " LIMIT 1),
                     3, -- Aprobado
                     CONCAT('Registro de limpieza #', :id),
                     :id_usuario
                 )
             ");
-            $sentence->bindParam(':id', $id);
+            $idMov = Uuid::generar();
+            $sentence->bindValue(':id', $idMov);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_usuario', $id_usuario);
             $sentence->execute();
 
-            $id_movimiento = $db->lastInsertId();
+            $id_movimiento = $idMov;
 
             // Variables para tracking
             $productos_ajustados = [];
@@ -314,12 +344,16 @@ class RegistrosLimpieza
                 // Insertar detalle del movimiento con la cantidad ajustada
                 $sentence = $db->prepare("
                     INSERT INTO movimientos_productos_detalle (
+                        id,
+                        id_tenant,
                         id_movimiento,
                         id_producto,
                         cantidad,
                         stock_anterior,
                         precio_unitario
                     ) VALUES (
+                        :id,
+                        :id_tenant,
                         :id_movimiento,
                         :id_producto,
                         :cantidad,
@@ -328,6 +362,9 @@ class RegistrosLimpieza
                     )
                 ");
 
+                $idMovDet = Uuid::generar();
+                $sentence->bindValue(':id', $idMovDet);
+                $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentence->bindParam(':id_movimiento', $id_movimiento);
                 $sentence->bindParam(':id_producto', $consumo['id_producto']);
                 $sentence->bindParam(':cantidad', $cantidad_a_descontar);
@@ -335,7 +372,7 @@ class RegistrosLimpieza
                 $sentence->bindParam(':id_producto2', $consumo['id_producto']);
                 $sentence->execute();
 
-                $id_movimiento_detalle = $db->lastInsertId();
+                $id_movimiento_detalle = $idMovDet;
 
                 // Actualizar stock del producto - NUNCA permitir negativos
                 $sentence = $db->prepare("
@@ -344,23 +381,25 @@ class RegistrosLimpieza
                         stock_actual = GREATEST(0, stock_actual - :cantidad), -- CAMBIO: usar GREATEST para evitar negativos
                         id_ultimo_movimiento = :id_movimiento,
                         fecha_ultimo_movimiento = NOW()
-                    WHERE id = :id_producto
+                    WHERE id = :id_producto AND id_tenant = :id_tenant
                 ");
 
                 $sentence->bindParam(':cantidad', $cantidad_a_descontar);
                 $sentence->bindParam(':id_movimiento', $id_movimiento);
                 $sentence->bindParam(':id_producto', $consumo['id_producto']);
+                $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentence->execute();
 
                 // Actualizar referencia en consumos
                 $sentence = $db->prepare("
                     UPDATE registros_limpieza_consumos 
                     SET id_movimiento_inventario = :id_movimiento_detalle
-                    WHERE id = :id_consumo
+                    WHERE id = :id_consumo AND id_tenant = :id_tenant
                 ");
 
                 $sentence->bindParam(':id_movimiento_detalle', $id_movimiento_detalle);
                 $sentence->bindParam(':id_consumo', $consumo['id']);
+                $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentence->execute();
             }
 
@@ -369,11 +408,12 @@ class RegistrosLimpieza
                 UPDATE registros_limpieza 
                 SET hora_fin = :hora_fin,
                     id_estado = 3 -- Realizado
-                WHERE id = :id AND id_estado = 2
+                WHERE id = :id AND id_estado = 2 AND id_tenant = :id_tenant
             ");
 
             $sentence->bindParam(':hora_fin', $hora_fin);
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             if ($sentence->rowCount() == 0) {
@@ -414,12 +454,13 @@ class RegistrosLimpieza
             SET id_estado = 4, -- Supervisado
                 id_usuario_supervisor = :id_usuario_supervisor,
                 observaciones = CONCAT(IFNULL(observaciones, ''), ' | Supervisión: ', :observaciones)
-            WHERE id = :id AND id_estado = 3
+            WHERE id = :id AND id_estado = 3 AND id_tenant = :id_tenant
         ");
 
         $sentence->bindParam(':id_usuario_supervisor', $id_usuario_supervisor);
         $sentence->bindParam(':observaciones', $observaciones);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         if ($sentence->rowCount() == 0) {
@@ -440,11 +481,12 @@ class RegistrosLimpieza
             UPDATE registros_limpieza 
             SET id_estado = 5, -- Cancelado
                 observaciones = CONCAT(IFNULL(observaciones, ''), ' | Cancelado: ', :motivo)
-            WHERE id = :id AND id_estado IN (1, 2)
+            WHERE id = :id AND id_estado IN (1, 2) AND id_tenant = :id_tenant
         ");
 
         $sentence->bindParam(':motivo', $motivo);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         if ($sentence->rowCount() == 0) {
@@ -493,11 +535,12 @@ class RegistrosLimpieza
                         LEFT JOIN elementos_fisicos_x_areas_fisicas efaf 
                             ON ef.id = efaf.id_elemento_fisico 
                             AND efaf.id_area_fisica = :id_area
-                        WHERE efpl.id_tipo_proceso_limpieza = :id_proceso
+                        WHERE efpl.id_tipo_proceso_limpieza = :id_proceso AND ef.id_tenant = :id_tenant
                         ORDER BY ef.nombre
                     ");
         $sentence->bindParam(':id_area', $id_area);
         $sentence->bindParam(':id_proceso', $id_proceso);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response['elementos_fisicos'] = $sentence->fetchAll();
 
@@ -515,10 +558,12 @@ class RegistrosLimpieza
                                 WHERE pmxa.id_area = :id_area 
                                 AND pmpl.id_tipo_proceso_limpieza = :id_proceso
                                 AND p.activo = 1
+                                AND pm.id_tenant = :id_tenant
                                 ORDER BY p.nombre
                             ");
         $sentence->bindParam(':id_area', $id_area);
         $sentence->bindParam(':id_proceso', $id_proceso);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response['productos_mobiliario'] = $sentence->fetchAll();
 
@@ -551,9 +596,11 @@ class RegistrosLimpieza
                                     AND efaf.id_area_fisica = :id_area
                                 WHERE efpl.id_tipo_proceso_limpieza = :id_proceso
                                 AND p.activo = 1
+                                AND efpl.id_tenant = :id_tenant
                             ");
         $sentence->bindParam(':id_area', $id_area);
         $sentence->bindParam(':id_proceso', $id_proceso);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $elementosProductos = $sentence->fetchAll();
 
@@ -621,10 +668,11 @@ class RegistrosLimpieza
                     WHERE pmpl.id_producto_mobiliario IN ($placeholders)
                     AND pmpl.id_tipo_proceso_limpieza = ?
                     AND p.activo = 1
+                    AND pmpl.id_tenant = ?
                 ";
 
             $sentence = $db->prepare($sql);
-            $params = array_merge($ids_mobiliario, [$id_proceso]);
+            $params = array_merge($ids_mobiliario, [$id_proceso, TenantContext::id()]);
             $sentence->execute($params);
             $productosMobiliario = $sentence->fetchAll();
 
@@ -707,8 +755,9 @@ class RegistrosLimpieza
             $observaciones = Flight::request()->data['observaciones'] ?? null;
 
             // Verificar que esté en estado programado
-            $sentence = $db->prepare("SELECT id_estado FROM registros_limpieza WHERE id = :id");
+            $sentence = $db->prepare("SELECT id_estado FROM registros_limpieza WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $registro = $sentence->fetch();
 
@@ -721,21 +770,24 @@ class RegistrosLimpieza
                 UPDATE registros_limpieza 
                 SET fecha_programada = :fecha_programada,
                     observaciones = :observaciones
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':fecha_programada', $fecha_programada);
             $sentence->bindParam(':observaciones', $observaciones);
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             // Limpiar detalles anteriores
-            $sentence = $db->prepare("DELETE FROM registros_limpieza_detalle WHERE id_registro_limpieza = :id");
+            $sentence = $db->prepare("DELETE FROM registros_limpieza_detalle WHERE id_registro_limpieza = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             // Limpiar consumos anteriores
-            $sentence = $db->prepare("DELETE FROM registros_limpieza_consumos WHERE id_registro_limpieza = :id");
+            $sentence = $db->prepare("DELETE FROM registros_limpieza_consumos WHERE id_registro_limpieza = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             // Insertar nuevos detalles
@@ -743,10 +795,12 @@ class RegistrosLimpieza
                 foreach (Flight::request()->data['detalles'] as $detalle) {
                     $sentence = $db->prepare("
                         INSERT INTO registros_limpieza_detalle (
+                            id, id_tenant,
                             id_registro_limpieza,
                             id_elemento_fisico,
                             id_producto_mobiliario
                         ) VALUES (
+                            :id, :id_tenant,
                             :id_registro_limpieza,
                             :id_elemento_fisico,
                             :id_producto_mobiliario
@@ -756,6 +810,9 @@ class RegistrosLimpieza
                     $id_elemento = $detalle['id_elemento_fisico'] ?? null;
                     $id_mobiliario = $detalle['id_producto_mobiliario'] ?? null;
 
+                    $idRLD2 = Uuid::generar();
+                    $sentence->bindValue(':id', $idRLD2);
+                    $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $sentence->bindParam(':id_registro_limpieza', $id);
                     $sentence->bindParam(':id_elemento_fisico', $id_elemento);
                     $sentence->bindParam(':id_producto_mobiliario', $id_mobiliario);
@@ -768,11 +825,13 @@ class RegistrosLimpieza
                 foreach (Flight::request()->data['consumos'] as $consumo) {
                     $sentence = $db->prepare("
                         INSERT INTO registros_limpieza_consumos (
+                            id, id_tenant,
                             id_registro_limpieza,
                             id_producto_limpieza,
                             cantidad_consumida,
                             id_unidad_medida
                         ) VALUES (
+                            :id, :id_tenant,
                             :id_registro_limpieza,
                             :id_producto_limpieza,
                             :cantidad_consumida,
@@ -780,6 +839,9 @@ class RegistrosLimpieza
                         )
                     ");
 
+                    $idRLC2 = Uuid::generar();
+                    $sentence->bindValue(':id', $idRLC2);
+                    $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $sentence->bindParam(':id_registro_limpieza', $id);
                     $sentence->bindParam(':id_producto_limpieza', $consumo['id_producto_limpieza']);
                     $sentence->bindParam(':cantidad_consumida', $consumo['cantidad_consumida']);

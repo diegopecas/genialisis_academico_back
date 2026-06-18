@@ -88,9 +88,10 @@ class Ead3Evaluaciones
         $sentGlobal = $db->prepare("
             SELECT resultado_mg, resultado_mf, resultado_al, resultado_ps 
             FROM ead3_evaluaciones 
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
         $sentGlobal->bindParam(':id', $id_evaluacion);
+        $sentGlobal->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentGlobal->execute();
         $eval = $sentGlobal->fetch();
 
@@ -116,10 +117,11 @@ class Ead3Evaluaciones
         $sentUpdGlobal = $db->prepare("
             UPDATE ead3_evaluaciones 
             SET resultado_global = :global 
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
         $sentUpdGlobal->bindParam(':global', $global);
         $sentUpdGlobal->bindParam(':id', $id_evaluacion);
+        $sentUpdGlobal->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentUpdGlobal->execute();
 
         return $global;
@@ -139,9 +141,10 @@ class Ead3Evaluaciones
             LEFT JOIN estudiantes_x_grupos exg ON exg.id_estudiante = est.id AND exg.activo = 1
             LEFT JOIN grupos g ON exg.id_grupo = g.id
             INNER JOIN ead3_rangos_edad r ON e.id_rango_edad = r.id
-            WHERE e.activo = 1
+            WHERE e.activo = 1 AND e.id_tenant = :id_tenant
             ORDER BY e.fecha_evaluacion DESC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -159,9 +162,10 @@ class Ead3Evaluaciones
             INNER JOIN estudiantes est ON e.id_estudiante = est.id
             INNER JOIN personas p ON est.id_persona = p.id
             INNER JOIN ead3_rangos_edad r ON e.id_rango_edad = r.id
-            WHERE e.id = :id
+            WHERE e.id = :id AND e.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -184,10 +188,11 @@ class Ead3Evaluaciones
             LEFT JOIN personas pu ON u.id_persona = pu.id
             LEFT JOIN usuarios ua ON e.id_usuario_analisis = ua.id
             LEFT JOIN personas pa ON ua.id_persona = pa.id
-            WHERE e.id_estudiante = :id_estudiante AND e.activo = 1
+            WHERE e.id_estudiante = :id_estudiante AND e.activo = 1 AND e.id_tenant = :id_tenant
             ORDER BY e.fecha_evaluacion DESC
         ");
         $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -203,9 +208,10 @@ class Ead3Evaluaciones
                    CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_estudiante
             FROM estudiantes est
             INNER JOIN personas p ON est.id_persona = p.id
-            WHERE est.id = :id_estudiante
+            WHERE est.id = :id_estudiante AND est.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $data = $sentence->fetch();
 
@@ -266,14 +272,17 @@ class Ead3Evaluaciones
         $id_usuario = Flight::request()->data['id_usuario'];
         $items = Flight::request()->data['items'] ?? [];
 
+        $idNew = Uuid::generar();
         $sentence = $db->prepare("
             INSERT INTO ead3_evaluaciones (
+                id, id_tenant,
                 id_estudiante, fecha_evaluacion, edad_meses, edad_dias, id_rango_edad,
                 puntaje_directo_mg, puntaje_directo_mf, puntaje_directo_al, puntaje_directo_ps,
                 puntaje_tipico_mg, puntaje_tipico_mf, puntaje_tipico_al, puntaje_tipico_ps,
                 resultado_mg, resultado_mf, resultado_al, resultado_ps, resultado_global,
                 observaciones, id_usuario, estado
             ) VALUES (
+                :id, :id_tenant,
                 :id_estudiante, :fecha_evaluacion, :edad_meses, :edad_dias, :id_rango_edad,
                 :puntaje_directo_mg, :puntaje_directo_mf, :puntaje_directo_al, :puntaje_directo_ps,
                 :puntaje_tipico_mg, :puntaje_tipico_mf, :puntaje_tipico_al, :puntaje_tipico_ps,
@@ -282,6 +291,8 @@ class Ead3Evaluaciones
             )
         ");
 
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
         $sentence->bindParam(':fecha_evaluacion', $fecha_evaluacion);
         $sentence->bindParam(':edad_meses', $edad_meses);
@@ -304,16 +315,17 @@ class Ead3Evaluaciones
         $sentence->bindParam(':id_usuario', $id_usuario);
         $sentence->execute();
 
-        $id_evaluacion = $db->lastInsertId();
+        $id_evaluacion = $idNew;
 
         if (is_array($items) && count($items) > 0) {
             $sentenceDetalle = $db->prepare("
                 INSERT INTO ead3_evaluaciones_detalle (
-                    id_evaluacion, id_item, cumple, es_punto_inicio, es_punto_cierre
+                    id_tenant, id_evaluacion, id_item, cumple, es_punto_inicio, es_punto_cierre
                 ) VALUES (
-                    :id_evaluacion, :id_item, :cumple, :es_punto_inicio, :es_punto_cierre
+                    :id_tenant, :id_evaluacion, :id_item, :cumple, :es_punto_inicio, :es_punto_cierre
                 )
             ");
+            $sentenceDetalle->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             foreach ($items as $item) {
                 $id_item = $item['id_item'];
                 $cumple = $item['cumple'];
@@ -344,16 +356,21 @@ class Ead3Evaluaciones
         $id_rango_edad = Flight::request()->data['id_rango_edad'];
         $id_usuario = Flight::request()->data['id_usuario'];
 
+        $idNew = Uuid::generar();
         $sentence = $db->prepare("
             INSERT INTO ead3_evaluaciones (
+                id, id_tenant,
                 id_estudiante, fecha_evaluacion, edad_meses, edad_dias, id_rango_edad,
                 id_usuario, estado
             ) VALUES (
+                :id, :id_tenant,
                 :id_estudiante, :fecha_evaluacion, :edad_meses, :edad_dias, :id_rango_edad,
                 :id_usuario, 'iniciado'
             )
         ");
 
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
         $sentence->bindParam(':fecha_evaluacion', $fecha_evaluacion);
         $sentence->bindParam(':edad_meses', $edad_meses);
@@ -362,7 +379,7 @@ class Ead3Evaluaciones
         $sentence->bindParam(':id_usuario', $id_usuario);
         $sentence->execute();
 
-        $id_evaluacion = $db->lastInsertId();
+        $id_evaluacion = $idNew;
         Flight::json(array('id' => $id_evaluacion));
     }
 
@@ -378,8 +395,9 @@ class Ead3Evaluaciones
         $items = Flight::request()->data['items'] ?? [];
 
         // 1. Obtener el id_rango_edad de la evaluación
-        $sentRango = $db->prepare("SELECT id_rango_edad FROM ead3_evaluaciones WHERE id = :id");
+        $sentRango = $db->prepare("SELECT id_rango_edad FROM ead3_evaluaciones WHERE id = :id AND id_tenant = :id_tenant");
         $sentRango->bindParam(':id', $id_evaluacion);
+        $sentRango->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentRango->execute();
         $evalData = $sentRango->fetch();
         
@@ -394,8 +412,9 @@ class Ead3Evaluaciones
         $sentDel = $db->prepare("
             DELETE d FROM ead3_evaluaciones_detalle d
             INNER JOIN ead3_items i ON d.id_item = i.id
-            WHERE d.id_evaluacion = :id_eval AND i.area = :area
+            WHERE d.id_evaluacion = :id_eval AND i.area = :area AND d.id_tenant = :id_tenant
         ");
+        $sentDel->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentDel->bindParam(':id_eval', $id_evaluacion);
         $sentDel->bindParam(':area', $area);
         $sentDel->execute();
@@ -403,9 +422,10 @@ class Ead3Evaluaciones
         // 3. Insertar ítems nuevos
         if (is_array($items) && count($items) > 0) {
             $sentIns = $db->prepare("
-                INSERT INTO ead3_evaluaciones_detalle (id_evaluacion, id_item, cumple, es_punto_inicio, es_punto_cierre)
-                VALUES (:id_eval, :id_item, :cumple, 0, 0)
+                INSERT INTO ead3_evaluaciones_detalle (id_tenant, id_evaluacion, id_item, cumple, es_punto_inicio, es_punto_cierre)
+                VALUES (:id_tenant, :id_eval, :id_item, :cumple, 0, 0)
             ");
+            $sentIns->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             foreach ($items as $item) {
                 $id_item = $item['id_item'];
                 $cumple = $item['cumple'];
@@ -423,8 +443,9 @@ class Ead3Evaluaciones
                 COUNT(*) AS total_items
             FROM ead3_evaluaciones_detalle d
             INNER JOIN ead3_items i ON d.id_item = i.id
-            WHERE d.id_evaluacion = :id_eval AND i.area = :area
+            WHERE d.id_evaluacion = :id_eval AND i.area = :area AND d.id_tenant = :id_tenant
         ");
+        $sentPD->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentPD->bindParam(':id_eval', $id_evaluacion);
         $sentPD->bindParam(':area', $area);
         $sentPD->execute();
@@ -446,12 +467,13 @@ class Ead3Evaluaciones
                 puntaje_tipico_{$areaKey} = :pt,
                 resultado_{$areaKey} = :resultado, 
                 estado = 'en_proceso' 
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
         $sentUpd->bindParam(':pd', $pd);
         $sentUpd->bindParam(':pt', $pt);
         $sentUpd->bindParam(':resultado', $clasificacion);
         $sentUpd->bindParam(':id', $id_evaluacion);
+        $sentUpd->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentUpd->execute();
 
         // 7. Recalcular resultado global
@@ -488,7 +510,7 @@ class Ead3Evaluaciones
                 recomendaciones = :recomendaciones,
                 id_usuario_analisis = :id_usuario_analisis,
                 fecha_analisis = CASE WHEN :has_analisis IS NOT NULL THEN NOW() ELSE fecha_analisis END
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
         $sentence->bindParam(':observaciones', $observaciones);
         $sentence->bindParam(':analisis', $analisis);
@@ -496,6 +518,7 @@ class Ead3Evaluaciones
         $sentence->bindParam(':id_usuario_analisis', $id_usuario_analisis);
         $sentence->bindParam(':has_analisis', $analisis);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json(array('id' => $id, 'message' => 'Evaluación finalizada'));
@@ -510,10 +533,11 @@ class Ead3Evaluaciones
             FROM ead3_evaluaciones_detalle d
             INNER JOIN ead3_items i ON d.id_item = i.id
             INNER JOIN ead3_rangos_edad r ON i.id_rango_edad = r.id
-            WHERE d.id_evaluacion = :id
+            WHERE d.id_evaluacion = :id AND d.id_tenant = :id_tenant
             ORDER BY i.area, i.orden
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -534,9 +558,10 @@ class Ead3Evaluaciones
             INNER JOIN ead3_rangos_edad r ON e.id_rango_edad = r.id
             INNER JOIN estudiantes est ON e.id_estudiante = est.id
             INNER JOIN personas p ON est.id_persona = p.id
-            WHERE e.id = :id AND e.activo = 1
+            WHERE e.id = :id AND e.activo = 1 AND e.id_tenant = :id_tenant
         ");
         $sentEval->bindParam(':id', $id);
+        $sentEval->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentEval->execute();
         $evaluacion = $sentEval->fetch();
 
@@ -553,10 +578,11 @@ class Ead3Evaluaciones
             FROM ead3_evaluaciones_detalle d
             INNER JOIN ead3_items i ON d.id_item = i.id
             INNER JOIN ead3_rangos_edad r ON i.id_rango_edad = r.id
-            WHERE d.id_evaluacion = :id
+            WHERE d.id_evaluacion = :id AND d.id_tenant = :id_tenant
             ORDER BY i.area, i.orden
         ");
         $sentItems->bindParam(':id', $id);
+        $sentItems->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentItems->execute();
         $items_guardados = $sentItems->fetchAll();
 
@@ -589,8 +615,9 @@ class Ead3Evaluaciones
         $db = Flight::db();
         $id = Flight::request()->data['id'];
 
-        $sentence = $db->prepare("UPDATE ead3_evaluaciones SET activo = 0 WHERE id = :id");
+        $sentence = $db->prepare("UPDATE ead3_evaluaciones SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json(array('id' => $id));
@@ -639,8 +666,10 @@ class Ead3Evaluaciones
             INNER JOIN personas p ON est.id_persona = p.id
             LEFT JOIN estudiantes_x_grupos eg ON est.id = eg.id_estudiante AND eg.activo = 1
             LEFT JOIN grupos grp ON eg.id_grupo = grp.id
+            WHERE est.id_tenant = :id_tenant
             ORDER BY grp.orden, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
 
@@ -660,9 +689,10 @@ class Ead3Evaluaciones
         $id = Flight::request()->data['id'];
         $observaciones = Flight::request()->data['observaciones'];
 
-        $sentence = $db->prepare("UPDATE ead3_evaluaciones SET observaciones = :observaciones WHERE id = :id");
+        $sentence = $db->prepare("UPDATE ead3_evaluaciones SET observaciones = :observaciones WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':observaciones', $observaciones);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json(array('id' => $id, 'message' => 'Observaciones actualizadas'));
@@ -683,8 +713,9 @@ class Ead3Evaluaciones
                 recomendaciones = :recomendaciones,
                 id_usuario_analisis = :id_usuario_analisis,
                 fecha_analisis = NOW()
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':analisis', $analisis);
         $sentence->bindParam(':recomendaciones', $recomendaciones);
         $sentence->bindParam(':id_usuario_analisis', $id_usuario_analisis);
@@ -706,14 +737,16 @@ class Ead3Evaluaciones
         $cumple = Flight::request()->data['cumple'];
 
         // 1. Actualizar el ítem
-        $sentence = $db->prepare("UPDATE ead3_evaluaciones_detalle SET cumple = :cumple WHERE id = :id");
+        $sentence = $db->prepare("UPDATE ead3_evaluaciones_detalle SET cumple = :cumple WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':cumple', $cumple);
         $sentence->bindParam(':id', $id_detalle);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         // 2. Obtener el id_rango_edad
-        $sentRango = $db->prepare("SELECT id_rango_edad FROM ead3_evaluaciones WHERE id = :id");
+        $sentRango = $db->prepare("SELECT id_rango_edad FROM ead3_evaluaciones WHERE id = :id AND id_tenant = :id_tenant");
         $sentRango->bindParam(':id', $id_evaluacion);
+        $sentRango->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentRango->execute();
         $evalData = $sentRango->fetch();
         $id_rango_edad = (int)$evalData['id_rango_edad'];
@@ -729,8 +762,9 @@ class Ead3Evaluaciones
                     COUNT(*) AS total_items
                 FROM ead3_evaluaciones_detalle d
                 INNER JOIN ead3_items i ON d.id_item = i.id
-                WHERE d.id_evaluacion = :id_eval AND i.area = :area
+                WHERE d.id_evaluacion = :id_eval AND i.area = :area AND d.id_tenant = :id_tenant
             ");
+            $sentPD->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentPD->bindParam(':id_eval', $id_evaluacion);
             $sentPD->bindParam(':area', $areaCode);
             $sentPD->execute();
@@ -756,12 +790,13 @@ class Ead3Evaluaciones
                     SET puntaje_directo_{$areaKey} = :pd, 
                         puntaje_tipico_{$areaKey} = :pt,
                         resultado_{$areaKey} = :resultado 
-                    WHERE id = :id
+                    WHERE id = :id AND id_tenant = :id_tenant
                 ");
                 $sentUpdate->bindParam(':pd', $pd);
                 $sentUpdate->bindParam(':pt', $pt);
                 $sentUpdate->bindParam(':resultado', $clasificacion);
                 $sentUpdate->bindParam(':id', $id_evaluacion);
+                $sentUpdate->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentUpdate->execute();
             }
         }

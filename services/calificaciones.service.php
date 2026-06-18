@@ -4,7 +4,8 @@ class Calificaciones
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("select id, id_tarea_x_sprint, id_estudiante, id_parametro_calificacion, id_valor_parametro_calificacion from calificaciones");
+        $sentence = $db->prepare("select id, id_tarea_x_sprint, id_estudiante, id_parametro_calificacion, id_valor_parametro_calificacion from calificaciones where id_tenant = :id_tenant");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -13,8 +14,9 @@ class Calificaciones
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("select id, id_tarea_x_sprint, id_estudiante, id_parametro_calificacion, id_valor_parametro_calificacion from calificaciones where id = :id");
+        $sentence = $db->prepare("select id, id_tarea_x_sprint, id_estudiante, id_parametro_calificacion, id_valor_parametro_calificacion from calificaciones where id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -29,9 +31,10 @@ class Calificaciones
             FROM calificaciones c
             INNER JOIN estudiantes e ON c.id_estudiante = e.id
             INNER JOIN personas p ON e.id_persona = p.id
-            WHERE c.id_tarea_x_sprint = :id
+            WHERE c.id_tarea_x_sprint = :id AND c.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
         Flight::json($response);
@@ -78,11 +81,13 @@ class Calificaciones
             WHERE exg.id_grupo = :id_grupo
               AND exg.activo = 1
               AND e.activo = 1
+              AND exg.id_tenant = :id_tenant
             ORDER BY p.primer_nombre, p.primer_apellido";
 
             $stmt = $db->prepare($sqlEstudiantes);
             $stmt->bindParam(':id_grupo', $id_grupo);
             $stmt->bindParam(':id_tarea_sprint', $id_tarea_sprint);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $estudiantes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -93,10 +98,11 @@ class Calificaciones
                 id_parametro_calificacion,
                 id_valor_parametro_calificacion
             FROM calificaciones
-            WHERE id_tarea_x_sprint = :id_tarea_sprint";
+            WHERE id_tarea_x_sprint = :id_tarea_sprint AND id_tenant = :id_tenant";
 
             $stmt = $db->prepare($sqlCalificaciones);
             $stmt->bindParam(':id_tarea_sprint', $id_tarea_sprint);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $calificaciones = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -138,8 +144,8 @@ class Calificaciones
         // Llamar al procedimiento almacenado
         $sql = "CALL consultar_calificaciones_tareas_sprint_estudiante(:estudiante_id, :sprint_id)";
         $sentence = $db->prepare($sql);
-        $sentence->bindParam(':estudiante_id', $id_estudiante, PDO::PARAM_INT);
-        $sentence->bindParam(':sprint_id', $id_sprint, PDO::PARAM_INT);
+        $sentence->bindParam(':estudiante_id', $id_estudiante);
+        $sentence->bindParam(':sprint_id', $id_sprint);
         $sentence->execute();
 
         // Obtener los resultados del procedimiento
@@ -165,9 +171,11 @@ class Calificaciones
                     JOIN personas p ON e.id_persona = p.id
                     JOIN grupos g ON eg.id_grupo = g.id
                     WHERE eg.activo = 1
+                    AND eg.id_tenant = :id_tenant
                     ORDER BY g.orden, p.primer_nombre, p.primer_apellido";
 
             $sentence = $db->prepare($sql);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $estudiantes = $sentence->fetchAll(PDO::FETCH_ASSOC);
             $sentence->closeCursor();
@@ -177,8 +185,8 @@ class Calificaciones
             $proc = $db->prepare("CALL consultar_calificaciones_tareas_sprint_estudiante(:estudiante_id, :sprint_id)");
 
             foreach ($estudiantes as $estudiante) {
-                $proc->bindParam(':estudiante_id', $estudiante['id_estudiante'], PDO::PARAM_INT);
-                $proc->bindParam(':sprint_id', $id_sprint, PDO::PARAM_INT);
+                $proc->bindParam(':estudiante_id', $estudiante['id_estudiante']);
+                $proc->bindParam(':sprint_id', $id_sprint);
                 $proc->execute();
                 $calificaciones = $proc->fetchAll(PDO::FETCH_ASSOC);
                 $proc->closeCursor();
@@ -234,9 +242,10 @@ class Calificaciones
     public static function consultarCalificacionesPDMXEstudiante($id_estudiante)
     {
         $db = Flight::db();
-        $sql = "SELECT * FROM reporte_calificacion_pdm where id_estudiante = :id_estudiante ORDER BY nivel,area, codigo_logro";
+        $sql = "SELECT * FROM reporte_calificacion_pdm where id_estudiante = :id_estudiante AND id_tenant = :id_tenant ORDER BY nivel,area, codigo_logro";
         $sentence = $db->prepare($sql);
-        $sentence->bindParam(':id_estudiante', $id_estudiante, PDO::PARAM_INT);
+        $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
         Flight::json($response);
@@ -246,8 +255,9 @@ class Calificaciones
     public static function ConsultarCalificacionesPDMXEstudiantes()
     {
         $db = Flight::db();
-        $sql = "SELECT * FROM reporte_calificacion_pdm  ORDER BY nivel,area, codigo_logro";
+        $sql = "SELECT * FROM reporte_calificacion_pdm WHERE id_tenant = :id_tenant ORDER BY nivel,area, codigo_logro";
         $sentence = $db->prepare($sql);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
         Flight::json($response);
@@ -261,13 +271,16 @@ class Calificaciones
         $id_estudiante = Flight::request()->data['id_estudiante'];
         $id_parametro_calificacion = Flight::request()->data['id_parametro_calificacion'];
         $id_valor_parametro_calificacion = Flight::request()->data['id_valor_parametro_calificacion'];
-        $sentence = $db->prepare("insert into calificaciones(id_tarea_x_sprint, id_estudiante, id_parametro_calificacion, id_valor_parametro_calificacion) values (:id_tarea_x_sprint, :id_estudiante, :id_parametro_calificacion, :id_valor_parametro_calificacion)");
+        $idNew = Uuid::generar();
+        $sentence = $db->prepare("insert into calificaciones(id, id_tenant, id_tarea_x_sprint, id_estudiante, id_parametro_calificacion, id_valor_parametro_calificacion) values (:id, :id_tenant, :id_tarea_x_sprint, :id_estudiante, :id_parametro_calificacion, :id_valor_parametro_calificacion)");
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_tarea_x_sprint', $id_tarea_x_sprint);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
         $sentence->bindParam(':id_parametro_calificacion', $id_parametro_calificacion);
         $sentence->bindParam(':id_valor_parametro_calificacion', $id_valor_parametro_calificacion);
         $sentence->execute();
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(array('id' => $id));
     }
 
@@ -276,9 +289,10 @@ class Calificaciones
         $db = Flight::db();
         $id = Flight::request()->data['id'];
         $id_valor_parametro_calificacion = Flight::request()->data['id_valor_parametro_calificacion'];
-        $sentence = $db->prepare("update calificaciones set id_valor_parametro_calificacion = :id_valor_parametro_calificacion where id = :id");
+        $sentence = $db->prepare("update calificaciones set id_valor_parametro_calificacion = :id_valor_parametro_calificacion where id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id_valor_parametro_calificacion', $id_valor_parametro_calificacion);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }
@@ -287,8 +301,9 @@ class Calificaciones
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("delete from calificaciones where id = :id");
+        $sentence = $db->prepare("delete from calificaciones where id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }
@@ -323,15 +338,17 @@ class Calificaciones
                 calificaciones c
             JOIN tareas_x_sprints txs ON c.id_tarea_x_sprint = txs.id
             WHERE 
-                txs.id_sprint = :id_sprint";
+                txs.id_sprint = :id_sprint
+                AND c.id_tenant = :id_tenant";
 
             if ($id_estudiante !== null) {
                 $sql_base .= " AND c.id_estudiante = :id_estudiante";
             }
             $sentence = $db->prepare($sql_base);
-            $sentence->bindParam(':id_sprint', $id_sprint, PDO::PARAM_INT);
+            $sentence->bindParam(':id_sprint', $id_sprint);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             if ($id_estudiante !== null) {
-                $sentence->bindParam(':id_estudiante', $id_estudiante, PDO::PARAM_INT);
+                $sentence->bindParam(':id_estudiante', $id_estudiante);
             }
             $sentence->execute();
             $resultados_base = $sentence->fetchAll(PDO::FETCH_ASSOC);
@@ -381,9 +398,10 @@ class Calificaciones
             $ids_docentes = array_unique($ids_docentes);
             $ids_actividades = array_unique($ids_actividades);
 
-            $sql_sprint = "SELECT id, nombre_sprint, actual as es_sprint_actual FROM sprints WHERE id = :id_sprint";
+            $sql_sprint = "SELECT id, nombre_sprint, actual as es_sprint_actual FROM sprints WHERE id = :id_sprint AND id_tenant = :id_tenant";
             $sentence = $db->prepare($sql_sprint);
-            $sentence->bindParam(':id_sprint', $id_sprint, PDO::PARAM_INT);
+            $sentence->bindParam(':id_sprint', $id_sprint);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $sprint = $sentence->fetch(PDO::FETCH_ASSOC);
 
@@ -413,7 +431,8 @@ class Calificaciones
                 JOIN grupos g ON eg.id_grupo = g.id
                 WHERE 
                     e.id IN ($placeholders)
-                    AND eg.activo = 1";
+                    AND eg.activo = 1
+                    AND e.id_tenant = ?";
 
                 if ($id_grupo !== null) {
                     $sql_estudiantes .= " AND eg.id_grupo = ?";
@@ -424,6 +443,7 @@ class Calificaciones
                 foreach ($ids_estudiantes as $id) {
                     $sentence->bindValue($i++, $id);
                 }
+                $sentence->bindValue($i++, TenantContext::id());
 
                 if ($id_grupo !== null) {
                     $sentence->bindValue($i, $id_grupo);
@@ -461,13 +481,15 @@ class Calificaciones
                 JOIN esferas_desarrollo ed ON l.id_esfera_desarrollo = ed.id
                 JOIN cortes_academicos ca ON l.id_corte_academico = ca.id
                 WHERE 
-                    aa.id IN ($placeholders)";
+                    aa.id IN ($placeholders)
+                    AND aa.id_tenant = ?";
 
                 $sentence = $db->prepare($sql_actividades);
                 $i = 1;
                 foreach ($ids_actividades as $id) {
                     $sentence->bindValue($i++, $id);
                 }
+                $sentence->bindValue($i++, TenantContext::id());
                 $sentence->execute();
                 $info_actividades = [];
                 while ($row = $sentence->fetch(PDO::FETCH_ASSOC)) {
@@ -477,12 +499,13 @@ class Calificaciones
 
             if (!empty($ids_parametros)) {
                 $placeholders = implode(',', array_fill(0, count($ids_parametros), '?'));
-                $sql_parametros = "SELECT id, nombre as parametro_calificacion FROM parametros_calificaciones WHERE id IN ($placeholders)";
+                $sql_parametros = "SELECT id, nombre as parametro_calificacion FROM parametros_calificaciones WHERE id IN ($placeholders) AND id_tenant = ?";
                 $sentence = $db->prepare($sql_parametros);
                 $i = 1;
                 foreach ($ids_parametros as $id) {
                     $sentence->bindValue($i++, $id);
                 }
+                $sentence->bindValue($i++, TenantContext::id());
                 $sentence->execute();
                 $info_parametros = [];
                 while ($row = $sentence->fetch(PDO::FETCH_ASSOC)) {
@@ -492,12 +515,13 @@ class Calificaciones
 
             if (!empty($ids_valores_parametros)) {
                 $placeholders = implode(',', array_fill(0, count($ids_valores_parametros), '?'));
-                $sql_valores = "SELECT id, valor_cuantitativo, valor_cualitativo FROM valores_parametros_calificaciones WHERE id IN ($placeholders)";
+                $sql_valores = "SELECT id, valor_cuantitativo, valor_cualitativo FROM valores_parametros_calificaciones WHERE id IN ($placeholders) AND id_tenant = ?";
                 $sentence = $db->prepare($sql_valores);
                 $i = 1;
                 foreach ($ids_valores_parametros as $id) {
                     $sentence->bindValue($i++, $id);
                 }
+                $sentence->bindValue($i++, TenantContext::id());
                 $sentence->execute();
                 $info_valores = [];
                 while ($row = $sentence->fetch(PDO::FETCH_ASSOC)) {
@@ -539,13 +563,15 @@ class Calificaciones
                     docentes d
                 JOIN personas pd ON d.id_persona = pd.id
                 WHERE 
-                    d.id IN ($placeholders)";
+                    d.id IN ($placeholders)
+                    AND d.id_tenant = ?";
 
                 $sentence = $db->prepare($sql_docentes);
                 $i = 1;
                 foreach ($ids_docentes as $id) {
                     $sentence->bindValue($i++, $id);
                 }
+                $sentence->bindValue($i++, TenantContext::id());
                 $sentence->execute();
                 $info_docentes = [];
                 while ($row = $sentence->fetch(PDO::FETCH_ASSOC)) {

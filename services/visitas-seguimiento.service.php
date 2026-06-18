@@ -19,8 +19,10 @@ class VisitasSeguimiento
                 LEFT JOIN tipos_cuando_seguimiento tcs ON vs.id_cuando_seguimiento = tcs.id
                 LEFT JOIN tipos_quien_decide tqd ON vs.id_quien_decide = tqd.id
                 INNER JOIN visitas v ON vs.id_visita = v.id
+                WHERE vs.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -47,8 +49,10 @@ class VisitasSeguimiento
                 LEFT JOIN tipos_quien_decide tqd ON vs.id_quien_decide = tqd.id
                 INNER JOIN visitas v ON vs.id_visita = v.id
                 WHERE vs.id = :id
+                AND vs.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -73,8 +77,10 @@ class VisitasSeguimiento
                 LEFT JOIN tipos_cuando_seguimiento tcs ON vs.id_cuando_seguimiento = tcs.id
                 LEFT JOIN tipos_quien_decide tqd ON vs.id_quien_decide = tqd.id
                 WHERE vs.id_visita = :id_visita
+                AND vs.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -98,11 +104,11 @@ class VisitasSeguimiento
 
             $sentence = $db->prepare("
             INSERT INTO visitas_seguimiento (
-                id_visita, id_cuando_seguimiento, fecha_seguimiento_calculada,
+                id, id_tenant, id_visita, id_cuando_seguimiento, fecha_seguimiento_calculada,
                 mejor_horario, horario_manana, horario_tarde, horario_noche, horario_cualquiera,
                 id_quien_decide, necesita_consultar, con_quien_consultar
             ) VALUES (
-                :id_visita, :id_cuando_seguimiento, :fecha_seguimiento_calculada,
+                :id, :id_tenant, :id_visita, :id_cuando_seguimiento, :fecha_seguimiento_calculada,
                 :mejor_horario, :horario_manana, :horario_tarde, :horario_noche, :horario_cualquiera,
                 :id_quien_decide, :necesita_consultar, :con_quien_consultar
             )
@@ -122,6 +128,9 @@ class VisitasSeguimiento
             $horario_noche = isset($data['horario_noche']) ? ($data['horario_noche'] ? 1 : 0) : 0;
             $horario_cualquiera = isset($data['horario_cualquiera']) ? ($data['horario_cualquiera'] ? 1 : 0) : 0;
 
+            $id = Uuid::generar();
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $id_visita);
             $sentence->bindParam(':id_cuando_seguimiento', $id_cuando_seguimiento);
             $sentence->bindParam(':fecha_seguimiento_calculada', $fecha_seguimiento_calculada);
@@ -135,7 +144,6 @@ class VisitasSeguimiento
             $sentence->bindParam(':con_quien_consultar', $con_quien_consultar);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             // ✅ Si se llamó con parámetro, retornar el ID
             if ($dataParam !== null) {
@@ -179,6 +187,7 @@ class VisitasSeguimiento
                 necesita_consultar = :necesita_consultar,
                 con_quien_consultar = :con_quien_consultar
             WHERE id = :id
+            AND id_tenant = :id_tenant
         ");
 
             $id = $data['id'];
@@ -206,6 +215,7 @@ class VisitasSeguimiento
             $sentence->bindParam(':id_quien_decide', $id_quien_decide);
             $sentence->bindParam(':necesita_consultar', $necesita_consultar);
             $sentence->bindParam(':con_quien_consultar', $con_quien_consultar);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
 
@@ -233,8 +243,9 @@ class VisitasSeguimiento
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_seguimiento WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_seguimiento WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -260,8 +271,8 @@ class VisitasSeguimiento
             $id_visita = $data['id_visita'];
 
             // Verificar si ya existe
-            $stmt = $db->prepare("SELECT id FROM visitas_seguimiento WHERE id_visita = :id_visita");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt = $db->prepare("SELECT id FROM visitas_seguimiento WHERE id_visita = :id_visita AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
             $existe = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($existe) {
@@ -318,8 +329,10 @@ class VisitasSeguimiento
                 LEFT JOIN tipos_cuando_seguimiento tcs ON vs.id_cuando_seguimiento = tcs.id
                 LEFT JOIN tipos_quien_decide tqd ON vs.id_quien_decide = tqd.id
                 WHERE vs.fecha_seguimiento_calculada IS NOT NULL
+                AND vs.id_tenant = :id_tenant
                 ORDER BY vs.fecha_seguimiento_calculada ASC, v.fecha DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);

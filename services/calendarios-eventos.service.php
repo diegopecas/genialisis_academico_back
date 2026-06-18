@@ -10,8 +10,10 @@ class CalendariosEventos
                    tec.icono AS tipo_evento_icono
             FROM calendarios_eventos ce
             LEFT JOIN tipos_evento_calendario tec ON tec.id = ce.id_tipo_evento_calendario
+            WHERE ce.id_tenant = :id_tenant
             ORDER BY ce.fecha
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -27,8 +29,10 @@ class CalendariosEventos
             FROM calendarios_eventos ce
             LEFT JOIN tipos_evento_calendario tec ON tec.id = ce.id_tipo_evento_calendario
             WHERE ce.id = :id
+            AND ce.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetch();
         Flight::json($response);
@@ -47,10 +51,12 @@ class CalendariosEventos
             FROM calendarios_eventos ce
             LEFT JOIN tipos_evento_calendario tec ON tec.id = ce.id_tipo_evento_calendario
             WHERE ce.fecha BETWEEN :fecha_inicio AND :fecha_fin
+            AND ce.id_tenant = :id_tenant
             ORDER BY ce.fecha
         ");
         $sentence->bindParam(':fecha_inicio', $fecha_inicio);
         $sentence->bindParam(':fecha_fin', $fecha_fin);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -67,16 +73,18 @@ class CalendariosEventos
             $descripcion = $request->data->descripcion;
 
             $sentence = $db->prepare("
-                INSERT INTO calendarios_eventos (fecha, id_tipo_evento_calendario, descripcion) 
-                VALUES (:fecha, :id_tipo, :descripcion)
+                INSERT INTO calendarios_eventos (id, id_tenant, fecha, id_tipo_evento_calendario, descripcion) 
+                VALUES (:id, :id_tenant, :fecha, :id_tipo, :descripcion)
             ");
+            $idEvento = Uuid::generar();
+            $sentence->bindValue(':id', $idEvento);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':fecha', $fecha);
             $sentence->bindParam(':id_tipo', $id_tipo_evento_calendario);
             $sentence->bindParam(':descripcion', $descripcion);
             $sentence->execute();
 
-            $id = $db->lastInsertId();
-            Flight::json(array('id' => $id));
+            Flight::json(array('id' => $idEvento));
         } catch (Exception $e) {
             error_log("Error en CalendariosEventos::new: " . $e->getMessage());
             Flight::json(array('error' => $e->getMessage()), 500);
@@ -100,8 +108,10 @@ class CalendariosEventos
                     id_tipo_evento_calendario = :id_tipo,
                     descripcion = :descripcion
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':fecha', $fecha);
             $sentence->bindParam(':id_tipo', $id_tipo_evento_calendario);
             $sentence->bindParam(':descripcion', $descripcion);
@@ -121,8 +131,9 @@ class CalendariosEventos
             $request = Flight::request();
             $id = $request->data->id;
 
-            $sentence = $db->prepare("DELETE FROM calendarios_eventos WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM calendarios_eventos WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));

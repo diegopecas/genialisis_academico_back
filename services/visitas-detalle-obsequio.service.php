@@ -15,8 +15,10 @@ class VisitasDetalleObsequio
                 LEFT JOIN tipos_importancia_detalle tid ON vdo.id_importancia_detalle = tid.id
                 LEFT JOIN tipos_nivel_agradecimiento tna ON vdo.id_nivel_agradecimiento = tna.id
                 INNER JOIN visitas v ON vdo.id_visita = v.id
+                WHERE vdo.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -39,8 +41,10 @@ class VisitasDetalleObsequio
                 LEFT JOIN tipos_importancia_detalle tid ON vdo.id_importancia_detalle = tid.id
                 LEFT JOIN tipos_nivel_agradecimiento tna ON vdo.id_nivel_agradecimiento = tna.id
                 WHERE vdo.id = :id
+                AND vdo.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -63,8 +67,10 @@ class VisitasDetalleObsequio
                 LEFT JOIN tipos_importancia_detalle tid ON vdo.id_importancia_detalle = tid.id
                 LEFT JOIN tipos_nivel_agradecimiento tna ON vdo.id_nivel_agradecimiento = tna.id
                 WHERE vdo.id_visita = :id_visita
+                AND vdo.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -79,17 +85,20 @@ class VisitasDetalleObsequio
         try {
             $db = Flight::db();
             $data = $dataParam ?? Flight::request()->data;
+            $id = Uuid::generar();
 
             $sentence = $db->prepare("
             INSERT INTO visitas_detalle_obsequio (
-                id_visita, dio_detalle, que_detalle, id_importancia_detalle,
+                id, id_tenant, id_visita, dio_detalle, que_detalle, id_importancia_detalle,
                 id_nivel_agradecimiento, comentarios_detalle
             ) VALUES (
-                :id_visita, :dio_detalle, :que_detalle, :id_importancia_detalle,
+                :id, :id_tenant, :id_visita, :dio_detalle, :que_detalle, :id_importancia_detalle,
                 :id_nivel_agradecimiento, :comentarios_detalle
             )
         ");
 
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $data['id_visita']);
             $sentence->bindParam(':dio_detalle', $data['dio_detalle']);
             $sentence->bindParam(':que_detalle', $data['que_detalle']);
@@ -98,7 +107,6 @@ class VisitasDetalleObsequio
             $sentence->bindParam(':comentarios_detalle', $data['comentarios_detalle']);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             if ($dataParam !== null) {
                 return $id;
@@ -130,6 +138,7 @@ class VisitasDetalleObsequio
                 id_nivel_agradecimiento = :id_nivel_agradecimiento,
                 comentarios_detalle = :comentarios_detalle
             WHERE id = :id
+            AND id_tenant = :id_tenant
         ");
 
             $sentence->bindParam(':id', $data['id']);
@@ -138,6 +147,7 @@ class VisitasDetalleObsequio
             $sentence->bindParam(':id_importancia_detalle', $data['id_importancia_detalle']);
             $sentence->bindParam(':id_nivel_agradecimiento', $data['id_nivel_agradecimiento']);
             $sentence->bindParam(':comentarios_detalle', $data['comentarios_detalle']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
 
@@ -163,8 +173,9 @@ class VisitasDetalleObsequio
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_detalle_obsequio WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_detalle_obsequio WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -184,8 +195,8 @@ class VisitasDetalleObsequio
             $id_visita = $data['id_visita'];
 
             // Verificar si ya existe
-            $stmt = $db->prepare("SELECT id FROM visitas_detalle_obsequio WHERE id_visita = :id_visita");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt = $db->prepare("SELECT id FROM visitas_detalle_obsequio WHERE id_visita = :id_visita AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
             $existe = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($existe) {

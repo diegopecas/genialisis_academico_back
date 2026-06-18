@@ -4,7 +4,8 @@ class ElementosFisicos
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM elementos_fisicos ORDER BY id DESC");
+        $sentence = $db->prepare("SELECT * FROM elementos_fisicos WHERE id_tenant = :id_tenant ORDER BY id DESC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -20,8 +21,10 @@ class ElementosFisicos
                 FROM elementos_fisicos ef
                 LEFT JOIN unidades_medida um ON ef.id_unidad_medida = um.id
                 WHERE ef.id = :id
+                AND ef.id_tenant = :id_tenant
             ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -36,25 +39,31 @@ class ElementosFisicos
         $material = Flight::request()->data['material'];
         $id_unidad_medida = Flight::request()->data['id_unidad_medida']; // AGREGAR ESTA LÍNEA
 
+        $id = Uuid::generar();
         $sentence = $db->prepare("INSERT INTO elementos_fisicos(
+        id,
+        id_tenant,
         nombre,
         descripcion,
         material,
         id_unidad_medida
     ) VALUES (
+        :id,
+        :id_tenant,
         :nombre,
         :descripcion,
         :material,
         :id_unidad_medida
     )");
 
+        $sentence->bindValue(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':descripcion', $descripcion);
         $sentence->bindParam(':material', $material);
         $sentence->bindParam(':id_unidad_medida', $id_unidad_medida); // AGREGAR ESTA LÍNEA
         $sentence->execute();
 
-        $id = $db->lastInsertId();
         Flight::json(array('id' => $id));
     }
 
@@ -73,13 +82,15 @@ class ElementosFisicos
         descripcion = :descripcion,
         material = :material,
         id_unidad_medida = :id_unidad_medida
-        WHERE id = :id");
+        WHERE id = :id
+        AND id_tenant = :id_tenant");
 
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':descripcion', $descripcion);
         $sentence->bindParam(':material', $material);
         $sentence->bindParam(':id_unidad_medida', $id_unidad_medida); // AGREGAR ESTA LÍNEA
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         self::getById($id);
@@ -89,8 +100,9 @@ class ElementosFisicos
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("DELETE FROM elementos_fisicos WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM elementos_fisicos WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json(array('id' => $id));
@@ -113,9 +125,11 @@ class ElementosFisicos
             FROM elementos_fisicos_x_procesos_limpieza efpl
             INNER JOIN tipos_proceso_limpieza tpl ON efpl.id_tipo_proceso_limpieza = tpl.id
             WHERE efpl.id_elemento_fisico = :id_elemento
+            AND efpl.id_tenant = :id_tenant
             ORDER BY tpl.nombre
         ");
         $sentence->bindParam(':id_elemento', $id_elemento);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $procesos = $sentence->fetchAll();
 
@@ -137,8 +151,10 @@ class ElementosFisicos
                 INNER JOIN productos p ON pl.id_producto = p.id
                 LEFT JOIN unidades_medida um ON p.id_unidad_medida = um.id
                 WHERE efplp.id_elementos_fisicos_x_procesos_limpieza = :id_proceso
+                AND efplp.id_tenant = :id_tenant
             ");
             $stmtProductos->bindParam(':id_proceso', $proceso['id']);
+            $stmtProductos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtProductos->execute();
             $proceso['productos'] = $stmtProductos->fetchAll();
         }
@@ -164,8 +180,10 @@ class ElementosFisicos
             LEFT JOIN unidades_medida um ON p.id_unidad_medida = um.id
             LEFT JOIN tipos_producto_limpieza tpl ON pl.id_tipo_producto_limpieza = tpl.id
             WHERE p.activo = 1
+            AND pl.id_tenant = :id_tenant
             ORDER BY p.nombre
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -187,10 +205,12 @@ class ElementosFisicos
                 FROM elementos_fisicos_x_procesos_limpieza 
                 WHERE id_elemento_fisico = :id_elemento_fisico 
                 AND id_tipo_proceso_limpieza = :id_tipo_proceso_limpieza
+                AND id_tenant = :id_tenant
             ");
 
             $checkStmt->bindParam(':id_elemento_fisico', $requestData['id_elemento_fisico']);
             $checkStmt->bindParam(':id_tipo_proceso_limpieza', $requestData['id_tipo_proceso_limpieza']);
+            $checkStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkStmt->execute();
             $result = $checkStmt->fetch();
 
@@ -198,32 +218,37 @@ class ElementosFisicos
                 throw new Exception("Este tipo de proceso ya está asignado al elemento físico");
             }
 
+            $id_proceso = Uuid::generar();
             $stmt = $db->prepare("
                 INSERT INTO elementos_fisicos_x_procesos_limpieza (
+                    id,
+                    id_tenant,
                     id_elemento_fisico,
                     id_tipo_proceso_limpieza
                 ) VALUES (
+                    :id,
+                    :id_tenant,
                     :id_elemento_fisico,
                     :id_tipo_proceso_limpieza
                 )
             ");
 
+            $stmt->bindValue(':id', $id_proceso);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_elemento_fisico', $requestData['id_elemento_fisico']);
             $stmt->bindParam(':id_tipo_proceso_limpieza', $requestData['id_tipo_proceso_limpieza']);
             $stmt->execute();
 
-            $id_proceso = $db->lastInsertId();
-
             // Si se enviaron productos, agregarlos
             if (isset($requestData['productos']) && is_array($requestData['productos'])) {
                 $stmtProducto = $db->prepare("
-                                            INSERT INTO elementos_fisicos_x_procesos_limpieza_productos (
+                                            INSERT INTO elementos_fisicos_x_procesos_limpieza_productos (id, id_tenant, 
                                                 id_elementos_fisicos_x_procesos_limpieza,  
                                                 id_producto_limpieza,
                                                 cantidad_sugerida,
                                                 instrucciones
                                             ) VALUES (
-                                                :id_elementos_fisicos_x_procesos_limpieza,
+                                                :id, :id_tenant, :id_elementos_fisicos_x_procesos_limpieza,
                                                 :id_producto_limpieza,
                                                 :cantidad_sugerida,
                                                 :instrucciones
@@ -231,6 +256,9 @@ class ElementosFisicos
                                         ");
 
                 foreach ($requestData['productos'] as $producto) {
+                    $idEfplp = Uuid::generar();
+                    $stmtProducto->bindValue(':id', $idEfplp);
+                    $stmtProducto->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $stmtProducto->bindParam(':id_elementos_fisicos_x_procesos_limpieza', $id_proceso);  // Cambiado
                     $stmtProducto->bindParam(':id_producto_limpieza', $producto['id_producto_limpieza']);
                     $stmtProducto->bindParam(':cantidad_sugerida', $producto['cantidad_sugerida']);
@@ -262,20 +290,22 @@ class ElementosFisicos
             $stmtDelete = $db->prepare("
                 DELETE FROM elementos_fisicos_x_procesos_limpieza_productos 
                 WHERE id_elementos_fisicos_x_procesos_limpieza = :id_proceso
+                AND id_tenant = :id_tenant
             ");
             $stmtDelete->bindParam(':id_proceso', $id_proceso);
+            $stmtDelete->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtDelete->execute();
 
             // Insertar nuevos productos
             if (isset($requestData['productos']) && is_array($requestData['productos'])) {
                 $stmtInsert = $db->prepare("
-                    INSERT INTO elementos_fisicos_x_procesos_limpieza_productos (
+                    INSERT INTO elementos_fisicos_x_procesos_limpieza_productos (id, id_tenant, 
                         id_elementos_fisicos_x_procesos_limpieza,
                         id_producto_limpieza,
                         cantidad_sugerida,
                         instrucciones
                     ) VALUES (
-                        :id_elementos_fisicos_x_procesos_limpieza,
+                        :id, :id_tenant, :id_elementos_fisicos_x_procesos_limpieza,
                         :id_producto_limpieza,
                         :cantidad_sugerida,
                         :instrucciones
@@ -283,6 +313,9 @@ class ElementosFisicos
                 ");
 
                 foreach ($requestData['productos'] as $producto) {
+                    $idEfplp = Uuid::generar();
+                    $stmtInsert->bindValue(':id', $idEfplp);
+                    $stmtInsert->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $stmtInsert->bindParam(':id_elementos_fisicos_x_procesos_limpieza', $id_proceso);
                     $stmtInsert->bindParam(':id_producto_limpieza', $producto['id_producto_limpieza']);
                     $stmtInsert->bindParam(':cantidad_sugerida', $producto['cantidad_sugerida']);
@@ -308,8 +341,10 @@ class ElementosFisicos
             $stmt = $db->prepare("
                 DELETE FROM elementos_fisicos_x_procesos_limpieza 
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             Flight::json(['mensaje' => 'Proceso eliminado correctamente']);

@@ -18,8 +18,10 @@ class ProductosAlimentacion
             INNER JOIN productos p ON pa.id_producto = p.id
             LEFT JOIN unidades_medida um ON p.id_unidad_medida = um.id
             LEFT JOIN tipos_producto_alimentacion tpa ON pa.id_tipo_producto_alimentacion = tpa.id
+            WHERE pa.id_tenant = :id_tenant
             ORDER BY pa.id DESC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $productos = $sentence->fetchAll();
 
@@ -29,8 +31,10 @@ class ProductosAlimentacion
             FROM productos_alimentacion_clasificaciones pac
             INNER JOIN clasificacion_productos_alimentacion cpa ON cpa.id = pac.id_clasificacion_productos_alimentacion
             WHERE pac.id_producto_alimentacion = :id_producto
+            AND pac.id_tenant = :id_tenant
             ORDER BY cpa.nombre
         ");
+        $stmtClasif->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
         // Agregar las clasificaciones a cada producto
         foreach ($productos as &$producto) {
@@ -65,8 +69,10 @@ class ProductosAlimentacion
             LEFT JOIN unidades_medida um ON p.id_unidad_medida = um.id
             LEFT JOIN tipos_producto_alimentacion tpa ON pa.id_tipo_producto_alimentacion = tpa.id
             WHERE pa.id = :id
+            AND pa.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -80,22 +86,28 @@ class ProductosAlimentacion
         $id_tipo_producto_alimentacion = Flight::request()->data['id_tipo_producto_alimentacion'];
         $dias_vida_util = Flight::request()->data['dias_vida_util'] ?? 0;
 
+        $id = Uuid::generar();
         $sentence = $db->prepare("INSERT INTO productos_alimentacion(
+            id,
+            id_tenant,
             id_producto,
             id_tipo_producto_alimentacion,
             dias_vida_util
         ) VALUES (
+            :id,
+            :id_tenant,
             :id_producto,
             :id_tipo_producto_alimentacion,
             :dias_vida_util
         )");
 
+        $sentence->bindValue(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_producto', $id_producto);
         $sentence->bindParam(':id_tipo_producto_alimentacion', $id_tipo_producto_alimentacion);
         $sentence->bindParam(':dias_vida_util', $dias_vida_util);
         $sentence->execute();
 
-        $id = $db->lastInsertId();
         Flight::json(array('id' => $id));
     }
 
@@ -112,12 +124,14 @@ class ProductosAlimentacion
             id_producto = :id_producto,
             id_tipo_producto_alimentacion = :id_tipo_producto_alimentacion,
             dias_vida_util = :dias_vida_util
-            WHERE id = :id");
+            WHERE id = :id
+            AND id_tenant = :id_tenant");
 
         $sentence->bindParam(':id_producto', $id_producto);
         $sentence->bindParam(':id_tipo_producto_alimentacion', $id_tipo_producto_alimentacion);
         $sentence->bindParam(':dias_vida_util', $dias_vida_util);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         self::getById($id);
@@ -127,8 +141,9 @@ class ProductosAlimentacion
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("DELETE FROM productos_alimentacion WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM productos_alimentacion WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json(array('id' => $id));
@@ -145,11 +160,14 @@ class ProductosAlimentacion
             LEFT JOIN tipos_producto tp ON p.id_tipo_producto = tp.id
             WHERE p.id_tipo_producto = 3 
             AND p.activo = 1
+            AND p.id_tenant = :id_tenant
             AND p.id NOT IN (
-                SELECT id_producto FROM productos_alimentacion
+                SELECT id_producto FROM productos_alimentacion WHERE id_tenant = :id_tenant_sub
             )
             ORDER BY p.nombre ASC
         ");
+        $sentence->bindValue(':id_tenant_sub', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -173,10 +191,12 @@ class ProductosAlimentacion
                 LEFT JOIN productos_alimentacion_clasificaciones pac 
                     ON pac.id_clasificacion_productos_alimentacion = cpa.id 
                     AND pac.id_producto_alimentacion = :id_producto
+                WHERE cpa.id_tenant = :id_tenant
                 ORDER BY cpa.nombre ASC
             ");
 
             $sentence->bindParam(':id_producto', $id_producto_alimentacion);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
 
@@ -200,19 +220,24 @@ class ProductosAlimentacion
             $deleteStmt = $db->prepare("
                 DELETE FROM productos_alimentacion_clasificaciones 
                 WHERE id_producto_alimentacion = :id_producto
+                AND id_tenant = :id_tenant
             ");
             $deleteStmt->bindParam(':id_producto', $id_producto_alimentacion);
+            $deleteStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $deleteStmt->execute();
 
             // Insertar las nuevas clasificaciones
             if (!empty($clasificaciones)) {
                 $insertStmt = $db->prepare("
                     INSERT INTO productos_alimentacion_clasificaciones 
-                    (id_producto_alimentacion, id_clasificacion_productos_alimentacion) 
-                    VALUES (:id_producto, :id_clasificacion)
+                    (id, id_tenant, id_producto_alimentacion, id_clasificacion_productos_alimentacion) 
+                    VALUES (:id, :id_tenant, :id_producto, :id_clasificacion)
                 ");
 
                 foreach ($clasificaciones as $id_clasificacion) {
+                    $idPac = Uuid::generar();
+                    $insertStmt->bindValue(':id', $idPac);
+                    $insertStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $insertStmt->bindParam(':id_producto', $id_producto_alimentacion);
                     $insertStmt->bindParam(':id_clasificacion', $id_clasificacion);
                     $insertStmt->execute();
@@ -240,10 +265,12 @@ class ProductosAlimentacion
                 DELETE FROM productos_alimentacion_clasificaciones 
                 WHERE id_producto_alimentacion = :id_producto 
                 AND id_clasificacion_productos_alimentacion = :id_clasificacion
+                AND id_tenant = :id_tenant
             ");
 
             $sentence->bindParam(':id_producto', $id_producto_alimentacion);
             $sentence->bindParam(':id_clasificacion', $id_clasificacion);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(['success' => true, 'message' => 'Clasificación eliminada']);
@@ -271,9 +298,11 @@ class ProductosAlimentacion
             LEFT JOIN tipos_producto_alimentacion tpa ON pa.id_tipo_producto_alimentacion = tpa.id
             LEFT JOIN productos_alimentacion_clasificaciones pac ON pac.id_producto_alimentacion = pa.id
             LEFT JOIN clasificacion_productos_alimentacion cpa ON cpa.id = pac.id_clasificacion_productos_alimentacion
+            WHERE pa.id_tenant = :id_tenant
             GROUP BY pa.id
             ORDER BY pa.id DESC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -308,12 +337,14 @@ class ProductosAlimentacion
                 LEFT JOIN tipos_producto_alimentacion tpa ON pa.id_tipo_producto_alimentacion = tpa.id
                 WHERE p.stock_actual > 0 
                     AND p.activo = 1
+                    AND p.id_tenant = :id_tenant
                     AND pac.id_clasificacion_productos_alimentacion = :id_clasificacion
                 GROUP BY p.id
                 ORDER BY p.nombre ASC
             ");
 
             $sentence->bindParam(':id_clasificacion', $id_clasificacion);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
 
@@ -365,9 +396,10 @@ class ProductosAlimentacion
             FROM productos p
             LEFT JOIN unidades_medida um ON p.id_unidad_medida = um.id
             WHERE p.id IN ($placeholders)
+            AND p.id_tenant = ?
         ");
 
-            $sentence->execute($ids);
+            $sentence->execute(array_merge($ids, [TenantContext::id()]));
             $productos_db = $sentence->fetchAll(PDO::FETCH_ASSOC);
 
             // Crear un mapa de productos por ID para búsqueda rápida

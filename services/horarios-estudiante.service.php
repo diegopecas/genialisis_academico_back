@@ -10,10 +10,11 @@ class HorariosEstudiante
                        ds.nombre AS nombre_dia
                 FROM horarios_estudiante he
                 INNER JOIN dias_semana ds ON ds.id = he.id_dia_semana
-                WHERE he.id_estudiante = :id_estudiante
+                WHERE he.id_estudiante = :id_estudiante AND he.id_tenant = :id_tenant
                 ORDER BY he.id_dia_semana
             ");
             $stmt->bindParam(':id_estudiante', $id_estudiante);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $response = $stmt->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -37,9 +38,10 @@ class HorariosEstudiante
             $stmt = $db->prepare("
                 UPDATE horarios_estudiante 
                 SET hora_entrada = :hora_entrada, hora_salida = :hora_salida
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':hora_entrada', $hora_entrada);
             $stmt->bindParam(':hora_salida', $hora_salida);
             $stmt->execute();
@@ -73,10 +75,11 @@ class HorariosEstudiante
             $db->beginTransaction();
 
             $stmt = $db->prepare("
-                INSERT INTO horarios_estudiante (id_estudiante, id_dia_semana, hora_entrada, hora_salida)
-                VALUES (:id_estudiante, :id_dia_semana, :hora_entrada, :hora_salida)
+                INSERT INTO horarios_estudiante (id_tenant, id_estudiante, id_dia_semana, hora_entrada, hora_salida)
+                VALUES (:id_tenant, :id_estudiante, :id_dia_semana, :hora_entrada, :hora_salida)
                 ON DUPLICATE KEY UPDATE hora_entrada = :hora_entrada2, hora_salida = :hora_salida2
             ");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             foreach ($horarios as $horario) {
                 $stmt->bindParam(':id_estudiante', $id_estudiante);
@@ -111,11 +114,12 @@ class HorariosEstudiante
             $id_estudiante = $data['id_estudiante'];
 
             $stmt = $db->prepare("
-                INSERT INTO horarios_estudiante (id_estudiante, id_dia_semana, hora_entrada, hora_salida)
-                SELECT :id_estudiante, ds.id, ds.hora_entrada, ds.hora_salida
+                INSERT INTO horarios_estudiante (id_tenant, id_estudiante, id_dia_semana, hora_entrada, hora_salida)
+                SELECT :id_tenant, :id_estudiante, ds.id, ds.hora_entrada, ds.hora_salida
                 FROM dias_semana ds
                 ON DUPLICATE KEY UPDATE hora_entrada = ds.hora_entrada, hora_salida = ds.hora_salida
             ");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_estudiante', $id_estudiante);
             $stmt->execute();
 

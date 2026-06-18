@@ -7,8 +7,10 @@ class GoogleConfiguracion
         $sentence = $db->prepare("
             SELECT id, clave, valor, descripcion, fecha_actualizacion
             FROM google_configuracion
+            WHERE id_tenant = :id_tenant
             ORDER BY id
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -21,8 +23,10 @@ class GoogleConfiguracion
             SELECT id, clave, valor, descripcion, fecha_actualizacion
             FROM google_configuracion
             WHERE id = :id
+            AND id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -41,11 +45,12 @@ class GoogleConfiguracion
             UPDATE google_configuracion SET 
                 valor = :valor,
                 descripcion = :descripcion
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
         $sentence->bindParam(':valor', $valor);
         $sentence->bindParam(':descripcion', $descripcion);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         self::getById($id);
@@ -59,9 +64,10 @@ class GoogleConfiguracion
     {
         $db = Flight::db();
         $sentence = $db->prepare("
-            SELECT valor FROM google_configuracion WHERE clave = :clave
+            SELECT valor FROM google_configuracion WHERE clave = :clave AND id_tenant = :id_tenant
         ");
         $sentence->bindParam(':clave', $clave);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $row = $sentence->fetch();
         return $row ? $row['valor'] : null;
@@ -75,10 +81,11 @@ class GoogleConfiguracion
     {
         $db = Flight::db();
         $sentence = $db->prepare("
-            UPDATE google_configuracion SET valor = :valor WHERE clave = :clave
+            UPDATE google_configuracion SET valor = :valor WHERE clave = :clave AND id_tenant = :id_tenant
         ");
         $sentence->bindParam(':clave', $clave);
         $sentence->bindParam(':valor', $valor);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
     }
 }

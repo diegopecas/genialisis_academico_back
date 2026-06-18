@@ -45,8 +45,10 @@ class IndicadoresLogros
             ON l.id_estandar_basico = estb.id
         LEFT JOIN cortes_academicos ca
             ON l.id_corte_academico = ca.id
+        WHERE il.id_tenant = :id_tenant
         ORDER BY il.id DESC
     ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -97,9 +99,10 @@ class IndicadoresLogros
             ON l.id_estandar_basico = estb.id
         LEFT JOIN cortes_academicos ca
             ON l.id_corte_academico = ca.id
-        WHERE il.id = :id
+        WHERE il.id = :id AND il.id_tenant = :id_tenant
     ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -109,8 +112,9 @@ class IndicadoresLogros
     public static function getByLogro($id_logro)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM indicadores_logros WHERE id_logro = :id_logro ORDER BY id");
+        $sentence = $db->prepare("SELECT * FROM indicadores_logros WHERE id_logro = :id_logro AND id_tenant = :id_tenant ORDER BY id");
         $sentence->bindParam(':id_logro', $id_logro);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -131,12 +135,15 @@ class IndicadoresLogros
                 return;
             }
 
-            $sentence = $db->prepare("INSERT INTO indicadores_logros (nombre, id_logro) VALUES (:nombre, :id_logro)");
+            $idNew = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO indicadores_logros (id, id_tenant, nombre, id_logro) VALUES (:id, :id_tenant, :nombre, :id_logro)");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':id_logro', $id_logro);
             $sentence->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idNew;
             error_log("Indicador de logro creado con ID: $id");
 
             Flight::json(array('id' => $id));
@@ -162,16 +169,18 @@ class IndicadoresLogros
             }
 
             // Verificar que el registro exista antes de actualizar
-            $check = $db->prepare("SELECT id FROM indicadores_logros WHERE id = :id");
+            $check = $db->prepare("SELECT id FROM indicadores_logros WHERE id = :id AND id_tenant = :id_tenant");
             $check->bindParam(':id', $id);
+            $check->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $check->execute();
             if ($check->rowCount() == 0) {
                 Flight::json(array('error' => 'No se encontró el indicador de logro con el ID especificado'), 404);
                 return;
             }
 
-            $sentence = $db->prepare("UPDATE indicadores_logros SET nombre = :nombre, id_logro = :id_logro WHERE id = :id");
+            $sentence = $db->prepare("UPDATE indicadores_logros SET nombre = :nombre, id_logro = :id_logro WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':id_logro', $id_logro);
             $sentence->execute();
@@ -192,8 +201,9 @@ class IndicadoresLogros
 
             error_log("Eliminando indicador de logro ID: $id");
 
-            $sentence = $db->prepare("DELETE FROM indicadores_logros WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM indicadores_logros WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));

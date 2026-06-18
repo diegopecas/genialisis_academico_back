@@ -33,8 +33,9 @@ class IaMaquinaActividades
                 SELECT g.id, g.nombre 
                 FROM grados_x_grupo gxg 
                 INNER JOIN grados g ON gxg.id_grado = g.id 
-                WHERE gxg.id_grupo = :id_grupo
+                WHERE gxg.id_grupo = :id_grupo AND gxg.id_tenant = :id_tenant
             ");
+            $stmtGrados->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtGrados->bindParam(':id_grupo', $id_grupo);
             $stmtGrados->execute();
             $grados = $stmtGrados->fetchAll(PDO::FETCH_ASSOC);
@@ -45,8 +46,9 @@ class IaMaquinaActividades
                 SELECT s.id_corte_academico, ca.nombre AS nombre_corte 
                 FROM sprints s 
                 LEFT JOIN cortes_academicos ca ON s.id_corte_academico = ca.id 
-                WHERE s.id = :id_sprint
+                WHERE s.id = :id_sprint AND s.id_tenant = :id_tenant
             ");
+            $stmtSprint->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtSprint->bindParam(':id_sprint', $id_sprint);
             $stmtSprint->execute();
             $sprint = $stmtSprint->fetch(PDO::FETCH_ASSOC);
@@ -66,6 +68,7 @@ class IaMaquinaActividades
                 WHERE l.id_grado IN ($placeholders)
                 AND l.id_area_academica = ?
                 " . ($id_corte ? "AND l.id_corte_academico = ?" : "") . "
+                AND l.id_tenant = ?
                 ORDER BY l.nombre, il.nombre
             ";
             $stmtLogros = $db->prepare($sqlLogros);
@@ -77,6 +80,7 @@ class IaMaquinaActividades
             if ($id_corte) {
                 $stmtLogros->bindValue($paramIndex++, $id_corte);
             }
+            $stmtLogros->bindValue($paramIndex++, TenantContext::id(), PDO::PARAM_INT);
             $stmtLogros->execute();
             $logrosIndicadores = $stmtLogros->fetchAll(PDO::FETCH_ASSOC);
 
@@ -102,7 +106,8 @@ class IaMaquinaActividades
                 ];
             }
 
-            $stmtTipos = $db->prepare("SELECT id, nombre FROM tipos_actividades_academicas ORDER BY nombre");
+            $stmtTipos = $db->prepare("SELECT id, nombre FROM tipos_actividades_academicas WHERE id_tenant = :id_tenant ORDER BY nombre");
+            $stmtTipos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtTipos->execute();
             $tiposActividad = $stmtTipos->fetchAll(PDO::FETCH_ASSOC);
 
@@ -211,11 +216,11 @@ PROMPT;
                 $idsIndicadores = $act['indicadores_ids'] ?? [];
                 foreach ($idsIndicadores as $idInd) {
                     foreach ($logrosIndicadores as $li) {
-                        if ((int)$li['indicador_id'] === (int)$idInd) {
+                        if ((string)$li['indicador_id'] === (string)$idInd) {
                             $indicadoresEnriquecidos[] = [
-                                'id' => (int)$li['indicador_id'],
+                                'id' => $li['indicador_id'],
                                 'nombre' => $li['indicador_nombre'],
-                                'logro_id' => (int)$li['logro_id'],
+                                'logro_id' => $li['logro_id'],
                                 'logro_nombre' => $li['logro_nombre']
                             ];
                             break;
@@ -278,14 +283,17 @@ PROMPT;
                     $materialesTexto = implode(', ', array_filter($nombres));
                 }
 
-                $idTipo = !empty($act['id_tipo_actividad_academica']) ? (int)$act['id_tipo_actividad_academica'] : 1;
-                $idAmbiente = !empty($act['id_ambiente']) ? (int)$act['id_ambiente'] : null;
+                $idTipo = !empty($act['id_tipo_actividad_academica']) ? $act['id_tipo_actividad_academica'] : 1;
+                $idAmbiente = !empty($act['id_ambiente']) ? $act['id_ambiente'] : null;
 
+                $idActividad = Uuid::generar();
                 $stmtActividad = $db->prepare("
                     INSERT INTO actividades_academicas 
-                    (id_tipo_actividad_academica, titulo, descripcion, nivel_uno, nivel_dos, minutos_duracion, materiales, id_ambiente)
-                    VALUES (:id_tipo, :titulo, :descripcion, :nivel_uno, :nivel_dos, :duracion, :materiales, :id_ambiente)
+                    (id, id_tenant, id_tipo_actividad_academica, titulo, descripcion, nivel_uno, nivel_dos, minutos_duracion, materiales, id_ambiente)
+                    VALUES (:id, :id_tenant, :id_tipo, :titulo, :descripcion, :nivel_uno, :nivel_dos, :duracion, :materiales, :id_ambiente)
                 ");
+                $stmtActividad->bindValue(':id', $idActividad);
+                $stmtActividad->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtActividad->bindValue(':id_tipo', $idTipo);
                 $stmtActividad->bindValue(':titulo', $act['titulo']);
                 $stmtActividad->bindValue(':descripcion', $act['descripcion'] ?? '');
@@ -296,13 +304,13 @@ PROMPT;
                 $stmtActividad->bindValue(':id_ambiente', $idAmbiente);
                 $stmtActividad->execute();
 
-                $idActividad = $db->lastInsertId();
 
                 if (!empty($act['materiales'])) {
                     $stmtMaterial = $db->prepare("
-                        INSERT INTO materiales_x_actividad (id_actividad_academica, id_producto, nombre_material, cantidad)
-                        VALUES (:id_actividad, :id_producto, :nombre_material, :cantidad)
+                        INSERT INTO materiales_x_actividad (id_tenant, id_actividad_academica, id_producto, nombre_material, cantidad)
+                        VALUES (:id_tenant_m, :id_actividad, :id_producto, :nombre_material, :cantidad)
                     ");
+                    $stmtMaterial->bindValue(':id_tenant_m', TenantContext::id(), PDO::PARAM_INT);
                     foreach ($act['materiales'] as $mat) {
                         $stmtMaterial->bindValue(':id_actividad', $idActividad);
                         $stmtMaterial->bindValue(':id_producto', $mat['id_producto'] ?? null);
@@ -314,11 +322,13 @@ PROMPT;
 
                 if (!empty($act['indicadores_ids'])) {
                     $stmtIndicador = $db->prepare("
-                        INSERT INTO actividades_academicas_x_indicadores_logros (id_actividad_academica, id_indicador_logro)
-                        VALUES (:id_actividad, :id_indicador)
+                        INSERT INTO actividades_academicas_x_indicadores_logros (id_tenant, id_actividad_academica, id_indicador_logro)
+                        VALUES (:id_tenant_i, :id_actividad, :id_indicador)
                     ");
+                    $stmtIndicador->bindValue(':id_tenant_i', TenantContext::id(), PDO::PARAM_INT);
                     foreach ($act['indicadores_ids'] as $idIndicador) {
-                        $stmtCheck = $db->prepare("SELECT COUNT(*) as count FROM actividades_academicas_x_indicadores_logros WHERE id_actividad_academica = :id_act AND id_indicador_logro = :id_ind");
+                        $stmtCheck = $db->prepare("SELECT COUNT(*) as count FROM actividades_academicas_x_indicadores_logros WHERE id_actividad_academica = :id_act AND id_indicador_logro = :id_ind AND id_tenant = :id_tenant");
+                        $stmtCheck->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                         $stmtCheck->bindValue(':id_act', $idActividad);
                         $stmtCheck->bindValue(':id_ind', $idIndicador);
                         $stmtCheck->execute();
@@ -332,11 +342,14 @@ PROMPT;
                     }
                 }
 
+                $idTarea = Uuid::generar();
                 $stmtTarea = $db->prepare("
                     INSERT INTO tareas_x_sprints 
-                    (id_sprint, id_actividad_academica, id_grupo, id_area_academica, id_estado_tarea, es_tarea_adicional, fecha_registro)
-                    VALUES (:id_sprint, :id_actividad, :id_grupo, :id_area, 1, :es_tarea_adicional, NOW())
+                    (id, id_tenant, id_sprint, id_actividad_academica, id_grupo, id_area_academica, id_estado_tarea, es_tarea_adicional, fecha_registro)
+                    VALUES (:id, :id_tenant, :id_sprint, :id_actividad, :id_grupo, :id_area, 1, :es_tarea_adicional, NOW())
                 ");
+                $stmtTarea->bindValue(':id', $idTarea);
+                $stmtTarea->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtTarea->bindValue(':id_sprint', $id_sprint);
                 $stmtTarea->bindValue(':id_actividad', $idActividad);
                 $stmtTarea->bindValue(':id_grupo', $id_grupo);
@@ -347,7 +360,7 @@ PROMPT;
                 $resultados[] = [
                     'id_actividad' => $idActividad,
                     'titulo' => $act['titulo'],
-                    'id_tarea_sprint' => $db->lastInsertId()
+                    'id_tarea_sprint' => $idTarea
                 ];
             }
 
@@ -368,7 +381,8 @@ PROMPT;
 
     private static function obtenerConfiguracion($db)
     {
-        $sentence = $db->prepare("SELECT clave, valor FROM ia_configuracion");
+        $sentence = $db->prepare("SELECT clave, valor FROM ia_configuracion WHERE id_tenant = :id_tenant");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $rows = $sentence->fetchAll(PDO::FETCH_ASSOC);
         $config = [];
@@ -507,14 +521,16 @@ PROMPT;
                 return;
             }
 
-            $stmtGrados = $db->prepare("SELECT g.id, g.nombre FROM grados_x_grupo gxg INNER JOIN grados g ON gxg.id_grado = g.id WHERE gxg.id_grupo = :id_grupo");
+            $stmtGrados = $db->prepare("SELECT g.id, g.nombre FROM grados_x_grupo gxg INNER JOIN grados g ON gxg.id_grado = g.id WHERE gxg.id_grupo = :id_grupo AND gxg.id_tenant = :id_tenant");
+            $stmtGrados->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtGrados->bindParam(':id_grupo', $id_grupo);
             $stmtGrados->execute();
             $grados = $stmtGrados->fetchAll(PDO::FETCH_ASSOC);
             $gradosIds = array_column($grados, 'id');
             $gradosTexto = implode(', ', array_column($grados, 'nombre'));
 
-            $stmtSprint = $db->prepare("SELECT s.id_corte_academico FROM sprints s WHERE s.id = :id_sprint");
+            $stmtSprint = $db->prepare("SELECT s.id_corte_academico FROM sprints s WHERE s.id = :id_sprint AND s.id_tenant = :id_tenant");
+            $stmtSprint->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtSprint->bindParam(':id_sprint', $id_sprint);
             $stmtSprint->execute();
             $sprint = $stmtSprint->fetch(PDO::FETCH_ASSOC);
@@ -523,12 +539,13 @@ PROMPT;
             $placeholders = implode(',', array_fill(0, count($gradosIds), '?'));
             $sqlLogros = "SELECT l.id AS logro_id, l.nombre AS logro_nombre, il.id AS indicador_id, il.nombre AS indicador_nombre
                 FROM logros l INNER JOIN indicadores_logros il ON l.id = il.id_logro
-                WHERE l.id_grado IN ($placeholders) AND l.id_area_academica = ?" . ($id_corte ? " AND l.id_corte_academico = ?" : "") . " ORDER BY l.nombre";
+                WHERE l.id_grado IN ($placeholders) AND l.id_area_academica = ?" . ($id_corte ? " AND l.id_corte_academico = ?" : "") . " AND l.id_tenant = ? ORDER BY l.nombre";
             $stmtLogros = $db->prepare($sqlLogros);
             $paramIndex = 1;
             foreach ($gradosIds as $gid) { $stmtLogros->bindValue($paramIndex++, $gid); }
             $stmtLogros->bindValue($paramIndex++, $id_area);
             if ($id_corte) { $stmtLogros->bindValue($paramIndex++, $id_corte); }
+            $stmtLogros->bindValue($paramIndex++, TenantContext::id(), PDO::PARAM_INT);
             $stmtLogros->execute();
             $logrosIndicadores = $stmtLogros->fetchAll(PDO::FETCH_ASSOC);
 
@@ -548,14 +565,16 @@ PROMPT;
 
             $nombreTipo = '';
             if ($id_tipo_actividad) {
-                $stmtTipo = $db->prepare("SELECT nombre FROM tipos_actividades_academicas WHERE id = :id");
+                $stmtTipo = $db->prepare("SELECT nombre FROM tipos_actividades_academicas WHERE id = :id AND id_tenant = :id_tenant");
+                $stmtTipo->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtTipo->bindParam(':id', $id_tipo_actividad);
                 $stmtTipo->execute();
                 $tipo = $stmtTipo->fetch(PDO::FETCH_ASSOC);
                 $nombreTipo = $tipo['nombre'] ?? '';
             }
 
-            $stmtTipos = $db->prepare("SELECT id, nombre FROM tipos_actividades_academicas ORDER BY id");
+            $stmtTipos = $db->prepare("SELECT id, nombre FROM tipos_actividades_academicas WHERE id_tenant = :id_tenant ORDER BY id");
+            $stmtTipos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtTipos->execute();
             $tiposDisponibles = $stmtTipos->fetchAll(PDO::FETCH_ASSOC);
             $tiposTexto = implode(', ', array_map(function($t) { return "ID:{$t['id']} \"{$t['nombre']}\""; }, $tiposDisponibles));
@@ -618,11 +637,11 @@ PROMPT;
             $idsIndicadores = $sugerencia['indicadores_ids'] ?? [];
             foreach ($idsIndicadores as $idInd) {
                 foreach ($logrosIndicadores as $li) {
-                    if ((int)$li['indicador_id'] === (int)$idInd) {
+                    if ((string)$li['indicador_id'] === (string)$idInd) {
                         $indicadoresEnriquecidos[] = [
-                            'id' => (int)$li['indicador_id'],
+                            'id' => $li['indicador_id'],
                             'nombre' => $li['indicador_nombre'],
-                            'logro_id' => (int)$li['logro_id'],
+                            'logro_id' => $li['logro_id'],
                             'logro_nombre' => $li['logro_nombre']
                         ];
                         break;
@@ -662,7 +681,8 @@ PROMPT;
                 return;
             }
 
-            $stmtGrados = $db->prepare("SELECT id_grado FROM grados_x_grupo WHERE id_grupo = :id_grupo");
+            $stmtGrados = $db->prepare("SELECT id_grado FROM grados_x_grupo WHERE id_grupo = :id_grupo AND id_tenant = :id_tenant");
+            $stmtGrados->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtGrados->bindParam(':id_grupo', $id_grupo);
             $stmtGrados->execute();
             $gradosIds = array_column($stmtGrados->fetchAll(PDO::FETCH_ASSOC), 'id_grado');
@@ -689,6 +709,7 @@ PROMPT;
                 WHERE l.id_grado IN ($placeholders)
                 AND l.id_corte_academico = ?
                 " . ($id_area ? "AND l.id_area_academica = ?" : "") . "
+                AND l.id_tenant = ?
                 ORDER BY aa.nombre, l.nombre, il.nombre
             ";
 
@@ -697,6 +718,7 @@ PROMPT;
             foreach ($gradosIds as $gid) { $stmt->bindValue($idx++, $gid); }
             $stmt->bindValue($idx++, $id_corte);
             if ($id_area) { $stmt->bindValue($idx++, $id_area); }
+            $stmt->bindValue($idx++, TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -705,16 +727,16 @@ PROMPT;
                 $lid = $r['logro_id'];
                 if (!isset($logrosAgrupados[$lid])) {
                     $logrosAgrupados[$lid] = [
-                        'id' => (int)$lid,
+                        'id' => $lid,
                         'nombre' => $r['logro_nombre'],
-                        'id_area_academica' => (int)$r['id_area_academica'],
+                        'id_area_academica' => $r['id_area_academica'],
                         'area_nombre' => $r['area_nombre'],
                         'esfera' => $r['esfera_nombre'],
                         'indicadores' => []
                     ];
                 }
                 $logrosAgrupados[$lid]['indicadores'][] = [
-                    'id' => (int)$r['indicador_id'],
+                    'id' => $r['indicador_id'],
                     'nombre' => $r['indicador_nombre']
                 ];
             }
@@ -757,9 +779,11 @@ PROMPT;
                 INNER JOIN indicadores_logros il ON aaxil.id_indicador_logro = il.id
                 INNER JOIN logros l ON il.id_logro = l.id
                 WHERE txs.id_sprint = :id_sprint
+                AND txs.id_tenant = :id_tenant
                 ORDER BY l.id, aa.id
             ";
             $stmt = $db->prepare($sql);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_sprint', $id_sprint);
             $stmt->execute();
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -767,12 +791,12 @@ PROMPT;
             // Agrupar por id_logro
             $mapa = [];
             foreach ($rows as $r) {
-                $idLogro = (int)$r['id_logro'];
+                $idLogro = $r['id_logro'];
                 if (!isset($mapa[$idLogro])) {
                     $mapa[$idLogro] = [];
                 }
                 // Evitar duplicados de actividad dentro del mismo logro
-                $idAct = (int)$r['id_actividad'];
+                $idAct = $r['id_actividad'];
                 $yaExiste = false;
                 foreach ($mapa[$idLogro] as $a) {
                     if ($a['id_actividad'] === $idAct) { $yaExiste = true; break; }
@@ -820,7 +844,8 @@ PROMPT;
                 return;
             }
 
-            $stmtGrados = $db->prepare("SELECT g.id, g.nombre, g.descripcion FROM grados_x_grupo gxg INNER JOIN grados g ON gxg.id_grado = g.id WHERE gxg.id_grupo = :id_grupo");
+            $stmtGrados = $db->prepare("SELECT g.id, g.nombre, g.descripcion FROM grados_x_grupo gxg INNER JOIN grados g ON gxg.id_grado = g.id WHERE gxg.id_grupo = :id_grupo AND gxg.id_tenant = :id_tenant");
+            $stmtGrados->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtGrados->bindParam(':id_grupo', $id_grupo);
             $stmtGrados->execute();
             $grados = $stmtGrados->fetchAll(PDO::FETCH_ASSOC);
@@ -842,11 +867,13 @@ PROMPT;
                 INNER JOIN indicadores_logros il ON l.id = il.id_logro
                 LEFT JOIN areas_academicas aa ON l.id_area_academica = aa.id
                 WHERE l.id IN ($placeholders)
+                AND l.id_tenant = ?
                 ORDER BY l.nombre, il.nombre
             ";
             $stmt = $db->prepare($sql);
             $idx = 1;
             foreach ($logros_ids as $lid) { $stmt->bindValue($idx++, $lid); }
+            $stmt->bindValue($idx++, TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -860,21 +887,22 @@ PROMPT;
                 $lid = $r['logro_id'];
                 if (!isset($logrosAgrupados[$lid])) {
                     $logrosAgrupados[$lid] = [
-                        'id' => (int)$lid,
+                        'id' => $lid,
                         'nombre' => $r['logro_nombre'],
-                        'id_area_academica' => (int)$r['id_area_academica'],
+                        'id_area_academica' => $r['id_area_academica'],
                         'area_nombre' => $r['area_nombre'],
                         'indicadores' => []
                     ];
                 }
                 $logrosAgrupados[$lid]['indicadores'][] = [
-                    'id' => (int)$r['indicador_id'],
+                    'id' => $r['indicador_id'],
                     'nombre' => $r['indicador_nombre']
                 ];
             }
             $logrosAgrupados = array_values($logrosAgrupados);
 
-            $stmtTipos = $db->prepare("SELECT id, nombre FROM tipos_actividades_academicas ORDER BY nombre");
+            $stmtTipos = $db->prepare("SELECT id, nombre FROM tipos_actividades_academicas WHERE id_tenant = :id_tenant ORDER BY nombre");
+            $stmtTipos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtTipos->execute();
             $tiposActividad = $stmtTipos->fetchAll(PDO::FETCH_ASSOC);
 
@@ -982,7 +1010,7 @@ PROMPT;
                 $logro = null;
                 if (!empty($act['id_logro'])) {
                     foreach ($logrosAgrupados as $l) {
-                        if ((int)$l['id'] === (int)$act['id_logro']) { $logro = $l; break; }
+                        if ((string)$l['id'] === (string)$act['id_logro']) { $logro = $l; break; }
                     }
                 }
                 if (!$logro && isset($logrosAgrupados[$i])) {
@@ -990,29 +1018,29 @@ PROMPT;
                 }
                 if (!$logro) continue;
 
-                $idsIndicadores = array_map(function($ind) { return (int)$ind['id']; }, $logro['indicadores']);
+                $idsIndicadores = array_map(function($ind) { return $ind['id']; }, $logro['indicadores']);
                 $indicadoresEnriquecidos = array_map(function($ind) use ($logro) {
                     return [
-                        'id' => (int)$ind['id'],
+                        'id' => $ind['id'],
                         'nombre' => $ind['nombre'],
-                        'logro_id' => (int)$logro['id'],
+                        'logro_id' => $logro['id'],
                         'logro_nombre' => $logro['nombre']
                     ];
                 }, $logro['indicadores']);
 
                 $actividadesEnriquecidas[] = [
-                    'id_logro' => (int)$logro['id'],
+                    'id_logro' => $logro['id'],
                     'logro_nombre' => $logro['nombre'],
-                    'id_area_academica' => (int)$logro['id_area_academica'],
+                    'id_area_academica' => $logro['id_area_academica'],
                     'area_nombre' => $logro['area_nombre'],
                     'titulo' => $act['titulo'] ?? "Evaluación: {$logro['nombre']}",
                     'descripcion' => $act['descripcion'] ?? '',
                     'nivel_uno' => $act['nivel_uno'] ?? '',
                     'nivel_dos' => $act['nivel_dos'] ?? '',
                     'minutos_duracion' => $act['minutos_duracion'] ?? 45,
-                    'id_tipo_actividad_academica' => !empty($act['id_tipo_actividad_academica']) ? (int)$act['id_tipo_actividad_academica'] : ($id_tipo_actividad ? (int)$id_tipo_actividad : null),
+                    'id_tipo_actividad_academica' => !empty($act['id_tipo_actividad_academica']) ? $act['id_tipo_actividad_academica'] : ($id_tipo_actividad ? $id_tipo_actividad : null),
                     'materiales_sugeridos' => $act['materiales_sugeridos'] ?? [],
-                    'id_ambiente' => !empty($act['id_ambiente']) ? (int)$act['id_ambiente'] : null,
+                    'id_ambiente' => !empty($act['id_ambiente']) ? $act['id_ambiente'] : null,
                     'indicadores_ids' => $idsIndicadores,
                     'indicadores' => $indicadoresEnriquecidos
                 ];
@@ -1058,7 +1086,8 @@ PROMPT;
             $db->beginTransaction();
 
             // Obtener el orden_ejecucion máximo actual en el sprint para continuar la numeración
-            $stmtMax = $db->prepare("SELECT COALESCE(MAX(orden_ejecucion), 0) AS max_orden FROM tareas_x_sprints WHERE id_sprint = :id_sprint");
+            $stmtMax = $db->prepare("SELECT COALESCE(MAX(orden_ejecucion), 0) AS max_orden FROM tareas_x_sprints WHERE id_sprint = :id_sprint AND id_tenant = :id_tenant");
+            $stmtMax->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtMax->bindParam(':id_sprint', $id_sprint);
             $stmtMax->execute();
             $rowMax = $stmtMax->fetch(PDO::FETCH_ASSOC);
@@ -1067,7 +1096,7 @@ PROMPT;
             $resultados = [];
 
             foreach ($data['actividades'] as $act) {
-                $idArea = !empty($act['id_area_academica']) ? (int)$act['id_area_academica'] : null;
+                $idArea = !empty($act['id_area_academica']) ? $act['id_area_academica'] : null;
                 if (!$idArea) {
                     throw new Exception("Toda actividad debe traer id_area_academica");
                 }
@@ -1080,15 +1109,18 @@ PROMPT;
                     $materialesTexto = implode(', ', array_filter($nombres));
                 }
 
-                $idTipo = !empty($act['id_tipo_actividad_academica']) ? (int)$act['id_tipo_actividad_academica'] : 1;
-                $idAmbiente = !empty($act['id_ambiente']) ? (int)$act['id_ambiente'] : null;
+                $idTipo = !empty($act['id_tipo_actividad_academica']) ? $act['id_tipo_actividad_academica'] : 1;
+                $idAmbiente = !empty($act['id_ambiente']) ? $act['id_ambiente'] : null;
 
                 // 1. Insertar actividad académica
+                $idActividad = Uuid::generar();
                 $stmtActividad = $db->prepare("
                     INSERT INTO actividades_academicas 
-                    (id_tipo_actividad_academica, titulo, descripcion, nivel_uno, nivel_dos, minutos_duracion, materiales, id_ambiente)
-                    VALUES (:id_tipo, :titulo, :descripcion, :nivel_uno, :nivel_dos, :duracion, :materiales, :id_ambiente)
+                    (id, id_tenant, id_tipo_actividad_academica, titulo, descripcion, nivel_uno, nivel_dos, minutos_duracion, materiales, id_ambiente)
+                    VALUES (:id, :id_tenant, :id_tipo, :titulo, :descripcion, :nivel_uno, :nivel_dos, :duracion, :materiales, :id_ambiente)
                 ");
+                $stmtActividad->bindValue(':id', $idActividad);
+                $stmtActividad->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtActividad->bindValue(':id_tipo', $idTipo);
                 $stmtActividad->bindValue(':titulo', $act['titulo']);
                 $stmtActividad->bindValue(':descripcion', $act['descripcion'] ?? '');
@@ -1098,14 +1130,14 @@ PROMPT;
                 $stmtActividad->bindValue(':materiales', $materialesTexto);
                 $stmtActividad->bindValue(':id_ambiente', $idAmbiente);
                 $stmtActividad->execute();
-                $idActividad = $db->lastInsertId();
 
                 // 2. Materiales x actividad
                 if (!empty($act['materiales'])) {
                     $stmtMaterial = $db->prepare("
-                        INSERT INTO materiales_x_actividad (id_actividad_academica, id_producto, nombre_material, cantidad)
-                        VALUES (:id_actividad, :id_producto, :nombre_material, :cantidad)
+                        INSERT INTO materiales_x_actividad (id_tenant, id_actividad_academica, id_producto, nombre_material, cantidad)
+                        VALUES (:id_tenant_m, :id_actividad, :id_producto, :nombre_material, :cantidad)
                     ");
+                    $stmtMaterial->bindValue(':id_tenant_m', TenantContext::id(), PDO::PARAM_INT);
                     foreach ($act['materiales'] as $mat) {
                         $stmtMaterial->bindValue(':id_actividad', $idActividad);
                         $stmtMaterial->bindValue(':id_producto', $mat['id_producto'] ?? null);
@@ -1118,10 +1150,12 @@ PROMPT;
                 // 3. Indicadores de logro
                 if (!empty($act['indicadores_ids'])) {
                     $stmtIndicador = $db->prepare("
-                        INSERT INTO actividades_academicas_x_indicadores_logros (id_actividad_academica, id_indicador_logro)
-                        VALUES (:id_actividad, :id_indicador)
+                        INSERT INTO actividades_academicas_x_indicadores_logros (id_tenant, id_actividad_academica, id_indicador_logro)
+                        VALUES (:id_tenant_i, :id_actividad, :id_indicador)
                     ");
-                    $stmtCheck = $db->prepare("SELECT COUNT(*) as count FROM actividades_academicas_x_indicadores_logros WHERE id_actividad_academica = :id_act AND id_indicador_logro = :id_ind");
+                    $stmtIndicador->bindValue(':id_tenant_i', TenantContext::id(), PDO::PARAM_INT);
+                    $stmtCheck = $db->prepare("SELECT COUNT(*) as count FROM actividades_academicas_x_indicadores_logros WHERE id_actividad_academica = :id_act AND id_indicador_logro = :id_ind AND id_tenant = :id_tenant");
+                    $stmtCheck->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     foreach ($act['indicadores_ids'] as $idIndicador) {
                         $stmtCheck->bindValue(':id_act', $idActividad);
                         $stmtCheck->bindValue(':id_ind', $idIndicador);
@@ -1137,11 +1171,14 @@ PROMPT;
 
                 // 4. Tarea en el sprint con orden_ejecucion incremental
                 $ordenActual++;
+                $idTarea = Uuid::generar();
                 $stmtTarea = $db->prepare("
                     INSERT INTO tareas_x_sprints 
-                    (id_sprint, id_actividad_academica, id_grupo, id_area_academica, id_estado_tarea, es_tarea_adicional, orden_ejecucion, fecha_registro)
-                    VALUES (:id_sprint, :id_actividad, :id_grupo, :id_area, 1, 0, :orden, NOW())
+                    (id, id_tenant, id_sprint, id_actividad_academica, id_grupo, id_area_academica, id_estado_tarea, es_tarea_adicional, orden_ejecucion, fecha_registro)
+                    VALUES (:id, :id_tenant, :id_sprint, :id_actividad, :id_grupo, :id_area, 1, 0, :orden, NOW())
                 ");
+                $stmtTarea->bindValue(':id', $idTarea);
+                $stmtTarea->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtTarea->bindValue(':id_sprint', $id_sprint);
                 $stmtTarea->bindValue(':id_actividad', $idActividad);
                 $stmtTarea->bindValue(':id_grupo', $id_grupo);
@@ -1154,7 +1191,7 @@ PROMPT;
                     'titulo' => $act['titulo'],
                     'id_area_academica' => $idArea,
                     'orden_ejecucion' => $ordenActual,
-                    'id_tarea_sprint' => $db->lastInsertId()
+                    'id_tarea_sprint' => $idTarea
                 ];
             }
 

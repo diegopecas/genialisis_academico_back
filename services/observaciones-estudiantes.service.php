@@ -8,7 +8,8 @@ class ObservacionesEstudiantes
         PermisosService::validar($userData, 'estudiantes.observaciones');
 
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, id_estudiante, id_tipo_observacion_estudiante, descripcion, fecha, id_estudiante_afectado, id_sprint, para_informe, fecha_informe_padre, firma_informe_padre, fecha_informe_padre_afectado, firma_informe_padre_afectado, id_usuario, fecha_registro FROM observaciones_estudiantes");
+        $sentence = $db->prepare("SELECT id, id_estudiante, id_tipo_observacion_estudiante, descripcion, fecha, id_estudiante_afectado, id_sprint, para_informe, fecha_informe_padre, firma_informe_padre, fecha_informe_padre_afectado, firma_informe_padre_afectado, id_usuario, fecha_registro FROM observaciones_estudiantes WHERE id_tenant = :id_tenant");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -20,8 +21,9 @@ class ObservacionesEstudiantes
         PermisosService::validar($userData, 'estudiantes.observaciones');
 
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, id_estudiante, id_tipo_observacion_estudiante, descripcion, fecha, id_estudiante_afectado, id_sprint, para_informe, fecha_informe_padre, firma_informe_padre, fecha_informe_padre_afectado, firma_informe_padre_afectado, id_usuario, fecha_registro FROM observaciones_estudiantes WHERE id = :id");
+        $sentence = $db->prepare("SELECT id, id_estudiante, id_tipo_observacion_estudiante, descripcion, fecha, id_estudiante_afectado, id_sprint, para_informe, fecha_informe_padre, firma_informe_padre, fecha_informe_padre_afectado, firma_informe_padre_afectado, id_usuario, fecha_registro FROM observaciones_estudiantes WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -77,11 +79,13 @@ class ObservacionesEstudiantes
             sprints s ON oe.id_sprint = s.id
         WHERE 
             oe.id_estudiante = :id_estudiante
+            AND oe.id_tenant = :id_tenant
         -- Ordenar por fecha descendente (más reciente primero)
         ORDER BY 
             oe.fecha DESC, oe.id DESC
     ");
         $sentence->bindParam(':id_estudiante', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -114,9 +118,12 @@ class ObservacionesEstudiantes
 
         // La fecha de registro se manejará automáticamente con el valor default de la BD
 
-        $sentence = $db->prepare("INSERT INTO observaciones_estudiantes(id_estudiante, id_tipo_observacion_estudiante, descripcion, fecha, id_estudiante_afectado, id_sprint, para_informe, fecha_informe_padre, firma_informe_padre, fecha_informe_padre_afectado, firma_informe_padre_afectado, id_usuario) 
-                                VALUES (:id_estudiante, :id_tipo_observacion_estudiante, :descripcion, :fecha, :id_estudiante_afectado, :id_sprint, :para_informe, :fecha_informe_padre, :firma_informe_padre, :fecha_informe_padre_afectado, :firma_informe_padre_afectado, :id_usuario)");
+        $idNew = Uuid::generar();
+        $sentence = $db->prepare("INSERT INTO observaciones_estudiantes(id, id_tenant, id_estudiante, id_tipo_observacion_estudiante, descripcion, fecha, id_estudiante_afectado, id_sprint, para_informe, fecha_informe_padre, firma_informe_padre, fecha_informe_padre_afectado, firma_informe_padre_afectado, id_usuario) 
+                                VALUES (:id, :id_tenant, :id_estudiante, :id_tipo_observacion_estudiante, :descripcion, :fecha, :id_estudiante_afectado, :id_sprint, :para_informe, :fecha_informe_padre, :firma_informe_padre, :fecha_informe_padre_afectado, :firma_informe_padre_afectado, :id_usuario)");
 
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
         $sentence->bindParam(':id_tipo_observacion_estudiante', $id_tipo_observacion_estudiante);
         $sentence->bindParam(':descripcion', $descripcion);
@@ -131,7 +138,7 @@ class ObservacionesEstudiantes
         $sentence->bindParam(':id_usuario', $id_usuario);
 
         $sentence->execute();
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(array('id' => $id));
     }
 
@@ -176,9 +183,10 @@ class ObservacionesEstudiantes
                                 fecha_informe_padre_afectado = :fecha_informe_padre_afectado, 
                                 firma_informe_padre_afectado = :firma_informe_padre_afectado, 
                                 id_usuario = :id_usuario 
-                                WHERE id = :id");
+                                WHERE id = :id AND id_tenant = :id_tenant");
 
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
         $sentence->bindParam(':id_tipo_observacion_estudiante', $id_tipo_observacion_estudiante);
         $sentence->bindParam(':descripcion', $descripcion);
@@ -203,8 +211,9 @@ class ObservacionesEstudiantes
 
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("DELETE FROM observaciones_estudiantes WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM observaciones_estudiantes WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         Flight::json(array('id' => $id));
     }
@@ -215,8 +224,9 @@ class ObservacionesEstudiantes
         PermisosService::validar($userData, 'estudiantes.observaciones');
 
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, id_estudiante, id_tipo_observacion_estudiante, descripcion, fecha, id_estudiante_afectado, id_sprint, para_informe, fecha_informe_padre, firma_informe_padre, fecha_informe_padre_afectado, firma_informe_padre_afectado, id_usuario, fecha_registro FROM observaciones_estudiantes WHERE id_estudiante_afectado = :id_estudiante_afectado");
+        $sentence = $db->prepare("SELECT id, id_estudiante, id_tipo_observacion_estudiante, descripcion, fecha, id_estudiante_afectado, id_sprint, para_informe, fecha_informe_padre, firma_informe_padre, fecha_informe_padre_afectado, firma_informe_padre_afectado, id_usuario, fecha_registro FROM observaciones_estudiantes WHERE id_estudiante_afectado = :id_estudiante_afectado AND id_tenant = :id_tenant");
         $sentence->bindParam(':id_estudiante_afectado', $id_estudiante_afectado);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -228,8 +238,9 @@ class ObservacionesEstudiantes
         PermisosService::validar($userData, 'estudiantes.observaciones');
 
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, id_estudiante, id_tipo_observacion_estudiante, descripcion, fecha, id_estudiante_afectado, id_sprint, para_informe, fecha_informe_padre, firma_informe_padre, fecha_informe_padre_afectado, firma_informe_padre_afectado, id_usuario, fecha_registro FROM observaciones_estudiantes WHERE id_tipo_observacion_estudiante = :id_tipo_observacion_estudiante");
+        $sentence = $db->prepare("SELECT id, id_estudiante, id_tipo_observacion_estudiante, descripcion, fecha, id_estudiante_afectado, id_sprint, para_informe, fecha_informe_padre, firma_informe_padre, fecha_informe_padre_afectado, firma_informe_padre_afectado, id_usuario, fecha_registro FROM observaciones_estudiantes WHERE id_tipo_observacion_estudiante = :id_tipo_observacion_estudiante AND id_tenant = :id_tenant");
         $sentence->bindParam(':id_tipo_observacion_estudiante', $id_tipo_observacion_estudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -264,9 +275,11 @@ class ObservacionesEstudiantes
             LEFT JOIN estudiantes_x_grupos eg ON e.id = eg.id_estudiante AND eg.activo = 1
             LEFT JOIN grupos g ON eg.id_grupo = g.id
             WHERE e.activo = 1
+            AND e.id_tenant = :id_tenant
             ORDER BY g.nombre, p.primer_apellido, p.primer_nombre
         ";
         $sentence = $db->prepare($sqlEstudiantes);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $estudiantes = $sentence->fetchAll();
 
@@ -275,9 +288,11 @@ class ObservacionesEstudiantes
             SELECT id, nombre, icono, valida_asistencia, requiere_firma, aplica_informe
             FROM tipos_observaciones_estudiantes
             WHERE aplica_informe = 1
+            AND id_tenant = :id_tenant
             ORDER BY id
         ";
         $sentence = $db->prepare($sqlTipos);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $tipos_observaciones_informe = $sentence->fetchAll();
 
@@ -298,10 +313,12 @@ class ObservacionesEstudiantes
             WHERE oe.id_sprint = :id_sprint
               AND oe.para_informe = 1
               AND toe.aplica_informe = 1
+              AND oe.id_tenant = :id_tenant
             ORDER BY oe.id_estudiante, oe.id_tipo_observacion_estudiante, oe.fecha DESC
         ";
         $sentence = $db->prepare($sqlObservaciones);
         $sentence->bindParam(':id_sprint', $id_sprint);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $observaciones_existentes = $sentence->fetchAll();
 
@@ -319,9 +336,11 @@ class ObservacionesEstudiantes
             INNER JOIN personas p ON a.id_persona = p.id
             LEFT JOIN tipos_acudiente ta ON a.id_tipo_acudiente = ta.id
             INNER JOIN estudiantes e ON a.id_estudiante = e.id AND e.activo = 1
+            WHERE a.id_tenant = :id_tenant
             ORDER BY a.id_estudiante, a.id
         ";
         $sentence = $db->prepare($sqlAcudientes);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $acudientes = $sentence->fetchAll();
 
@@ -329,10 +348,11 @@ class ObservacionesEstudiantes
         $sqlSprint = "
             SELECT id, numero_sprint, nombre_sprint, fecha_inicial, fecha_final, actual
             FROM sprints
-            WHERE id = :id_sprint
+            WHERE id = :id_sprint AND id_tenant = :id_tenant
         ";
         $sentence = $db->prepare($sqlSprint);
         $sentence->bindParam(':id_sprint', $id_sprint);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $sprintRows = $sentence->fetchAll();
         $sprint = count($sprintRows) > 0 ? $sprintRows[0] : null;

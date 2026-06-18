@@ -15,8 +15,10 @@ class VisitasResultado
                 FROM visitas_resultado vr
                 INNER JOIN tipos_resultado_visita trv ON vr.id_tipo_resultado = trv.id
                 INNER JOIN visitas v ON vr.id_visita = v.id
+                WHERE vr.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -39,8 +41,10 @@ class VisitasResultado
                 FROM visitas_resultado vr
                 INNER JOIN tipos_resultado_visita trv ON vr.id_tipo_resultado = trv.id
                 WHERE vr.id = :id
+                AND vr.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -63,8 +67,10 @@ class VisitasResultado
                 FROM visitas_resultado vr
                 INNER JOIN tipos_resultado_visita trv ON vr.id_tipo_resultado = trv.id
                 WHERE vr.id_visita = :id_visita
+                AND vr.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -79,21 +85,23 @@ class VisitasResultado
         try {
             $db = Flight::db();
             $data = $dataParam ?? Flight::request()->data;
+            $id = Uuid::generar();
 
             $sentence = $db->prepare("
             INSERT INTO visitas_resultado (
-                id_visita, id_tipo_resultado, notas_resultado
+                id, id_tenant, id_visita, id_tipo_resultado, notas_resultado
             ) VALUES (
-                :id_visita, :id_tipo_resultado, :notas_resultado
+                :id, :id_tenant, :id_visita, :id_tipo_resultado, :notas_resultado
             )
         ");
 
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $data['id_visita']);
             $sentence->bindParam(':id_tipo_resultado', $data['id_tipo_resultado']);
             $sentence->bindParam(':notas_resultado', $data['notas_resultado']);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             if ($dataParam !== null) {
                 return $id;
@@ -122,11 +130,13 @@ class VisitasResultado
                 id_tipo_resultado = :id_tipo_resultado,
                 notas_resultado = :notas_resultado
             WHERE id = :id
+            AND id_tenant = :id_tenant
         ");
 
             $sentence->bindParam(':id', $data['id']);
             $sentence->bindParam(':id_tipo_resultado', $data['id_tipo_resultado']);
             $sentence->bindParam(':notas_resultado', $data['notas_resultado']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
 
@@ -152,8 +162,9 @@ class VisitasResultado
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_resultado WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_resultado WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -172,8 +183,8 @@ class VisitasResultado
             $id_visita = $data['id_visita'];
 
             // Verificar si ya existe
-            $stmt = $db->prepare("SELECT id FROM visitas_resultado WHERE id_visita = :id_visita");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt = $db->prepare("SELECT id FROM visitas_resultado WHERE id_visita = :id_visita AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
             $existe = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($existe) {
@@ -211,12 +222,15 @@ class VisitasResultado
                     trv.nombre as resultado,
                     trv.es_exitoso,
                     COUNT(*) as total,
-                    ROUND((COUNT(*) / (SELECT COUNT(*) FROM visitas_resultado)) * 100, 2) as porcentaje
+                    ROUND((COUNT(*) / (SELECT COUNT(*) FROM visitas_resultado WHERE id_tenant = :id_tenant_sub)) * 100, 2) as porcentaje
                 FROM visitas_resultado vr
                 INNER JOIN tipos_resultado_visita trv ON vr.id_tipo_resultado = trv.id
+                WHERE vr.id_tenant = :id_tenant
                 GROUP BY vr.id_tipo_resultado, trv.nombre, trv.es_exitoso
                 ORDER BY total DESC
             ");
+            $sentence->bindValue(':id_tenant_sub', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);

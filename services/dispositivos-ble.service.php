@@ -8,8 +8,10 @@ class DispositivosBle
             SELECT d.*, af.nombre as nombre_area
             FROM dispositivos_ble d
             INNER JOIN areas_fisicas af ON d.id_area_fisica = af.id
+            WHERE d.id_tenant = :id_tenant
             ORDER BY af.nombre ASC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -23,8 +25,10 @@ class DispositivosBle
             FROM dispositivos_ble d
             INNER JOIN areas_fisicas af ON d.id_area_fisica = af.id
             WHERE d.activo = 1
+            AND d.id_tenant = :id_tenant
             ORDER BY af.nombre ASC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -38,8 +42,10 @@ class DispositivosBle
             FROM dispositivos_ble d
             INNER JOIN areas_fisicas af ON d.id_area_fisica = af.id
             WHERE d.id = :id
+            AND d.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -58,12 +64,15 @@ class DispositivosBle
 
         $sentence = $db->prepare("
             INSERT INTO dispositivos_ble(
-                nombre, id_area_fisica, mac_address, api_key, firmware_version, activo, fecha_registro
+                id, id_tenant, nombre, id_area_fisica, mac_address, api_key, firmware_version, activo, fecha_registro
             ) VALUES (
-                :nombre, :id_area_fisica, :mac_address, :api_key, :firmware_version, 1, NOW()
+                :id, :id_tenant, :nombre, :id_area_fisica, :mac_address, :api_key, :firmware_version, 1, NOW()
             )
         ");
 
+        $idDispositivo = Uuid::generar();
+        $sentence->bindValue(':id', $idDispositivo);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':id_area_fisica', $id_area_fisica);
         $sentence->bindParam(':mac_address', $mac_address);
@@ -71,8 +80,7 @@ class DispositivosBle
         $sentence->bindParam(':firmware_version', $firmware_version);
         $sentence->execute();
 
-        $id = $db->lastInsertId();
-        Flight::json(array('id' => $id, 'api_key' => $api_key));
+        Flight::json(array('id' => $idDispositivo, 'api_key' => $api_key));
     }
 
     public static function update()
@@ -93,9 +101,10 @@ class DispositivosBle
                 mac_address = :mac_address,
                 firmware_version = :firmware_version,
                 activo = :activo
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
 
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':id_area_fisica', $id_area_fisica);
         $sentence->bindParam(':mac_address', $mac_address);
@@ -112,8 +121,9 @@ class DispositivosBle
         $db = Flight::db();
         $id = Flight::request()->data['id'];
 
-        $sentence = $db->prepare("UPDATE dispositivos_ble SET activo = 0 WHERE id = :id");
+        $sentence = $db->prepare("UPDATE dispositivos_ble SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json(array('id' => $id));
@@ -124,9 +134,10 @@ class DispositivosBle
         $db = Flight::db();
         $api_key = bin2hex(random_bytes(32));
 
-        $sentence = $db->prepare("UPDATE dispositivos_ble SET api_key = :api_key WHERE id = :id");
+        $sentence = $db->prepare("UPDATE dispositivos_ble SET api_key = :api_key WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':api_key', $api_key);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json(array('id' => $id, 'api_key' => $api_key));

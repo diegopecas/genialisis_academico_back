@@ -26,7 +26,9 @@ class Colaboradores
         LEFT OUTER JOIN tipos_contrato tc ON c.id_tipo_contrato = tc.id
         LEFT OUTER JOIN colaboradores cj ON c.id_jefe_directo = cj.id
         LEFT OUTER JOIN personas pj ON cj.id_persona = pj.id
+        WHERE c.id_tenant = :id_tenant
         ORDER BY p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         foreach ($response as &$row) {
@@ -64,8 +66,9 @@ class Colaboradores
         LEFT OUTER JOIN colaboradores cj ON c.id_jefe_directo = cj.id
         LEFT OUTER JOIN personas pj ON cj.id_persona = pj.id
         LEFT OUTER JOIN docentes d ON c.id = d.id_colaborador
-        WHERE c.id = :id");
+        WHERE c.id = :id AND c.id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         if (!empty($response)) {
@@ -98,8 +101,9 @@ class Colaboradores
         LEFT OUTER JOIN motivos_retiro mr ON c.id_motivo_retiro = mr.id
         LEFT OUTER JOIN cargos car ON c.id_cargo = car.id
         LEFT OUTER JOIN tipos_contrato tc ON c.id_tipo_contrato = tc.id
-        WHERE c.id_persona = :id_persona");
+        WHERE c.id_persona = :id_persona AND c.id_tenant = :id_tenant");
         $sentence->bindParam(':id_persona', $id_persona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -129,8 +133,9 @@ class Colaboradores
 
             error_log("Datos recibidos para crear colaborador: id_persona=$id_persona, id_rol_colaborador=$id_rol_colaborador");
 
-            $checkSentence = $db->prepare("SELECT id FROM colaboradores WHERE id_persona = :id_persona");
+            $checkSentence = $db->prepare("SELECT id FROM colaboradores WHERE id_persona = :id_persona AND id_tenant = :id_tenant");
             $checkSentence->bindParam(':id_persona', $id_persona);
+            $checkSentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkSentence->execute();
             if ($checkSentence->fetch()) {
                 $db->rollBack();
@@ -138,7 +143,7 @@ class Colaboradores
                 return;
             }
 
-            $sentence = $db->prepare("INSERT INTO colaboradores(id_persona, id_rol_colaborador, id_nivel_escolaridad, id_casa_colaborador, correo_electronico, sobrenombre, fecha_ingreso, fecha_retiro, id_motivo_retiro, id_cargo, salario_mensual, id_tipo_contrato, id_jefe_directo, activo, valida_ingreso_jornada, valida_ingreso_descanso) VALUES (:id_persona, :id_rol_colaborador, :id_nivel_escolaridad, :id_casa_colaborador, :correo_electronico, :sobrenombre, :fecha_ingreso, :fecha_retiro, :id_motivo_retiro, :id_cargo, :salario_mensual, :id_tipo_contrato, :id_jefe_directo, :activo, :valida_ingreso_jornada, :valida_ingreso_descanso)");
+            $sentence = $db->prepare("INSERT INTO colaboradores(id, id_tenant, id_persona, id_rol_colaborador, id_nivel_escolaridad, id_casa_colaborador, correo_electronico, sobrenombre, fecha_ingreso, fecha_retiro, id_motivo_retiro, id_cargo, salario_mensual, id_tipo_contrato, id_jefe_directo, activo, valida_ingreso_jornada, valida_ingreso_descanso) VALUES (:id, :id_tenant, :id_persona, :id_rol_colaborador, :id_nivel_escolaridad, :id_casa_colaborador, :correo_electronico, :sobrenombre, :fecha_ingreso, :fecha_retiro, :id_motivo_retiro, :id_cargo, :salario_mensual, :id_tipo_contrato, :id_jefe_directo, :activo, :valida_ingreso_jornada, :valida_ingreso_descanso)");
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindParam(':id_rol_colaborador', $id_rol_colaborador);
             $sentence->bindParam(':id_nivel_escolaridad', $id_nivel_escolaridad);
@@ -155,9 +160,12 @@ class Colaboradores
             $sentence->bindParam(':activo', $activo);
             $sentence->bindParam(':valida_ingreso_jornada', $valida_ingreso_jornada);
             $sentence->bindParam(':valida_ingreso_descanso', $valida_ingreso_descanso);
+            $idColab = Uuid::generar();
+            $sentence->bindValue(':id', $idColab);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
-            $id_colaborador = $db->lastInsertId();
+            $id_colaborador = $idColab;
             if ($id_colaborador == 0) {
                 $db->rollBack();
                 error_log("Error: El ID del colaborador insertado es 0.");
@@ -175,14 +183,17 @@ class Colaboradores
             if ($id_rol_colaborador == 1) {
                 error_log("Creando registro de docente para colaborador $id_colaborador");
 
-                $insertDocente = $db->prepare("INSERT INTO docentes(id_persona, id_colaborador, activo, id_casa_docente) VALUES (:id_persona, :id_colaborador, :activo, :id_casa_docente)");
+                $insertDocente = $db->prepare("INSERT INTO docentes(id, id_tenant, id_persona, id_colaborador, activo, id_casa_docente) VALUES (:id, :id_tenant, :id_persona, :id_colaborador, :activo, :id_casa_docente)");
+                $idDocente = Uuid::generar();
+                $insertDocente->bindValue(':id', $idDocente);
+                $insertDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $insertDocente->bindParam(':id_persona', $id_persona);
                 $insertDocente->bindParam(':id_colaborador', $id_colaborador);
                 $insertDocente->bindParam(':id_casa_docente', $id_casa_colaborador);
                 $insertDocente->bindParam(':activo', $activo);
                 $insertDocente->execute();
 
-                $id_docente = $db->lastInsertId();
+                $id_docente = $idDocente;
                 error_log("Docente creado con ID: $id_docente");
             }
 
@@ -227,9 +238,10 @@ class Colaboradores
                 return;
             }
 
-            $checkSentence = $db->prepare("SELECT id FROM colaboradores WHERE id_persona = :id_persona AND id != :id");
+            $checkSentence = $db->prepare("SELECT id FROM colaboradores WHERE id_persona = :id_persona AND id != :id AND id_tenant = :id_tenant");
             $checkSentence->bindParam(':id_persona', $id_persona);
             $checkSentence->bindParam(':id', $id);
+            $checkSentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkSentence->execute();
             if ($checkSentence->fetch()) {
                 $db->rollBack();
@@ -237,8 +249,9 @@ class Colaboradores
                 return;
             }
 
-            $getRolActual = $db->prepare("SELECT id_rol_colaborador FROM colaboradores WHERE id = :id");
+            $getRolActual = $db->prepare("SELECT id_rol_colaborador FROM colaboradores WHERE id = :id AND id_tenant = :id_tenant");
             $getRolActual->bindParam(':id', $id);
+            $getRolActual->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $getRolActual->execute();
             $colaboradorActual = $getRolActual->fetch();
             if (!$colaboradorActual) {
@@ -253,14 +266,16 @@ class Colaboradores
 
             if ($rol_anterior == 1 && $rol_nuevo != 1) {
                 error_log("Validando si puede cambiar de rol Docente");
-                $getDocente = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador");
+                $getDocente = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador AND id_tenant = :id_tenant");
                 $getDocente->bindParam(':id_colaborador', $id);
+                $getDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $getDocente->execute();
                 $docente = $getDocente->fetch();
 
                 if ($docente) {
-                    $checkGrupos = $db->prepare("SELECT COUNT(*) as total FROM docentes_x_grupos WHERE id_docente = :id_docente AND activo = 1");
+                    $checkGrupos = $db->prepare("SELECT COUNT(*) as total FROM docentes_x_grupos WHERE id_docente = :id_docente AND activo = 1 AND id_tenant = :id_tenant");
                     $checkGrupos->bindParam(':id_docente', $docente['id']);
+                    $checkGrupos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $checkGrupos->execute();
                     $grupos = $checkGrupos->fetch();
                     if ($grupos['total'] > 0) {
@@ -269,8 +284,9 @@ class Colaboradores
                         return;
                     }
 
-                    $checkAreas = $db->prepare("SELECT COUNT(*) as total FROM area_academica_x_grupo WHERE id_docente = :id_docente");
+                    $checkAreas = $db->prepare("SELECT COUNT(*) as total FROM area_academica_x_grupo WHERE id_docente = :id_docente AND id_tenant = :id_tenant");
                     $checkAreas->bindParam(':id_docente', $docente['id']);
+                    $checkAreas->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $checkAreas->execute();
                     $areas = $checkAreas->fetch();
                     if ($areas['total'] > 0) {
@@ -279,9 +295,10 @@ class Colaboradores
                         return;
                     }
 
-                    $checkTareas = $db->prepare("SELECT COUNT(*) as total FROM tareas_x_sprints WHERE id_docente = :id_docente OR id_docente_inicia = :id_docente_inicia");
+                    $checkTareas = $db->prepare("SELECT COUNT(*) as total FROM tareas_x_sprints WHERE (id_docente = :id_docente OR id_docente_inicia = :id_docente_inicia) AND id_tenant = :id_tenant");
                     $checkTareas->bindParam(':id_docente', $docente['id']);
                     $checkTareas->bindParam(':id_docente_inicia', $docente['id']);
+                    $checkTareas->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $checkTareas->execute();
                     $tareas = $checkTareas->fetch();
                     if ($tareas['total'] > 0) {
@@ -292,7 +309,7 @@ class Colaboradores
                 }
             }
 
-            $sentence = $db->prepare("UPDATE colaboradores SET id_persona = :id_persona, id_rol_colaborador = :id_rol_colaborador, id_nivel_escolaridad = :id_nivel_escolaridad, id_casa_colaborador = :id_casa_colaborador, correo_electronico = :correo_electronico, sobrenombre = :sobrenombre, fecha_ingreso = :fecha_ingreso, fecha_retiro = :fecha_retiro, id_motivo_retiro = :id_motivo_retiro, id_cargo = :id_cargo, salario_mensual = :salario_mensual, id_tipo_contrato = :id_tipo_contrato, id_jefe_directo = :id_jefe_directo, activo = :activo, valida_ingreso_jornada = :valida_ingreso_jornada, valida_ingreso_descanso = :valida_ingreso_descanso WHERE id = :id");
+            $sentence = $db->prepare("UPDATE colaboradores SET id_persona = :id_persona, id_rol_colaborador = :id_rol_colaborador, id_nivel_escolaridad = :id_nivel_escolaridad, id_casa_colaborador = :id_casa_colaborador, correo_electronico = :correo_electronico, sobrenombre = :sobrenombre, fecha_ingreso = :fecha_ingreso, fecha_retiro = :fecha_retiro, id_motivo_retiro = :id_motivo_retiro, id_cargo = :id_cargo, salario_mensual = :salario_mensual, id_tipo_contrato = :id_tipo_contrato, id_jefe_directo = :id_jefe_directo, activo = :activo, valida_ingreso_jornada = :valida_ingreso_jornada, valida_ingreso_descanso = :valida_ingreso_descanso WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindParam(':id_rol_colaborador', $id_rol_colaborador);
             $sentence->bindParam(':id_nivel_escolaridad', $id_nivel_escolaridad);
@@ -310,18 +327,21 @@ class Colaboradores
             $sentence->bindParam(':valida_ingreso_jornada', $valida_ingreso_jornada);
             $sentence->bindParam(':valida_ingreso_descanso', $valida_ingreso_descanso);
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             // CASO 1: Era docente y ahora NO lo es
             if ($rol_anterior == 1 && $rol_nuevo != 1) {
                 error_log("Eliminando docente - pasó todas las validaciones");
-                $getDocente = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador");
+                $getDocente = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador AND id_tenant = :id_tenant");
                 $getDocente->bindParam(':id_colaborador', $id);
+                $getDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $getDocente->execute();
                 $docente = $getDocente->fetch();
                 if ($docente) {
-                    $eliminarDocente = $db->prepare("DELETE FROM docentes WHERE id = :id");
+                    $eliminarDocente = $db->prepare("DELETE FROM docentes WHERE id = :id AND id_tenant = :id_tenant");
                     $eliminarDocente->bindParam(':id', $docente['id']);
+                    $eliminarDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $eliminarDocente->execute();
                     error_log("Docente eliminado: ID " . $docente['id']);
                 }
@@ -330,9 +350,10 @@ class Colaboradores
             // CASO 2: NO era docente y ahora SÍ lo es
             if ($rol_anterior != 1 && $rol_nuevo == 1) {
                 error_log("Verificando si ya existe docente");
-                $checkDocente = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador OR id_persona = :id_persona");
+                $checkDocente = $db->prepare("SELECT id FROM docentes WHERE (id_colaborador = :id_colaborador OR id_persona = :id_persona) AND id_tenant = :id_tenant");
                 $checkDocente->bindParam(':id_colaborador', $id);
                 $checkDocente->bindParam(':id_persona', $id_persona);
+                $checkDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $checkDocente->execute();
                 $docenteExistente = $checkDocente->fetch();
 
@@ -341,29 +362,34 @@ class Colaboradores
                 } else {
                     error_log("Creando nuevo docente directamente");
 
-                    $insertDocente = $db->prepare("INSERT INTO docentes(id_persona, id_colaborador, activo, id_casa_docente) VALUES (:id_persona, :id_colaborador, :activo, :id_casa_docente)");
+                    $insertDocente = $db->prepare("INSERT INTO docentes(id, id_tenant, id_persona, id_colaborador, activo, id_casa_docente) VALUES (:id, :id_tenant, :id_persona, :id_colaborador, :activo, :id_casa_docente)");
+                    $idDocente2 = Uuid::generar();
+                    $insertDocente->bindValue(':id', $idDocente2);
+                    $insertDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $insertDocente->bindParam(':id_persona', $id_persona);
                     $insertDocente->bindParam(':id_colaborador', $id);
                     $insertDocente->bindParam(':id_casa_docente', $id_casa_colaborador);
                     $insertDocente->bindParam(':activo', $activo);
                     $insertDocente->execute();
 
-                    $id_docente_creado = $db->lastInsertId();
+                    $id_docente_creado = $idDocente2;
                     error_log("Docente creado directamente con ID: $id_docente_creado");
                 }
             }
 
             // CASO 3: Era y sigue siendo docente
             if ($rol_anterior == 1 && $rol_nuevo == 1) {
-                $getDocente = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador");
+                $getDocente = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador AND id_tenant = :id_tenant");
                 $getDocente->bindParam(':id_colaborador', $id);
+                $getDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $getDocente->execute();
                 $docente = $getDocente->fetch();
                 if ($docente) {
-                    $actualizarDocente = $db->prepare("UPDATE docentes SET id_casa_docente = :id_casa_docente, activo = :activo WHERE id = :id");
+                    $actualizarDocente = $db->prepare("UPDATE docentes SET id_casa_docente = :id_casa_docente, activo = :activo WHERE id = :id AND id_tenant = :id_tenant");
                     $actualizarDocente->bindParam(':id_casa_docente', $id_casa_colaborador);
                     $actualizarDocente->bindParam(':activo', $activo);
                     $actualizarDocente->bindParam(':id', $docente['id']);
+                    $actualizarDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $actualizarDocente->execute();
                     error_log("Docente actualizado");
                 }
@@ -386,8 +412,9 @@ class Colaboradores
             $id = Flight::request()->data['id'];
             error_log("Eliminando colaborador id: $id");
 
-            $checkPuntos = $db->prepare("SELECT COUNT(*) as total FROM puntos_casas_colaboradores WHERE id_colaborador_entrega = :id OR id_colaborador_recibe = :id");
+            $checkPuntos = $db->prepare("SELECT COUNT(*) as total FROM puntos_casas_colaboradores WHERE (id_colaborador_entrega = :id OR id_colaborador_recibe = :id) AND id_tenant = :id_tenant");
             $checkPuntos->bindParam(':id', $id);
+            $checkPuntos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkPuntos->execute();
             $puntos = $checkPuntos->fetch();
             if ($puntos['total'] > 0) {
@@ -396,8 +423,9 @@ class Colaboradores
                 return;
             }
 
-            $getRol = $db->prepare("SELECT id_rol_colaborador FROM colaboradores WHERE id = :id");
+            $getRol = $db->prepare("SELECT id_rol_colaborador FROM colaboradores WHERE id = :id AND id_tenant = :id_tenant");
             $getRol->bindParam(':id', $id);
+            $getRol->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $getRol->execute();
             $colaborador = $getRol->fetch();
             if (!$colaborador) {
@@ -408,8 +436,9 @@ class Colaboradores
 
             if ($colaborador['id_rol_colaborador'] == 1) {
                 error_log("Eliminando docente asociado");
-                $getDocente = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador");
+                $getDocente = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador AND id_tenant = :id_tenant");
                 $getDocente->bindParam(':id_colaborador', $id);
+                $getDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $getDocente->execute();
                 $docente = $getDocente->fetch();
                 if ($docente) {
@@ -428,8 +457,9 @@ class Colaboradores
                 }
             }
 
-            $sentence = $db->prepare("DELETE FROM colaboradores WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM colaboradores WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             if ($sentence->rowCount() == 0) {
                 $db->rollBack();
@@ -451,8 +481,9 @@ class Colaboradores
         $db = Flight::db();
         $id_persona = Flight::request()->data['id_persona'];
         error_log("Verificando duplicados para id_persona: $id_persona");
-        $sentence = $db->prepare("SELECT COUNT(*) as total FROM colaboradores WHERE id_persona = :id_persona");
+        $sentence = $db->prepare("SELECT COUNT(*) as total FROM colaboradores WHERE id_persona = :id_persona AND id_tenant = :id_tenant");
         $sentence->bindParam(':id_persona', $id_persona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetch();
         Flight::json(array('existe' => $response['total'] > 0));

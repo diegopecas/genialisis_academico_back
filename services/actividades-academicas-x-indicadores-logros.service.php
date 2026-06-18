@@ -23,7 +23,9 @@ class ActividadesAcademicasXIndicadoresLogros
                                   LEFT JOIN logros l ON il.id_logro = l.id
                                   LEFT JOIN grados gr ON l.id_grado = gr.id
                                   LEFT JOIN areas_academicas ar ON l.id_area_academica = ar.id
+                                  WHERE aaxil.id_tenant = :id_tenant
                                   ORDER BY aaxil.id DESC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -32,8 +34,9 @@ class ActividadesAcademicasXIndicadoresLogros
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM actividades_academicas_x_indicadores_logros WHERE id = :id");
+        $sentence = $db->prepare("SELECT * FROM actividades_academicas_x_indicadores_logros WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -61,9 +64,10 @@ class ActividadesAcademicasXIndicadoresLogros
                                   LEFT JOIN grados gr ON l.id_grado = gr.id
                                   LEFT JOIN areas_academicas ar ON l.id_area_academica = ar.id
                                   LEFT JOIN cortes_academicos ca ON l.id_corte_academico = ca.id
-                                  WHERE aaxil.id_actividad_academica = :id_actividad
+                                  WHERE aaxil.id_actividad_academica = :id_actividad AND aaxil.id_tenant = :id_tenant
                                   ORDER BY il.nombre");
         $sentence->bindParam(':id_actividad', $id_actividad);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -80,9 +84,10 @@ class ActividadesAcademicasXIndicadoresLogros
                                     aa.descripcion as descripcion_actividad
                                   FROM actividades_academicas_x_indicadores_logros aaxil
                                   INNER JOIN actividades_academicas aa ON aaxil.id_actividad_academica = aa.id
-                                  WHERE aaxil.id_indicador_logro = :id_indicador
+                                  WHERE aaxil.id_indicador_logro = :id_indicador AND aaxil.id_tenant = :id_tenant
                                   ORDER BY aa.titulo");
         $sentence->bindParam(':id_indicador', $id_indicador);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -115,12 +120,14 @@ class ActividadesAcademicasXIndicadoresLogros
         LEFT JOIN tipos_actividades_academicas taa
             ON aa.id_tipo_actividad_academica = taa.id
         WHERE il.id_logro = :id_logro
+        AND il.id_tenant = :id_tenant
         GROUP BY aa.id, aa.titulo, aa.descripcion, aa.nivel_uno, aa.nivel_dos, 
                 aa.minutos_duracion, aa.materiales, aa.id_tipo_actividad_academica, 
                 taa.nombre
         ORDER BY aa.titulo
     ");
         $sentence->bindParam(':id_logro', $id_logro);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -145,9 +152,11 @@ class ActividadesAcademicasXIndicadoresLogros
             $checkSentence = $db->prepare("SELECT COUNT(*) as count 
                                           FROM actividades_academicas_x_indicadores_logros 
                                           WHERE id_actividad_academica = :id_actividad 
-                                          AND id_indicador_logro = :id_indicador");
+                                          AND id_indicador_logro = :id_indicador
+                                          AND id_tenant = :id_tenant");
             $checkSentence->bindParam(':id_actividad', $id_actividad_academica);
             $checkSentence->bindParam(':id_indicador', $id_indicador_logro);
+            $checkSentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkSentence->execute();
             $result = $checkSentence->fetch();
 
@@ -157,14 +166,17 @@ class ActividadesAcademicasXIndicadoresLogros
             }
 
             // Crear la asociación
+            $idNew = Uuid::generar();
             $sentence = $db->prepare("INSERT INTO actividades_academicas_x_indicadores_logros 
-                                     (id_actividad_academica, id_indicador_logro) 
-                                     VALUES (:id_actividad, :id_indicador)");
+                                     (id, id_tenant, id_actividad_academica, id_indicador_logro) 
+                                     VALUES (:id, :id_tenant, :id_actividad, :id_indicador)");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_actividad', $id_actividad_academica);
             $sentence->bindParam(':id_indicador', $id_indicador_logro);
             $sentence->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idNew;
             error_log("Asociación creada con ID: $id");
 
             Flight::json(array('id' => $id));
@@ -183,8 +195,9 @@ class ActividadesAcademicasXIndicadoresLogros
             if ($id) {
                 // Eliminar por ID
                 error_log("Eliminando asociación por ID: $id");
-                $sentence = $db->prepare("DELETE FROM actividades_academicas_x_indicadores_logros WHERE id = :id");
+                $sentence = $db->prepare("DELETE FROM actividades_academicas_x_indicadores_logros WHERE id = :id AND id_tenant = :id_tenant");
                 $sentence->bindParam(':id', $id);
+                $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             } else {
                 // Eliminar por actividad e indicador
                 $id_actividad_academica = Flight::request()->data['id_actividad_academica'];
@@ -199,9 +212,11 @@ class ActividadesAcademicasXIndicadoresLogros
 
                 $sentence = $db->prepare("DELETE FROM actividades_academicas_x_indicadores_logros 
                                          WHERE id_actividad_academica = :id_actividad 
-                                         AND id_indicador_logro = :id_indicador");
+                                         AND id_indicador_logro = :id_indicador
+                                         AND id_tenant = :id_tenant");
                 $sentence->bindParam(':id_actividad', $id_actividad_academica);
                 $sentence->bindParam(':id_indicador', $id_indicador_logro);
+                $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             }
 
             $sentence->execute();

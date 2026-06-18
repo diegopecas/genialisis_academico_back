@@ -11,7 +11,9 @@ class Sprints
             s.actual, s.es_evaluacion
         FROM sprints s 
         LEFT OUTER JOIN cortes_academicos ca ON s.id_corte_academico = ca.id
+        WHERE s.id_tenant = :id_tenant
         ORDER BY s.anio DESC, s.numero_sprint DESC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -23,8 +25,9 @@ class Sprints
         $sentence = $db->prepare("SELECT s.*, ca.nombre AS nombre_corte_academico
         FROM sprints s
         LEFT OUTER JOIN cortes_academicos ca ON s.id_corte_academico = ca.id
-        WHERE s.id = :id");
+        WHERE s.id = :id AND s.id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -48,19 +51,25 @@ class Sprints
             error_log("Datos recibidos para crear sprint: anio=$anio, numero=$numero_sprint, nombre=$nombre_sprint");
 
             if ($actual) {
-                $updateSentence = $db->prepare("UPDATE sprints SET actual = 0 WHERE actual = 1");
+                $updateSentence = $db->prepare("UPDATE sprints SET actual = 0 WHERE actual = 1 AND id_tenant = :id_tenant");
+                $updateSentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $updateSentence->execute();
                 error_log("Sprints actuales desmarcados");
             }
 
+            $idNew = Uuid::generar();
             $sentence = $db->prepare("INSERT INTO sprints(
+                id, id_tenant,
                 anio, numero_sprint, nombre_sprint, fecha_inicial, fecha_final,
                 total_dias_habiles, id_corte_academico, actual, es_evaluacion
             ) VALUES (
+                :id, :id_tenant,
                 :anio, :numero_sprint, :nombre_sprint, :fecha_inicial, :fecha_final,
                 :total_dias_habiles, :id_corte_academico, :actual, :es_evaluacion
             )");
 
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':anio', $anio);
             $sentence->bindParam(':numero_sprint', $numero_sprint);
             $sentence->bindParam(':nombre_sprint', $nombre_sprint);
@@ -73,7 +82,7 @@ class Sprints
 
             $sentence->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idNew;
             error_log("Sprint creado con ID: $id");
 
             Flight::json(array('id' => $id));
@@ -107,8 +116,9 @@ class Sprints
             }
 
             if ($actual) {
-                $updateSentence = $db->prepare("UPDATE sprints SET actual = 0 WHERE actual = 1 AND id != :id");
+                $updateSentence = $db->prepare("UPDATE sprints SET actual = 0 WHERE actual = 1 AND id != :id AND id_tenant = :id_tenant");
                 $updateSentence->bindParam(':id', $id);
+                $updateSentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $updateSentence->execute();
                 error_log("Otros sprints actuales desmarcados");
             }
@@ -123,9 +133,10 @@ class Sprints
                 id_corte_academico = :id_corte_academico,
                 actual = :actual,
                 es_evaluacion = :es_evaluacion
-                WHERE id = :id");
+                WHERE id = :id AND id_tenant = :id_tenant");
 
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':anio', $anio);
             $sentence->bindParam(':numero_sprint', $numero_sprint);
             $sentence->bindParam(':nombre_sprint', $nombre_sprint);
@@ -160,8 +171,9 @@ class Sprints
 
             error_log("Eliminando sprint ID: $id");
 
-            $checkSentence = $db->prepare("SELECT COUNT(*) as total FROM tareas_x_sprints WHERE id_sprint = :id");
+            $checkSentence = $db->prepare("SELECT COUNT(*) as total FROM tareas_x_sprints WHERE id_sprint = :id AND id_tenant = :id_tenant");
             $checkSentence->bindParam(':id', $id);
+            $checkSentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkSentence->execute();
             $result = $checkSentence->fetch();
 
@@ -170,8 +182,9 @@ class Sprints
                 return;
             }
 
-            $sentence = $db->prepare("DELETE FROM sprints WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM sprints WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             if ($sentence->rowCount() == 0) {
@@ -192,7 +205,8 @@ class Sprints
         $sentence = $db->prepare("SELECT s.*, ca.nombre AS nombre_corte_academico
         FROM sprints s
         LEFT OUTER JOIN cortes_academicos ca ON s.id_corte_academico = ca.id
-        WHERE s.actual = 1");
+        WHERE s.actual = 1 AND s.id_tenant = :id_tenant");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -204,9 +218,10 @@ class Sprints
         $sentence = $db->prepare("SELECT s.*, ca.nombre AS nombre_corte_academico
         FROM sprints s
         LEFT OUTER JOIN cortes_academicos ca ON s.id_corte_academico = ca.id
-        WHERE s.anio = :anio
+        WHERE s.anio = :anio AND s.id_tenant = :id_tenant
         ORDER BY s.numero_sprint");
         $sentence->bindParam(':anio', $anio);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -220,9 +235,13 @@ class Sprints
         $sentence = $db->prepare("SELECT s.*, ca.nombre AS nombre_corte_academico
         FROM sprints s
         LEFT OUTER JOIN cortes_academicos ca ON s.id_corte_academico = ca.id
-        WHERE s.anio = (SELECT anio FROM sprints WHERE actual = 1 LIMIT 1)
-          AND s.numero_sprint <= (SELECT numero_sprint FROM sprints WHERE actual = 1 LIMIT 1)
+        WHERE s.anio = (SELECT anio FROM sprints WHERE actual = 1 AND id_tenant = :id_tenant_a LIMIT 1)
+          AND s.numero_sprint <= (SELECT numero_sprint FROM sprints WHERE actual = 1 AND id_tenant = :id_tenant_n LIMIT 1)
+          AND s.id_tenant = :id_tenant
         ORDER BY s.numero_sprint DESC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_a', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_n', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -234,9 +253,10 @@ class Sprints
         $sentence = $db->prepare("SELECT s.*, ca.nombre AS nombre_corte_academico
         FROM sprints s
         LEFT OUTER JOIN cortes_academicos ca ON s.id_corte_academico = ca.id
-        WHERE s.id_corte_academico = :id_corte_academico
+        WHERE s.id_corte_academico = :id_corte_academico AND s.id_tenant = :id_tenant
         ORDER BY s.anio DESC, s.numero_sprint DESC");
         $sentence->bindParam(':id_corte_academico', $id_corte_academico);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -248,8 +268,9 @@ class Sprints
         $sentence = $db->prepare("SELECT s.*, ca.nombre AS nombre_corte_academico
         FROM sprints s
         LEFT OUTER JOIN cortes_academicos ca ON s.id_corte_academico = ca.id
-        WHERE s.es_evaluacion = 1
+        WHERE s.es_evaluacion = 1 AND s.id_tenant = :id_tenant
         ORDER BY s.anio DESC, s.numero_sprint DESC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -259,7 +280,8 @@ class Sprints
     {
         $db = Flight::db();
 
-        $sentenceActual = $db->prepare("SELECT id, fecha_inicial FROM sprints WHERE actual = 1 LIMIT 1");
+        $sentenceActual = $db->prepare("SELECT id, fecha_inicial FROM sprints WHERE actual = 1 AND id_tenant = :id_tenant LIMIT 1");
+        $sentenceActual->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentenceActual->execute();
         $sprintActual = $sentenceActual->fetch();
 
@@ -285,6 +307,7 @@ class Sprints
         FROM sprints s 
         LEFT OUTER JOIN cortes_academicos ca ON s.id_corte_academico = ca.id
         LEFT JOIN tareas_x_sprints txs ON s.id = txs.id_sprint
+        WHERE s.id_tenant = :id_tenant
         GROUP BY s.id, s.anio, s.numero_sprint, s.nombre_sprint, s.fecha_inicial, 
                  s.fecha_final, s.total_dias_habiles, s.id_corte_academico, 
                  s.actual, s.es_evaluacion, ca.nombre
@@ -292,15 +315,16 @@ class Sprints
     ";
 
         $sentence = $db->prepare($sql);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
 
         foreach ($response as &$row) {
-            $row['id'] = (int) $row['id'];
+            $row['id'] = (string) $row['id'];
             $row['anio'] = (int) $row['anio'];
             $row['numero_sprint'] = (int) $row['numero_sprint'];
             $row['total_dias_habiles'] = (int) $row['total_dias_habiles'];
-            $row['id_corte_academico'] = (int) $row['id_corte_academico'];
+            $row['id_corte_academico'] = (string) $row['id_corte_academico'];
             $row['actual'] = (int) $row['actual'];
             $row['es_evaluacion'] = (int) $row['es_evaluacion'];
             $row['total_tareas'] = (int) $row['total_tareas'];
@@ -354,11 +378,13 @@ class Sprints
 
         $sql = "SELECT id, nombre_sprint, fecha_inicial, fecha_final 
                 FROM sprints 
-                WHERE ((fecha_inicial <= :fecha_final AND fecha_final >= :fecha_inicial))";
+                WHERE ((fecha_inicial <= :fecha_final AND fecha_final >= :fecha_inicial))
+                AND id_tenant = :id_tenant";
 
         $params = [
             ':fecha_inicial' => $fecha_inicial,
-            ':fecha_final' => $fecha_final
+            ':fecha_final' => $fecha_final,
+            ':id_tenant' => TenantContext::id()
         ];
 
         if ($id_excluir) {
@@ -393,11 +419,12 @@ class Sprints
 
         $sql = "SELECT COUNT(*) as total 
                 FROM sprints 
-                WHERE anio = :anio AND numero_sprint = :numero_sprint";
+                WHERE anio = :anio AND numero_sprint = :numero_sprint AND id_tenant = :id_tenant";
 
         $params = [
             ':anio' => $anio,
-            ':numero_sprint' => $numero_sprint
+            ':numero_sprint' => $numero_sprint,
+            ':id_tenant' => TenantContext::id()
         ];
 
         if ($id_excluir) {
@@ -432,9 +459,10 @@ class Sprints
         $sql = "SELECT COUNT(*) as total 
                 FROM sprints 
                 WHERE id_corte_academico = :id_corte_academico 
-                AND es_evaluacion = 1";
+                AND es_evaluacion = 1
+                AND id_tenant = :id_tenant";
 
-        $params = [':id_corte_academico' => $id_corte_academico];
+        $params = [':id_corte_academico' => $id_corte_academico, ':id_tenant' => TenantContext::id()];
 
         if ($id_excluir) {
             $sql .= " AND id != :id_excluir";
@@ -457,11 +485,11 @@ class Sprints
     {
         $db = Flight::db();
 
-        $sql = "SELECT * FROM sprints WHERE anio = :anio ORDER BY numero_sprint";
+        $sql = "SELECT * FROM sprints WHERE anio = :anio AND id_tenant = :id_tenant ORDER BY numero_sprint";
 
         try {
             $sentence = $db->prepare($sql);
-            $sentence->execute([':anio' => $anio]);
+            $sentence->execute([':anio' => $anio, ':id_tenant' => TenantContext::id()]);
             $sprints = $sentence->fetchAll();
 
             Flight::json($sprints);
@@ -478,8 +506,8 @@ class Sprints
         $input = json_decode(Flight::request()->getBody(), true);
         $id_excluir = $input['id_excluir'] ?? null;
 
-        $sql = "UPDATE sprints SET actual = 0 WHERE actual = 1";
-        $params = [];
+        $sql = "UPDATE sprints SET actual = 0 WHERE actual = 1 AND id_tenant = :id_tenant";
+        $params = [':id_tenant' => TenantContext::id()];
 
         if ($id_excluir) {
             $sql .= " AND id != :id_excluir";
@@ -513,9 +541,10 @@ class Sprints
                 SELECT s.*, ca.nombre as nombre_corte 
                 FROM sprints s
                 LEFT JOIN cortes_academicos ca ON s.id_corte_academico = ca.id
-                WHERE s.id = :id_sprint
+                WHERE s.id = :id_sprint AND s.id_tenant = :id_tenant
             ");
             $sprintQuery->bindParam(':id_sprint', $id_sprint);
+            $sprintQuery->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sprintQuery->execute();
             $sprint = $sprintQuery->fetch();
 
@@ -527,9 +556,10 @@ class Sprints
             $diasQuery = $db->prepare("
                 SELECT id_dia_semana, total_dias
                 FROM dias_x_sprint
-                WHERE id_sprint = :id_sprint
+                WHERE id_sprint = :id_sprint AND id_tenant = :id_tenant
             ");
             $diasQuery->bindParam(':id_sprint', $id_sprint);
+            $diasQuery->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $diasQuery->execute();
             $diasSprint = $diasQuery->fetchAll();
 
@@ -578,10 +608,14 @@ class Sprints
                     SELECT 1 FROM horarios h 
                     WHERE h.id_grupo = g.id AND h.id_area_academica = aa.id
                 )
+                AND g.id_tenant = :id_tenant_g
+                AND aa.id_tenant = :id_tenant_a
                 ORDER BY g.nombre, aa.nombre
             ";
 
             $sentence = $db->prepare($sql);
+            $sentence->bindValue(':id_tenant_g', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant_a', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_sprint_horarios', $id_sprint);
             $sentence->bindParam(':id_sprint_tareas', $id_sprint);
             $sentence->bindParam(':id_sprint_count', $id_sprint);
@@ -672,9 +706,10 @@ class Sprints
             $actQuery = $db->prepare("
                 SELECT id, titulo, minutos_duracion
                 FROM actividades_academicas
-                WHERE id = :id_actividad
+                WHERE id = :id_actividad AND id_tenant = :id_tenant
             ");
             $actQuery->bindParam(':id_actividad', $id_actividad);
+            $actQuery->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $actQuery->execute();
             $actividad = $actQuery->fetch();
 
@@ -718,9 +753,13 @@ class Sprints
                         aa.nombre as nombre_area
                     FROM grupos g, areas_academicas aa
                     WHERE g.id = :id_grupo3 AND aa.id = :id_area3
+                    AND g.id_tenant = :id_tenant_g
+                    AND aa.id_tenant = :id_tenant_a
                 ";
 
                 $stmt = $db->prepare($sql);
+                $stmt->bindValue(':id_tenant_g', TenantContext::id(), PDO::PARAM_INT);
+                $stmt->bindValue(':id_tenant_a', TenantContext::id(), PDO::PARAM_INT);
                 $stmt->bindParam(':id_sprint', $id_sprint);
                 $stmt->bindParam(':id_grupo', $id_grupo);
                 $stmt->bindParam(':id_area', $id_area);
@@ -778,13 +817,15 @@ class Sprints
 
             $db->beginTransaction();
 
-            $updateSprint = $db->prepare("UPDATE sprints SET actual = 0 WHERE id = :id_sprint");
+            $updateSprint = $db->prepare("UPDATE sprints SET actual = 0 WHERE id = :id_sprint AND id_tenant = :id_tenant");
             $updateSprint->bindParam(':id_sprint', $id_sprint);
+            $updateSprint->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $updateSprint->execute();
 
             $countQuery = $db->prepare("SELECT COUNT(*) as total FROM tareas_x_sprints 
-                                    WHERE id_sprint = :id_sprint AND id_estado_tarea = 1");
+                                    WHERE id_sprint = :id_sprint AND id_estado_tarea = 1 AND id_tenant = :id_tenant");
             $countQuery->bindParam(':id_sprint', $id_sprint);
+            $countQuery->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $countQuery->execute();
             $result = $countQuery->fetch();
             $totalCanceladas = $result['total'];
@@ -801,8 +842,10 @@ class Sprints
                                           END,
                                           fecha_cambio_estado = NOW()
                                       WHERE id_sprint = :id_sprint 
-                                      AND id_estado_tarea = 1");
+                                      AND id_estado_tarea = 1
+                                      AND id_tenant = :id_tenant");
 
+            $updateTareas->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $updateTareas->bindParam(':nueva_observacion', $nuevaObservacion);
             $updateTareas->bindParam(':nueva_observacion2', $nuevaObservacion);
             $updateTareas->bindParam(':id_sprint', $id_sprint);
@@ -838,8 +881,9 @@ class Sprints
                 return;
             }
 
-            $stmtGrados = $db->prepare("SELECT gxg.id_grado FROM grados_x_grupo gxg WHERE gxg.id_grupo = :id_grupo");
-            $stmtGrados->bindParam(':id_grupo', $id_grupo, PDO::PARAM_INT);
+            $stmtGrados = $db->prepare("SELECT gxg.id_grado FROM grados_x_grupo gxg WHERE gxg.id_grupo = :id_grupo AND gxg.id_tenant = :id_tenant");
+            $stmtGrados->bindParam(':id_grupo', $id_grupo);
+            $stmtGrados->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtGrados->execute();
             $grados = $stmtGrados->fetchAll(PDO::FETCH_COLUMN);
 
@@ -888,12 +932,14 @@ class Sprints
                 LEFT JOIN estados_tareas et ON txs.id_estado_tarea = et.id
                 WHERE l.id_grado IN ($gradoIn)
                 AND l.id_corte_academico = :id_corte
+                AND l.id_tenant = :id_tenant
             ";
 
             $params = $gradoParams;
             $params[':id_grupo_tareas'] = $id_grupo;
             $params[':id_corte_sprints'] = $id_corte;
             $params[':id_corte'] = $id_corte;
+            $params[':id_tenant'] = TenantContext::id();
 
             if ($id_area) {
                 $sql .= " AND l.id_area_academica = :id_area";
@@ -932,7 +978,7 @@ class Sprints
                         $campos = explode('::', $parte);
                         if (count($campos) >= 8) {
                             $actividades[] = [
-                                "id" => (int)$campos[0], "titulo" => $campos[1], "materiales" => $campos[2],
+                                "id" => $campos[0], "titulo" => $campos[1], "materiales" => $campos[2],
                                 "minutos_duracion" => (int)$campos[3], "nivel_uno" => $campos[4],
                                 "nivel_dos" => $campos[5], "estado" => $campos[6], "descripcion" => $campos[7]
                             ];
@@ -957,9 +1003,9 @@ class Sprints
                 }
 
                 $logros[] = [
-                    "id" => (int)$row['id_logro'], "nombre" => $row['nombre_logro'],
-                    "nombre_area" => $row['nombre_area'], "id_area" => (int)$row['id_area_academica'],
-                    "nombre_esfera" => $row['nombre_esfera'], "id_esfera" => (int)$row['id_esfera_desarrollo'],
+                    "id" => $row['id_logro'], "nombre" => $row['nombre_logro'],
+                    "nombre_area" => $row['nombre_area'], "id_area" => $row['id_area_academica'],
+                    "nombre_esfera" => $row['nombre_esfera'], "id_esfera" => $row['id_esfera_desarrollo'],
                     "nombre_eje" => $row['nombre_eje'], "nombre_competencia" => $row['nombre_competencia'],
                     "nombre_grado" => $row['nombre_grado'], "nombre_corte" => $row['nombre_corte'],
                     "cubierto" => $cubierto, "cantidad_actividades" => (int)$row['cantidad_actividades_programadas'],
@@ -968,15 +1014,15 @@ class Sprints
                     "actividades" => $actividades
                 ];
 
-                $idArea = (int)$row['id_area_academica'];
+                $idArea = $row['id_area_academica'];
                 if (!isset($porArea[$idArea])) {
                     $porArea[$idArea] = ["id_area" => $idArea, "nombre" => $row['nombre_area'], "total_logros" => 0, "cubiertos" => 0];
                 }
                 $porArea[$idArea]['total_logros']++;
                 if ($cubierto) $porArea[$idArea]['cubiertos']++;
 
-                $idEsfera = (int)$row['id_esfera_desarrollo'];
-                if ($idEsfera > 0) {
+                $idEsfera = $row['id_esfera_desarrollo'];
+                if (!empty($idEsfera)) {
                     if (!isset($porEsfera[$idEsfera])) {
                         $porEsfera[$idEsfera] = ["id_esfera" => $idEsfera, "nombre" => $row['nombre_esfera'], "total_logros" => 0, "cubiertos" => 0];
                     }

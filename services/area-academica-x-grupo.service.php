@@ -18,8 +18,10 @@ class AreaAcademicaXGrupo
             INNER JOIN grupos g ON axg.id_grupo = g.id
             LEFT JOIN docentes d ON axg.id_docente = d.id
             LEFT JOIN personas p ON d.id_persona = p.id
+            WHERE axg.id_tenant = :id_tenant
             ORDER BY g.orden, a.nombre
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -43,10 +45,11 @@ class AreaAcademicaXGrupo
             INNER JOIN grupos g ON axg.id_grupo = g.id
             LEFT JOIN docentes d ON axg.id_docente = d.id
             LEFT JOIN personas p ON d.id_persona = p.id
-            WHERE axg.id_grupo = :id_grupo
+            WHERE axg.id_grupo = :id_grupo AND axg.id_tenant = :id_tenant
             ORDER BY a.nombre
         ");
         $sentence->bindParam(':id_grupo', $id_grupo);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         
@@ -79,10 +82,11 @@ class AreaAcademicaXGrupo
             FROM area_academica_x_grupo axg
             INNER JOIN areas_academicas a ON axg.id_area_academica = a.id
             INNER JOIN grupos g ON axg.id_grupo = g.id
-            WHERE axg.id_docente = :id_docente
+            WHERE axg.id_docente = :id_docente AND axg.id_tenant = :id_tenant
             ORDER BY g.orden, a.nombre
         ");
         $sentence->bindParam(':id_docente', $id_docente);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -101,10 +105,11 @@ class AreaAcademicaXGrupo
             INNER JOIN grupos g ON axg.id_grupo = g.id
             LEFT JOIN docentes d ON axg.id_docente = d.id
             LEFT JOIN personas p ON d.id_persona = p.id
-            WHERE axg.id_area_academica = :id_area
+            WHERE axg.id_area_academica = :id_area AND axg.id_tenant = :id_tenant
             ORDER BY g.orden
         ");
         $sentence->bindParam(':id_area', $id_area);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -124,9 +129,11 @@ class AreaAcademicaXGrupo
                 SELECT id FROM area_academica_x_grupo 
                 WHERE id_area_academica = :id_area_academica 
                 AND id_grupo = :id_grupo
+                AND id_tenant = :id_tenant
             ");
             $checkSentence->bindParam(':id_area_academica', $id_area_academica);
             $checkSentence->bindParam(':id_grupo', $id_grupo);
+            $checkSentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkSentence->execute();
             
             if ($checkSentence->fetch()) {
@@ -134,16 +141,19 @@ class AreaAcademicaXGrupo
                 return;
             }
 
+            $idNew = Uuid::generar();
             $sentence = $db->prepare("
-                INSERT INTO area_academica_x_grupo (id_area_academica, id_grupo, id_docente) 
-                VALUES (:id_area_academica, :id_grupo, :id_docente)
+                INSERT INTO area_academica_x_grupo (id, id_tenant, id_area_academica, id_grupo, id_docente) 
+                VALUES (:id, :id_tenant, :id_area_academica, :id_grupo, :id_docente)
             ");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_area_academica', $id_area_academica);
             $sentence->bindParam(':id_grupo', $id_grupo);
             $sentence->bindParam(':id_docente', $id_docente);
             $sentence->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idNew;
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log("Error en AreaAcademicaXGrupo::new: " . $e->getMessage());
@@ -162,10 +172,11 @@ class AreaAcademicaXGrupo
             $sentence = $db->prepare("
                 UPDATE area_academica_x_grupo 
                 SET id_docente = :id_docente 
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id_docente', $id_docente);
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('success' => true, 'message' => 'Docente actualizado correctamente'));
@@ -189,10 +200,12 @@ class AreaAcademicaXGrupo
                 SET id_docente = :id_docente 
                 WHERE id_area_academica = :id_area_academica 
                 AND id_grupo = :id_grupo
+                AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id_docente', $id_docente);
             $sentence->bindParam(':id_area_academica', $id_area_academica);
             $sentence->bindParam(':id_grupo', $id_grupo);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             if ($sentence->rowCount() == 0) {
@@ -215,9 +228,10 @@ class AreaAcademicaXGrupo
 
             $sentence = $db->prepare("
                 DELETE FROM area_academica_x_grupo 
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             if ($sentence->rowCount() == 0) {
@@ -243,9 +257,11 @@ class AreaAcademicaXGrupo
                 DELETE FROM area_academica_x_grupo 
                 WHERE id_area_academica = :id_area_academica 
                 AND id_grupo = :id_grupo
+                AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id_area_academica', $id_area_academica);
             $sentence->bindParam(':id_grupo', $id_grupo);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             if ($sentence->rowCount() == 0) {
@@ -272,9 +288,10 @@ class AreaAcademicaXGrupo
             FROM area_academica_x_grupo axg
             INNER JOIN grupos g ON axg.id_grupo = g.id
             INNER JOIN areas_academicas a ON axg.id_area_academica = a.id
-            WHERE axg.id_docente = :id_docente
+            WHERE axg.id_docente = :id_docente AND axg.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id_docente', $id_docente);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetch();
         Flight::json($response);

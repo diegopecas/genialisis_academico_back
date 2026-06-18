@@ -9,8 +9,10 @@ class Convenios
                 SELECT c.*, ps.nombre AS nombre_producto_servicio
                 FROM convenios c
                 INNER JOIN productos_servicios ps ON ps.id = c.id_producto_servicio
+                WHERE c.id_tenant = :id_tenant
                 ORDER BY c.nombre
             ");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $response = $stmt->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -29,8 +31,10 @@ class Convenios
                 FROM convenios c
                 INNER JOIN productos_servicios ps ON ps.id = c.id_producto_servicio
                 WHERE c.id = :id
+                AND c.id_tenant = :id_tenant
             ");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $response = $stmt->fetch(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -47,17 +51,19 @@ class Convenios
             $request = Flight::request();
             $data = $request->data->getData();
 
+            $id = Uuid::generar();
             $stmt = $db->prepare("
-                INSERT INTO convenios (nombre, descripcion, id_producto_servicio, activo)
-                VALUES (:nombre, :descripcion, :id_producto_servicio, :activo)
+                INSERT INTO convenios (id, id_tenant, nombre, descripcion, id_producto_servicio, activo)
+                VALUES (:id, :id_tenant, :nombre, :descripcion, :id_producto_servicio, :activo)
             ");
+            $stmt->bindValue(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':nombre', $data['nombre']);
             $stmt->bindParam(':descripcion', $data['descripcion']);
             $stmt->bindParam(':id_producto_servicio', $data['id_producto_servicio']);
             $stmt->bindParam(':activo', $data['activo']);
             $stmt->execute();
 
-            $id = $db->lastInsertId();
             Flight::json(['id' => $id]);
         } catch (Exception $e) {
             error_log('Error en Convenios::new: ' . $e->getMessage());
@@ -79,12 +85,14 @@ class Convenios
                     id_producto_servicio = :id_producto_servicio,
                     activo = :activo
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
             $stmt->bindParam(':id', $data['id']);
             $stmt->bindParam(':nombre', $data['nombre']);
             $stmt->bindParam(':descripcion', $data['descripcion']);
             $stmt->bindParam(':id_producto_servicio', $data['id_producto_servicio']);
             $stmt->bindParam(':activo', $data['activo']);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             Flight::json(['id' => $data['id']]);
@@ -101,8 +109,9 @@ class Convenios
             $request = Flight::request();
             $id = $request->data['id'];
 
-            $stmt = $db->prepare("DELETE FROM convenios WHERE id = :id");
+            $stmt = $db->prepare("DELETE FROM convenios WHERE id = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             Flight::json(['id' => $id]);

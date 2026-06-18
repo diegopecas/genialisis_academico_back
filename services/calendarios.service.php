@@ -100,10 +100,12 @@ class Calendarios
             FROM calendarios_eventos ce
             LEFT JOIN tipos_evento_calendario tec ON tec.id = ce.id_tipo_evento_calendario
             WHERE ce.fecha BETWEEN :fecha_inicio AND :fecha_fin
+            AND ce.id_tenant = :id_tenant
             ORDER BY ce.fecha
         ");
         $stmtEventos->bindParam(':fecha_inicio', $fecha_inicio);
         $stmtEventos->bindParam(':fecha_fin', $fecha_fin);
+        $stmtEventos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmtEventos->execute();
         $eventos = $stmtEventos->fetchAll();
 
@@ -120,9 +122,11 @@ class Calendarios
             FROM personas p
             INNER JOIN estudiantes e ON e.id_persona = p.id AND e.activo = 1
             WHERE MONTH(p.fecha_nacimiento) = :mes
+            AND e.id_tenant = :id_tenant
             ORDER BY DAY(p.fecha_nacimiento)
         ");
         $stmtCumpleEstudiantes->bindParam(':mes', $mes, PDO::PARAM_INT);
+        $stmtCumpleEstudiantes->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmtCumpleEstudiantes->execute();
         $cumpleEstudiantes = $stmtCumpleEstudiantes->fetchAll();
 
@@ -140,9 +144,11 @@ class Calendarios
             INNER JOIN colaboradores col ON col.id_persona = p.id AND col.activo = 1
             LEFT JOIN cargos ca ON ca.id = col.id_cargo
             WHERE MONTH(p.fecha_nacimiento) = :mes
+            AND col.id_tenant = :id_tenant
             ORDER BY DAY(p.fecha_nacimiento)
         ");
         $stmtCumpleColaboradores->bindParam(':mes', $mes, PDO::PARAM_INT);
+        $stmtCumpleColaboradores->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmtCumpleColaboradores->execute();
         $cumpleColaboradores = $stmtCumpleColaboradores->fetchAll();
 

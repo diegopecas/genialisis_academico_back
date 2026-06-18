@@ -15,10 +15,11 @@ class VisitasNinosNecesidades
                     tne.icono as icono_necesidad
                 FROM visitas_ninos_necesidades vnn
                 INNER JOIN tipos_necesidades_especiales tne ON vnn.id_tipo_necesidad = tne.id
-                WHERE vnn.id_visita_nino = :id_visita_nino
+                WHERE vnn.id_visita_nino = :id_visita_nino AND vnn.id_tenant = :id_tenant
                 ORDER BY tne.orden, tne.nombre
             ");
             $sentence->bindParam(':id_visita_nino', $id_visita_nino);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -47,19 +48,22 @@ class VisitasNinosNecesidades
                 }
             }
 
+            $idNew = Uuid::generar();
             $sentence = $db->prepare("
-                INSERT INTO visitas_ninos_necesidades(id_visita_nino, id_tipo_necesidad, detalle) 
-                VALUES (:id_visita_nino, :id_tipo_necesidad, :detalle)
+                INSERT INTO visitas_ninos_necesidades(id, id_tenant, id_visita_nino, id_tipo_necesidad, detalle) 
+                VALUES (:id, :id_tenant, :id_visita_nino, :id_tipo_necesidad, :detalle)
             ");
             
             $detalle = isset($data['detalle']) ? $data['detalle'] : null;
             
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita_nino', $data['id_visita_nino']);
             $sentence->bindParam(':id_tipo_necesidad', $data['id_tipo_necesidad']);
             $sentence->bindParam(':detalle', $detalle);
             $sentence->execute();
             
-            $id = $db->lastInsertId();
+            $id = $idNew;
 
             if ($dataParam !== null) {
                 return $id;
@@ -98,13 +102,14 @@ class VisitasNinosNecesidades
             $sentence = $db->prepare("
                 UPDATE visitas_ninos_necesidades 
                 SET detalle = :detalle 
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
             
             $detalle = isset($data['detalle']) ? $data['detalle'] : null;
             
             $sentence->bindParam(':detalle', $detalle);
             $sentence->bindParam(':id', $data['id']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             if ($dataParam !== null) {
@@ -132,8 +137,9 @@ class VisitasNinosNecesidades
             $db = Flight::db();
             $id = Flight::request()->data['id'];
             
-            $sentence = $db->prepare("DELETE FROM visitas_ninos_necesidades WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_ninos_necesidades WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             Flight::json(array('id' => $id));
@@ -151,8 +157,9 @@ class VisitasNinosNecesidades
         try {
             $db = Flight::db();
             
-            $sentence = $db->prepare("DELETE FROM visitas_ninos_necesidades WHERE id_visita_nino = :id_visita_nino");
+            $sentence = $db->prepare("DELETE FROM visitas_ninos_necesidades WHERE id_visita_nino = :id_visita_nino AND id_tenant = :id_tenant");
             $sentence->bindParam(':id_visita_nino', $id_visita_nino);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             return true;

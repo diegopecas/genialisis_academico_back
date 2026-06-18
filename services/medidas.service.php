@@ -17,8 +17,10 @@ class Medidas
             LEFT JOIN categorias_medidas cm ON cm.id = m.id_categoria
             LEFT JOIN unidades_medidas_corporales umc ON umc.id = m.id_unidad
             LEFT JOIN tipos_valor_medida tvm ON tvm.id = m.id_tipo_valor
+            WHERE m.id_tenant = :id_tenant
             ORDER BY m.id_categoria, m.orden
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
         Flight::json($response);
@@ -36,9 +38,10 @@ class Medidas
             FROM medidas m
             LEFT JOIN unidades_medidas_corporales umc ON umc.id = m.id_unidad
             LEFT JOIN tipos_valor_medida tvm ON tvm.id = m.id_tipo_valor
-            WHERE m.id = :id
+            WHERE m.id = :id AND m.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
         Flight::json($response);
@@ -54,10 +57,13 @@ class Medidas
         $id_tipo_valor = isset(Flight::request()->data['id_tipo_valor']) ? Flight::request()->data['id_tipo_valor'] : 1;
         $orden = isset(Flight::request()->data['orden']) ? Flight::request()->data['orden'] : 0;
 
+        $idNew = Uuid::generar();
         $sentence = $db->prepare("
-            INSERT INTO medidas(nombre, unidad, id_categoria, id_unidad, id_tipo_valor, orden) 
-            VALUES (:nombre, :unidad, :id_categoria, :id_unidad, :id_tipo_valor, :orden)
+            INSERT INTO medidas(id, id_tenant, nombre, unidad, id_categoria, id_unidad, id_tipo_valor, orden) 
+            VALUES (:id, :id_tenant, :nombre, :unidad, :id_categoria, :id_unidad, :id_tipo_valor, :orden)
         ");
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':unidad', $unidad);
         $sentence->bindParam(':id_categoria', $id_categoria);
@@ -65,7 +71,7 @@ class Medidas
         $sentence->bindParam(':id_tipo_valor', $id_tipo_valor);
         $sentence->bindParam(':orden', $orden);
         $sentence->execute();
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(array('id' => $id));
     }
 
@@ -84,7 +90,7 @@ class Medidas
             UPDATE medidas 
             SET nombre = :nombre, unidad = :unidad, id_categoria = :id_categoria, 
                 id_unidad = :id_unidad, id_tipo_valor = :id_tipo_valor, orden = :orden 
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':unidad', $unidad);
@@ -93,6 +99,7 @@ class Medidas
         $sentence->bindParam(':id_tipo_valor', $id_tipo_valor);
         $sentence->bindParam(':orden', $orden);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }
@@ -101,8 +108,9 @@ class Medidas
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("DELETE FROM medidas WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM medidas WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }

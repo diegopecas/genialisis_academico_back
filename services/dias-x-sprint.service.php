@@ -14,7 +14,9 @@ class DiasXSprint
         FROM dias_x_sprint dxs
         LEFT JOIN sprints s ON dxs.id_sprint = s.id
         LEFT JOIN dias_semana ds ON dxs.id_dia_semana = ds.id
+        WHERE dxs.id_tenant = :id_tenant
         ORDER BY dxs.id_sprint, dxs.id_dia_semana");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -23,8 +25,9 @@ class DiasXSprint
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM dias_x_sprint WHERE id = :id");
+        $sentence = $db->prepare("SELECT * FROM dias_x_sprint WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -41,9 +44,10 @@ class DiasXSprint
             ds.nombre as nombre_dia
         FROM dias_x_sprint dxs
         LEFT JOIN dias_semana ds ON dxs.id_dia_semana = ds.id
-        WHERE dxs.id_sprint = :id_sprint
+        WHERE dxs.id_sprint = :id_sprint AND dxs.id_tenant = :id_tenant
         ORDER BY dxs.id_dia_semana");
         $sentence->bindParam(':id_sprint', $id_sprint);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -61,30 +65,35 @@ class DiasXSprint
 
             // Verificar si ya existe
             $checkSentence = $db->prepare("SELECT id FROM dias_x_sprint 
-                WHERE id_sprint = :id_sprint AND id_dia_semana = :id_dia_semana");
+                WHERE id_sprint = :id_sprint AND id_dia_semana = :id_dia_semana AND id_tenant = :id_tenant");
             $checkSentence->bindParam(':id_sprint', $id_sprint);
             $checkSentence->bindParam(':id_dia_semana', $id_dia_semana);
+            $checkSentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkSentence->execute();
             $existing = $checkSentence->fetch();
 
             if ($existing) {
                 // Actualizar si ya existe
                 $sentence = $db->prepare("UPDATE dias_x_sprint SET total_dias = :total_dias 
-                    WHERE id_sprint = :id_sprint AND id_dia_semana = :id_dia_semana");
+                    WHERE id_sprint = :id_sprint AND id_dia_semana = :id_dia_semana AND id_tenant = :id_tenant");
                 $sentence->bindParam(':total_dias', $total_dias);
                 $sentence->bindParam(':id_sprint', $id_sprint);
                 $sentence->bindParam(':id_dia_semana', $id_dia_semana);
+                $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentence->execute();
                 $id = $existing['id'];
             } else {
                 // Crear nuevo
-                $sentence = $db->prepare("INSERT INTO dias_x_sprint (id_sprint, id_dia_semana, total_dias) 
-                    VALUES (:id_sprint, :id_dia_semana, :total_dias)");
+                $idNew = Uuid::generar();
+                $sentence = $db->prepare("INSERT INTO dias_x_sprint (id, id_tenant, id_sprint, id_dia_semana, total_dias) 
+                    VALUES (:id, :id_tenant, :id_sprint, :id_dia_semana, :total_dias)");
+                $sentence->bindValue(':id', $idNew);
+                $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentence->bindParam(':id_sprint', $id_sprint);
                 $sentence->bindParam(':id_dia_semana', $id_dia_semana);
                 $sentence->bindParam(':total_dias', $total_dias);
                 $sentence->execute();
-                $id = $db->lastInsertId();
+                $id = $idNew;
             }
 
             error_log("Días por sprint guardado con ID: $id");
@@ -104,8 +113,9 @@ class DiasXSprint
 
             error_log("Actualizando días por sprint ID: $id");
 
-            $sentence = $db->prepare("UPDATE dias_x_sprint SET total_dias = :total_dias WHERE id = :id");
+            $sentence = $db->prepare("UPDATE dias_x_sprint SET total_dias = :total_dias WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':total_dias', $total_dias);
             $sentence->execute();
 
@@ -129,8 +139,9 @@ class DiasXSprint
 
             error_log("Eliminando días por sprint ID: $id");
 
-            $sentence = $db->prepare("DELETE FROM dias_x_sprint WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM dias_x_sprint WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -175,8 +186,9 @@ class DiasXSprint
         try {
             error_log("Eliminando días del sprint ID: $id_sprint");
             
-            $sentence = $db->prepare("DELETE FROM dias_x_sprint WHERE id_sprint = :id_sprint");
+            $sentence = $db->prepare("DELETE FROM dias_x_sprint WHERE id_sprint = :id_sprint AND id_tenant = :id_tenant");
             $sentence->bindParam(':id_sprint', $id_sprint);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             $count = $sentence->rowCount();

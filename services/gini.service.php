@@ -5,7 +5,8 @@ class Gini
     {
         $db = Flight::db();
 
-        $sentence = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = 'OPENAI_API_KEY' LIMIT 1");
+        $sentence = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = 'OPENAI_API_KEY' AND id_tenant = :id_tenant LIMIT 1");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $row = $sentence->fetch();
 
@@ -20,8 +21,9 @@ class Gini
 
         $clave = $modo === 'en-es' ? 'GINI_PROMPT_EN_ES' : 'GINI_PROMPT_ES_EN';
 
-        $sentencePrompt = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = :clave LIMIT 1");
+        $sentencePrompt = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = :clave AND id_tenant = :id_tenant LIMIT 1");
         $sentencePrompt->bindParam(':clave', $clave);
+        $sentencePrompt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentencePrompt->execute();
         $rowPrompt = $sentencePrompt->fetch();
 

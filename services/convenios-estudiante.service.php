@@ -14,10 +14,11 @@ class ConveniosEstudiante
                 INNER JOIN productos_servicios ps ON ps.id = c.id_producto_servicio
                 INNER JOIN usuarios u ON u.id = ce.id_usuario
                 INNER JOIN personas pu ON pu.id = u.id_persona
-                WHERE ce.id_estudiante = :id_estudiante
+                WHERE ce.id_estudiante = :id_estudiante AND ce.id_tenant = :id_tenant
                 ORDER BY ce.fecha_inicio DESC
             ");
             $stmt->bindParam(':id_estudiante', $id_estudiante);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $response = $stmt->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -37,11 +38,12 @@ class ConveniosEstudiante
                 FROM convenios_estudiante ce
                 INNER JOIN convenios c ON c.id = ce.id_convenio AND c.activo = 1
                 INNER JOIN productos_servicios ps ON ps.id = c.id_producto_servicio
-                WHERE ce.id_estudiante = :id_estudiante
+                WHERE ce.id_estudiante = :id_estudiante AND ce.id_tenant = :id_tenant
                   AND ce.fecha_inicio <= CURDATE()
                   AND (ce.fecha_fin IS NULL OR ce.fecha_fin >= CURDATE())
             ");
             $stmt->bindParam(':id_estudiante', $id_estudiante);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $response = $stmt->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -79,8 +81,9 @@ class ConveniosEstudiante
             }
 
             // Obtener id_persona del estudiante
-            $stmtPersona = $db->prepare("SELECT id_persona FROM estudiantes WHERE id = :id_estudiante");
+            $stmtPersona = $db->prepare("SELECT id_persona FROM estudiantes WHERE id = :id_estudiante AND id_tenant = :id_tenant");
             $stmtPersona->bindParam(':id_estudiante', $id_estudiante);
+            $stmtPersona->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtPersona->execute();
             $personaRow = $stmtPersona->fetch(PDO::FETCH_ASSOC);
             if (!$personaRow) {
@@ -94,9 +97,10 @@ class ConveniosEstudiante
                 SELECT c.id_producto_servicio, c.nombre, ps.valor_sugerido, ps.nombre AS nombre_producto
                 FROM convenios c
                 INNER JOIN productos_servicios ps ON ps.id = c.id_producto_servicio
-                WHERE c.id = :id_convenio
+                WHERE c.id = :id_convenio AND c.id_tenant = :id_tenant
             ");
             $stmtConvenio->bindParam(':id_convenio', $id_convenio);
+            $stmtConvenio->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtConvenio->execute();
             $convenio = $stmtConvenio->fetch(PDO::FETCH_ASSOC);
             if (!$convenio) {
@@ -107,17 +111,20 @@ class ConveniosEstudiante
             $db->beginTransaction();
 
             // 1. Insertar el convenio del estudiante
+            $idNew = Uuid::generar();
             $stmt = $db->prepare("
-                INSERT INTO convenios_estudiante (id_estudiante, id_convenio, fecha_inicio, fecha_fin, id_usuario)
-                VALUES (:id_estudiante, :id_convenio, :fecha_inicio, :fecha_fin, :id_usuario)
+                INSERT INTO convenios_estudiante (id, id_tenant, id_estudiante, id_convenio, fecha_inicio, fecha_fin, id_usuario)
+                VALUES (:id, :id_tenant, :id_estudiante, :id_convenio, :fecha_inicio, :fecha_fin, :id_usuario)
             ");
+            $stmt->bindValue(':id', $idNew);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_estudiante', $id_estudiante);
             $stmt->bindParam(':id_convenio', $id_convenio);
             $stmt->bindParam(':fecha_inicio', $fecha_inicio);
             $stmt->bindParam(':fecha_fin', $fecha_fin);
             $stmt->bindParam(':id_usuario', $id_usuario);
             $stmt->execute();
-            $id = $db->lastInsertId();
+            $id = $idNew;
 
             $cuentasCreadas = 0;
             $duplicados = [];
@@ -127,9 +134,10 @@ class ConveniosEstudiante
             if ($crear_cobros_automaticos) {
                 $stmtCuenta = $db->prepare("
                     INSERT INTO cuentas_por_cobrar 
-                    (id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion)
-                    VALUES (:id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario, 0, NULL, NULL, NULL)
+                    (id_tenant, id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion)
+                    VALUES (:id_tenant, :id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario, 0, NULL, NULL, NULL)
                 ");
+                $stmtCuenta->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
                 // Verificar duplicados
                 $stmtVerificar = $db->prepare("
@@ -139,7 +147,9 @@ class ConveniosEstudiante
                       AND id_producto_servicio = :id_producto_servicio
                       AND fecha = :fecha
                       AND (anulado = 0 OR anulado IS NULL)
+                      AND id_tenant = :id_tenant
                 ");
+                $stmtVerificar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
                 $nombresMeses = [
                     1 => 'Enero', 2 => 'Febrero', 3 => 'Marzo', 4 => 'Abril',
@@ -221,9 +231,10 @@ class ConveniosEstudiante
                     id_convenio = :id_convenio,
                     fecha_inicio = :fecha_inicio,
                     fecha_fin = :fecha_fin
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
             $stmt->bindParam(':id', $data['id']);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_convenio', $data['id_convenio']);
             $stmt->bindParam(':fecha_inicio', $data['fecha_inicio']);
             $stmt->bindParam(':fecha_fin', $data['fecha_fin']);
@@ -250,17 +261,19 @@ class ConveniosEstudiante
                 FROM convenios_estudiante ce
                 INNER JOIN convenios c ON c.id = ce.id_convenio
                 INNER JOIN productos_servicios ps ON ps.id = c.id_producto_servicio
-                WHERE ce.id = :id
+                WHERE ce.id = :id AND ce.id_tenant = :id_tenant
             ");
             $stmtInfo->bindParam(':id', $id);
+            $stmtInfo->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtInfo->execute();
             $info = $stmtInfo->fetch(PDO::FETCH_ASSOC);
 
             // Contar cuentas por cobrar asociadas al producto del convenio
             $cuentasPendientes = 0;
             if ($info) {
-                $stmtPersona = $db->prepare("SELECT id_persona FROM estudiantes WHERE id = :id_estudiante");
+                $stmtPersona = $db->prepare("SELECT id_persona FROM estudiantes WHERE id = :id_estudiante AND id_tenant = :id_tenant");
                 $stmtPersona->bindParam(':id_estudiante', $info['id_estudiante']);
+                $stmtPersona->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtPersona->execute();
                 $persona = $stmtPersona->fetch(PDO::FETCH_ASSOC);
 
@@ -272,7 +285,9 @@ class ConveniosEstudiante
                           AND id_producto_servicio = :id_producto_servicio
                           AND (anulado = 0 OR anulado IS NULL)
                           AND fecha >= CURDATE()
+                          AND id_tenant = :id_tenant
                     ");
+                    $stmtCuentas->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $stmtCuentas->bindParam(':id_persona', $persona['id_persona']);
                     $stmtCuentas->bindParam(':id_producto_servicio', $info['id_producto_servicio']);
                     $stmtCuentas->execute();
@@ -281,8 +296,9 @@ class ConveniosEstudiante
                 }
             }
 
-            $stmt = $db->prepare("DELETE FROM convenios_estudiante WHERE id = :id");
+            $stmt = $db->prepare("DELETE FROM convenios_estudiante WHERE id = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             Flight::json([

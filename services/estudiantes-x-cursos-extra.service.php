@@ -12,7 +12,9 @@ class EstudiantesXCursosExtra
         INNER JOIN estudiantes e ON exce.id_estudiante = e.id
         INNER JOIN personas p ON e.id_persona = p.id
         INNER JOIN cursos_extra ce ON exce.id_curso_extra = ce.id
+        WHERE exce.id_tenant = :id_tenant
         ORDER BY p.primer_apellido, p.primer_nombre");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -28,8 +30,9 @@ class EstudiantesXCursosExtra
         INNER JOIN estudiantes e ON exce.id_estudiante = e.id
         INNER JOIN personas p ON e.id_persona = p.id
         INNER JOIN cursos_extra ce ON exce.id_curso_extra = ce.id
-        WHERE exce.id = :id");
+        WHERE exce.id = :id AND exce.id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -43,9 +46,10 @@ class EstudiantesXCursosExtra
         FROM estudiantes_x_cursos_extra exce
         INNER JOIN estudiantes e ON exce.id_estudiante = e.id
         INNER JOIN personas p ON e.id_persona = p.id
-        WHERE exce.id_curso_extra = :id_curso_extra
+        WHERE exce.id_curso_extra = :id_curso_extra AND exce.id_tenant = :id_tenant
         ORDER BY p.primer_apellido, p.primer_nombre");
         $sentence->bindParam(':id_curso_extra', $id_curso_extra);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -58,9 +62,10 @@ class EstudiantesXCursosExtra
         ce.nombre AS nombre_curso
         FROM estudiantes_x_cursos_extra exce
         INNER JOIN cursos_extra ce ON exce.id_curso_extra = ce.id
-        WHERE exce.id_estudiante = :id_estudiante
+        WHERE exce.id_estudiante = :id_estudiante AND exce.id_tenant = :id_tenant
         ORDER BY exce.anio DESC, ce.nombre");
         $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -74,14 +79,17 @@ class EstudiantesXCursosExtra
         $fecha_inscripcion = Flight::request()->data['fecha_inscripcion'];
         $anio = Flight::request()->data['anio'];
 
-        $sentence = $db->prepare("INSERT INTO estudiantes_x_cursos_extra(id_estudiante, id_curso_extra, fecha_inscripcion, anio, activo) 
-        VALUES (:id_estudiante, :id_curso_extra, :fecha_inscripcion, :anio, 1)");
+        $idNew = Uuid::generar();
+        $sentence = $db->prepare("INSERT INTO estudiantes_x_cursos_extra(id, id_tenant, id_estudiante, id_curso_extra, fecha_inscripcion, anio, activo) 
+        VALUES (:id, :id_tenant, :id_estudiante, :id_curso_extra, :fecha_inscripcion, :anio, 1)");
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
         $sentence->bindParam(':id_curso_extra', $id_curso_extra);
         $sentence->bindParam(':fecha_inscripcion', $fecha_inscripcion);
         $sentence->bindParam(':anio', $anio, PDO::PARAM_INT);
         $sentence->execute();
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(array('id' => $id));
     }
 
@@ -91,9 +99,10 @@ class EstudiantesXCursosExtra
         $id = Flight::request()->data['id'];
         $activo = Flight::request()->data['activo'];
 
-        $sentence = $db->prepare("UPDATE estudiantes_x_cursos_extra SET activo = :activo WHERE id = :id");
+        $sentence = $db->prepare("UPDATE estudiantes_x_cursos_extra SET activo = :activo WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':activo', $activo);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }
@@ -102,8 +111,9 @@ class EstudiantesXCursosExtra
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("DELETE FROM estudiantes_x_cursos_extra WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM estudiantes_x_cursos_extra WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }
@@ -128,9 +138,10 @@ class EstudiantesXCursosExtra
                 INNER JOIN cuentas_por_cobrar cpc ON ccxce.id_cuenta_por_cobrar = cpc.id
                 INNER JOIN productos_servicios ps ON cpc.id_producto_servicio = ps.id
                 LEFT JOIN cuenta_pagada cp ON cpc.id = cp.id_cuenta_por_cobrar
-                WHERE ccxce.id_estudiante_x_curso_extra = :id_inscripcion
+                WHERE ccxce.id_estudiante_x_curso_extra = :id_inscripcion AND ccxce.id_tenant = :id_tenant
                 GROUP BY ccxce.id, cpc.id, ps.nombre
             ");
+            $stmtCuentas->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtCuentas->bindParam(':id_inscripcion', $id);
             $stmtCuentas->execute();
             $cuentas = $stmtCuentas->fetchAll(PDO::FETCH_ASSOC);
@@ -140,8 +151,9 @@ class EstudiantesXCursosExtra
 
             $stmtAnularCuenta = $db->prepare("
                 UPDATE cuentas_por_cobrar SET anulado = 1, fecha_anulacion = NOW() 
-                WHERE id = :id AND (anulado = 0 OR anulado IS NULL)
+                WHERE id = :id AND (anulado = 0 OR anulado IS NULL) AND id_tenant = :id_tenant
             ");
+            $stmtAnularCuenta->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             foreach ($cuentas as $cuenta) {
                 if ($cuenta['anulado'] == 1) continue;
@@ -160,8 +172,9 @@ class EstudiantesXCursosExtra
                 }
             }
 
-            $stmtAnularInscripcion = $db->prepare("UPDATE estudiantes_x_cursos_extra SET activo = 0 WHERE id = :id");
+            $stmtAnularInscripcion = $db->prepare("UPDATE estudiantes_x_cursos_extra SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
             $stmtAnularInscripcion->bindParam(':id', $id);
+            $stmtAnularInscripcion->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtAnularInscripcion->execute();
 
             $db->commit();

@@ -10,7 +10,9 @@ class DatosAdicionales
             da.orden, da.activo, tda.nombre AS nombre_tipo, tda.icono AS icono_tipo
             FROM datos_adicionales da
             INNER JOIN tipos_datos_adicionales tda ON da.id_tipo_dato_adicional = tda.id
+            WHERE da.id_tenant = :id_tenant
             ORDER BY tda.orden, da.orden, da.nombre");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -24,8 +26,9 @@ class DatosAdicionales
             da.orden, da.activo, tda.nombre AS nombre_tipo, tda.icono AS icono_tipo
             FROM datos_adicionales da
             INNER JOIN tipos_datos_adicionales tda ON da.id_tipo_dato_adicional = tda.id
-            WHERE da.id = :id");
+            WHERE da.id = :id AND da.id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -40,8 +43,10 @@ class DatosAdicionales
             FROM datos_adicionales da
             INNER JOIN tipos_datos_adicionales tda ON da.id_tipo_dato_adicional = tda.id
             WHERE da.id_tipo_dato_adicional = :id_tipo
+            AND da.id_tenant = :id_tenant
             ORDER BY da.orden, da.nombre");
         $sentence->bindParam(':id_tipo', $id_tipo);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -62,8 +67,11 @@ class DatosAdicionales
         $orden = isset(Flight::request()->data['orden']) ? Flight::request()->data['orden'] : 0;
         $activo = isset(Flight::request()->data['activo']) ? Flight::request()->data['activo'] : 1;
 
-        $sentence = $db->prepare("INSERT INTO datos_adicionales (id_tipo_dato_adicional, nombre, es_numero, es_texto, es_parrafo, es_fecha, opciones, orden, activo) 
-            VALUES (:id_tipo_dato_adicional, :nombre, :es_numero, :es_texto, :es_parrafo, :es_fecha, :opciones, :orden, :activo)");
+        $id = Uuid::generar();
+        $sentence = $db->prepare("INSERT INTO datos_adicionales (id, id_tenant, id_tipo_dato_adicional, nombre, es_numero, es_texto, es_parrafo, es_fecha, opciones, orden, activo) 
+            VALUES (:id, :id_tenant, :id_tipo_dato_adicional, :nombre, :es_numero, :es_texto, :es_parrafo, :es_fecha, :opciones, :orden, :activo)");
+        $sentence->bindValue(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_tipo_dato_adicional', $id_tipo_dato_adicional);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':es_numero', $es_numero);
@@ -75,7 +83,6 @@ class DatosAdicionales
         $sentence->bindParam(':activo', $activo);
         $sentence->execute();
 
-        $id = $db->lastInsertId();
         Flight::json(array('id' => $id));
     }
 
@@ -97,7 +104,7 @@ class DatosAdicionales
 
         $sentence = $db->prepare("UPDATE datos_adicionales SET id_tipo_dato_adicional = :id_tipo_dato_adicional, nombre = :nombre, 
             es_numero = :es_numero, es_texto = :es_texto, es_parrafo = :es_parrafo, es_fecha = :es_fecha, 
-            opciones = :opciones, orden = :orden, activo = :activo WHERE id = :id");
+            opciones = :opciones, orden = :orden, activo = :activo WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id_tipo_dato_adicional', $id_tipo_dato_adicional);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':es_numero', $es_numero);
@@ -108,6 +115,7 @@ class DatosAdicionales
         $sentence->bindParam(':orden', $orden);
         $sentence->bindParam(':activo', $activo);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         self::getById($id);
@@ -117,8 +125,9 @@ class DatosAdicionales
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("DELETE FROM datos_adicionales WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM datos_adicionales WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         Flight::json(array('id' => $id));
     }

@@ -12,8 +12,10 @@ class VisitasNinos
                     v.hora as hora_visita
                 FROM visitas_ninos vn
                 INNER JOIN visitas v ON vn.id_visita = v.id
+                WHERE vn.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC, v.hora DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -44,8 +46,11 @@ class VisitasNinos
                 }
             }
 
+            $idNew = Uuid::generar();
             $sentence = $db->prepare("
                 INSERT INTO visitas_ninos (
+                    id, 
+                    id_tenant, 
                     id_visita, 
                     nombre_nino, 
                     fecha_nacimiento, 
@@ -57,6 +62,8 @@ class VisitasNinos
                     ha_estado_escolarizado, 
                     donde_estuvo
                 ) VALUES (
+                    :id, 
+                    :id_tenant, 
                     :id_visita, 
                     :nombre_nino, 
                     :fecha_nacimiento, 
@@ -91,10 +98,12 @@ class VisitasNinos
             $tiene_hermanos = isset($data['tiene_hermanos_en_jardin']) ? ($data['tiene_hermanos_en_jardin'] ? 1 : 0) : 0;
             $ha_estado_escolarizado = isset($data['ha_estado_escolarizado']) ? ($data['ha_estado_escolarizado'] ? 1 : 0) : 0;
 
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $data['id_visita']);
             $sentence->bindParam(':nombre_nino', $data['nombre_nino']);
             $sentence->bindParam(':fecha_nacimiento', $fecha_nacimiento);
-            $sentence->bindParam(':id_grupo', $id_grupo, PDO::PARAM_INT);
+            $sentence->bindParam(':id_grupo', $id_grupo);
             $sentence->bindParam(':id_genero', $id_genero, PDO::PARAM_INT);
             $sentence->bindParam(':dato_significativo', $dato_significativo);
             $sentence->bindParam(':tiene_hermanos_en_jardin', $tiene_hermanos);
@@ -103,7 +112,7 @@ class VisitasNinos
             $sentence->bindParam(':donde_estuvo', $donde_estuvo);
 
             $sentence->execute();
-            $idNino = $db->lastInsertId();
+            $idNino = $idNew;
 
             // ✅ Manejar necesidades especiales si existen
             if (isset($data['necesidades']) && is_array($data['necesidades'])) {
@@ -163,7 +172,7 @@ class VisitasNinos
                     nombre_hermanos_en_jardin = :nombre_hermanos_en_jardin,
                     ha_estado_escolarizado = :ha_estado_escolarizado,
                     donde_estuvo = :donde_estuvo
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
 
             // Manejar valores NULL
@@ -188,9 +197,10 @@ class VisitasNinos
             $ha_estado_escolarizado = isset($data['ha_estado_escolarizado']) ? ($data['ha_estado_escolarizado'] ? 1 : 0) : 0;
 
             $sentence->bindParam(':id', $data['id']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':nombre_nino', $data['nombre_nino']);
             $sentence->bindParam(':fecha_nacimiento', $fecha_nacimiento);
-            $sentence->bindParam(':id_grupo', $id_grupo, PDO::PARAM_INT);
+            $sentence->bindParam(':id_grupo', $id_grupo);
             $sentence->bindParam(':id_genero', $id_genero, PDO::PARAM_INT);
             $sentence->bindParam(':dato_significativo', $dato_significativo);
             $sentence->bindParam(':tiene_hermanos_en_jardin', $tiene_hermanos);
@@ -250,9 +260,10 @@ class VisitasNinos
                 FROM visitas_ninos vn
                 LEFT JOIN grupos g ON vn.id_grupo = g.id
                 LEFT JOIN generos gen ON vn.id_genero = gen.id
-                WHERE vn.id = :id
+                WHERE vn.id = :id AND vn.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $nino = $sentence->fetch(PDO::FETCH_ASSOC);
 
@@ -265,9 +276,10 @@ class VisitasNinos
                         tne.icono as icono_necesidad
                     FROM visitas_ninos_necesidades vnn
                     INNER JOIN tipos_necesidades_especiales tne ON vnn.id_tipo_necesidad = tne.id
-                    WHERE vnn.id_visita_nino = :id_visita_nino
+                    WHERE vnn.id_visita_nino = :id_visita_nino AND vnn.id_tenant = :id_tenant
                 ");
                 $sentenceNecesidades->bindParam(':id_visita_nino', $id);
+                $sentenceNecesidades->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentenceNecesidades->execute();
                 $nino['necesidades'] = $sentenceNecesidades->fetchAll(PDO::FETCH_ASSOC);
             }
@@ -294,10 +306,11 @@ class VisitasNinos
                 FROM visitas_ninos vn
                 LEFT JOIN grupos g ON vn.id_grupo = g.id
                 LEFT JOIN generos gen ON vn.id_genero = gen.id
-                WHERE vn.id_visita = :id_visita
+                WHERE vn.id_visita = :id_visita AND vn.id_tenant = :id_tenant
                 ORDER BY vn.id
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $ninos = $sentence->fetchAll(PDO::FETCH_ASSOC);
 
@@ -310,9 +323,10 @@ class VisitasNinos
                         tne.icono as icono_necesidad
                     FROM visitas_ninos_necesidades vnn
                     INNER JOIN tipos_necesidades_especiales tne ON vnn.id_tipo_necesidad = tne.id
-                    WHERE vnn.id_visita_nino = :id_visita_nino
+                    WHERE vnn.id_visita_nino = :id_visita_nino AND vnn.id_tenant = :id_tenant
                 ");
                 $sentenceNecesidades->bindParam(':id_visita_nino', $nino['id']);
+                $sentenceNecesidades->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentenceNecesidades->execute();
                 $nino['necesidades'] = $sentenceNecesidades->fetchAll(PDO::FETCH_ASSOC);
             }
@@ -337,8 +351,9 @@ class VisitasNinos
             VisitasNinosNecesidades::deleteByNino($id);
 
             // Luego eliminar el niño
-            $sentence = $db->prepare("DELETE FROM visitas_ninos WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_ninos WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));

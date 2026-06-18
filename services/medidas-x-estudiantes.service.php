@@ -5,7 +5,8 @@ class MedidasXEstudiantes
     {
         try {
             $db = Flight::db();
-            $sentence = $db->prepare("SELECT * FROM medidas_x_estudiantes");
+            $sentence = $db->prepare("SELECT * FROM medidas_x_estudiantes WHERE id_tenant = :id_tenant");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -18,8 +19,9 @@ class MedidasXEstudiantes
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM medidas_x_estudiantes WHERE id = :id");
+        $sentence = $db->prepare("SELECT * FROM medidas_x_estudiantes WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -45,10 +47,11 @@ class MedidasXEstudiantes
             LEFT JOIN tipos_valor_medida tvm ON tvm.id = m.id_tipo_valor
             INNER JOIN usuarios u ON u.id = mxe.id_usuario
             INNER JOIN personas p ON p.id = u.id_persona
-            WHERE mxe.id_estudiante = :id_estudiante
+            WHERE mxe.id_estudiante = :id_estudiante AND mxe.id_tenant = :id_tenant
             ORDER BY mxe.fecha DESC, m.id_categoria, m.orden
         ");
         $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -67,10 +70,13 @@ class MedidasXEstudiantes
         $id_usuario = Flight::request()->data['id_usuario'];
         $id_documento_persona = isset(Flight::request()->data['id_documento_persona']) ? Flight::request()->data['id_documento_persona'] : null;
 
+        $idNew = Uuid::generar();
         $sentence = $db->prepare("
-            INSERT INTO medidas_x_estudiantes(id_estudiante, id_medida, fecha, valor, id_usuario, id_documento_persona) 
-            VALUES (:id_estudiante, :id_medida, :fecha, :valor, :id_usuario, :id_documento_persona)
+            INSERT INTO medidas_x_estudiantes(id, id_tenant, id_estudiante, id_medida, fecha, valor, id_usuario, id_documento_persona) 
+            VALUES (:id, :id_tenant, :id_estudiante, :id_medida, :fecha, :valor, :id_usuario, :id_documento_persona)
         ");
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
         $sentence->bindParam(':id_medida', $id_medida);
         $sentence->bindParam(':fecha', $fecha);
@@ -78,7 +84,7 @@ class MedidasXEstudiantes
         $sentence->bindParam(':id_usuario', $id_usuario);
         $sentence->bindParam(':id_documento_persona', $id_documento_persona);
         $sentence->execute();
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(array('id' => $id));
     }
 
@@ -101,9 +107,10 @@ class MedidasXEstudiantes
                 UPDATE medidas_x_estudiantes 
                 SET id_estudiante = :id_estudiante, id_medida = :id_medida, fecha = :fecha, 
                     valor = :valor, id_usuario = :id_usuario, id_documento_persona = :id_documento_persona
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_estudiante', $id_estudiante);
             $sentence->bindParam(':id_medida', $id_medida);
             $sentence->bindParam(':fecha', $fecha);
@@ -124,8 +131,9 @@ class MedidasXEstudiantes
             PermisosService::validar($userData, 'estudiantes.medidas.administrar');
 
             $db = Flight::db();
-            $sentence = $db->prepare("DELETE FROM medidas_x_estudiantes WHERE id = :id");
-            $sentence->bindParam(':id', $id, PDO::PARAM_INT);
+            $sentence = $db->prepare("DELETE FROM medidas_x_estudiantes WHERE id = :id AND id_tenant = :id_tenant");
+            $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             if ($sentence->rowCount() > 0) {
                 Flight::json(["success" => true, "message" => "Registro eliminado correctamente"]);
@@ -149,9 +157,11 @@ class MedidasXEstudiantes
                     INNER JOIN medidas m ON m.id = mxe.id_medida
                     WHERE mxe.id_medida = :id_medida 
                     AND mxe.id_estudiante = :id_estudiante 
-                    AND mxe.fecha = :fecha";
+                    AND mxe.fecha = :fecha
+                    AND mxe.id_tenant = :id_tenant";
 
             $stmt = $db->prepare($sql);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_medida', $data['id_medida']);
             $stmt->bindParam(':id_estudiante', $data['id_estudiante']);
             $stmt->bindParam(':fecha', $data['fecha']);
@@ -193,9 +203,11 @@ class MedidasXEstudiantes
             INNER JOIN estudiantes e ON eg.id_estudiante = e.id AND e.activo = 1
             LEFT JOIN medidas_x_estudiantes mxe ON eg.id_estudiante = mxe.id_estudiante
             WHERE g.id = :id_grupo
+            AND g.id_tenant = :id_tenant
             GROUP BY g.id, g.nombre";
 
             $stmt = $db->prepare($sql);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_grupo', $id_grupo);
             $stmt->bindParam(':fecha_inicio1', $fecha_inicio);
             $stmt->bindParam(':fecha_fin1', $fecha_fin);
@@ -275,6 +287,7 @@ class MedidasXEstudiantes
                 WHERE mxe.id_estudiante IN ($placeholdersEst)
                 AND (mxe.fecha = ? OR mxe.fecha < ?)
                 $filtroMedidas
+                AND mxe.id_tenant = ?
                 ORDER BY mxe.id_estudiante, mxe.id_medida, mxe.fecha DESC
             ";
 
@@ -283,6 +296,7 @@ class MedidasXEstudiantes
             $params[] = $fecha;
             $params[] = $fecha;
             $params = array_merge($params, $paramsMedidas);
+            $params[] = TenantContext::id();
 
             $stmt = $db->prepare($sql);
             $stmt->execute($params);
@@ -304,7 +318,7 @@ class MedidasXEstudiantes
 
                 if (!isset($resultado[$estId]['medidas'][$medId])) {
                     $resultado[$estId]['medidas'][$medId] = [
-                        'id_medida' => (int) $medId,
+                        'id_medida' => $medId,
                         'valor_actual' => null,
                         'id_registro_actual' => null,
                         'valor_anterior' => null,
@@ -316,10 +330,10 @@ class MedidasXEstudiantes
 
                 if ($medida['tipo_registro'] === 'actual') {
                     $ref['valor_actual'] = (float) $medida['valor'];
-                    $ref['id_registro_actual'] = (int) $medida['id'];
+                    $ref['id_registro_actual'] = $medida['id'];
                     // Guardar ruta_imagen a nivel estudiante (solo la primera vez)
                     if ($medida['id_documento_persona'] && !$resultado[$estId]['ruta_imagen']) {
-                        $resultado[$estId]['id_documento_persona'] = (int) $medida['id_documento_persona'];
+                        $resultado[$estId]['id_documento_persona'] = $medida['id_documento_persona'];
                         $resultado[$estId]['ruta_imagen'] = $medida['ruta_archivo'];
                     }
                 } elseif ($medida['tipo_registro'] === 'anterior' && $medida['ranking'] == 1) {
@@ -387,7 +401,8 @@ class MedidasXEstudiantes
             }
 
             $db = Flight::db();
-            $stmt = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = 'gemini_api_key' LIMIT 1");
+            $stmt = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = 'gemini_api_key' AND id_tenant = :id_tenant LIMIT 1");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $config = $stmt->fetch();
 
@@ -398,7 +413,8 @@ class MedidasXEstudiantes
 
             $apiKey = $config['valor'];
 
-            $stmtEstado = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = 'estado_servicio' LIMIT 1");
+            $stmtEstado = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = 'estado_servicio' AND id_tenant = :id_tenant LIMIT 1");
+            $stmtEstado->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtEstado->execute();
             $estado = $stmtEstado->fetch();
 
@@ -497,7 +513,8 @@ class MedidasXEstudiantes
                 return;
             }
 
-            $stmtContador = $db->prepare("UPDATE ia_configuracion SET valor = valor + 1, fecha_actualizacion = NOW() WHERE clave = 'mensajes_generados_hoy'");
+            $stmtContador = $db->prepare("UPDATE ia_configuracion SET valor = valor + 1, fecha_actualizacion = NOW() WHERE clave = 'mensajes_generados_hoy' AND id_tenant = :id_tenant");
+            $stmtContador->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtContador->execute();
 
             $tokensInput = 0;
@@ -510,7 +527,8 @@ class MedidasXEstudiantes
             }
 
             if ($tokensTotal > 0) {
-                $stmtTokens = $db->prepare("UPDATE ia_configuracion SET valor = valor + :tokens, fecha_actualizacion = NOW() WHERE clave = 'tokens_consumidos_hoy'");
+                $stmtTokens = $db->prepare("UPDATE ia_configuracion SET valor = valor + :tokens, fecha_actualizacion = NOW() WHERE clave = 'tokens_consumidos_hoy' AND id_tenant = :id_tenant");
+                $stmtTokens->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtTokens->bindParam(':tokens', $tokensTotal);
                 $stmtTokens->execute();
             }
@@ -552,15 +570,17 @@ class MedidasXEstudiantes
 
             try {
                 $stmtInsert = $db->prepare("
-                    INSERT INTO medidas_x_estudiantes (id_estudiante, id_medida, fecha, valor, id_usuario, id_documento_persona)
-                    VALUES (:id_estudiante, :id_medida, :fecha, :valor, :id_usuario, :id_documento_persona)
+                    INSERT INTO medidas_x_estudiantes (id_tenant, id_estudiante, id_medida, fecha, valor, id_usuario, id_documento_persona)
+                    VALUES (:id_tenant, :id_estudiante, :id_medida, :fecha, :valor, :id_usuario, :id_documento_persona)
                 ");
+                $stmtInsert->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
                 $stmtUpdate = $db->prepare("
                     UPDATE medidas_x_estudiantes 
                     SET valor = :valor, id_usuario = :id_usuario, id_documento_persona = :id_documento_persona
-                    WHERE id = :id
+                    WHERE id = :id AND id_tenant = :id_tenant
                 ");
+                $stmtUpdate->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
                 $totalInsertados = 0;
                 $totalActualizados = 0;

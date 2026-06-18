@@ -7,8 +7,8 @@ class WaConfig
     public static function getAll()
     {
         $db = Flight::db();
-        $stmt = $db->prepare("SELECT clave, valor, descripcion FROM wa_config ORDER BY id");
-        $stmt->execute();
+        $stmt = $db->prepare("SELECT clave, valor, descripcion FROM wa_config WHERE id_tenant = :id_tenant ORDER BY id");
+        $stmt->execute(['id_tenant' => TenantContext::id()]);
         Flight::json($stmt->fetchAll());
     }
 
@@ -18,8 +18,8 @@ class WaConfig
     public static function getByClave($clave)
     {
         $db = Flight::db();
-        $stmt = $db->prepare("SELECT clave, valor, descripcion FROM wa_config WHERE clave = :clave LIMIT 1");
-        $stmt->execute(['clave' => $clave]);
+        $stmt = $db->prepare("SELECT clave, valor, descripcion FROM wa_config WHERE clave = :clave AND id_tenant = :id_tenant LIMIT 1");
+        $stmt->execute(['clave' => $clave, 'id_tenant' => TenantContext::id()]);
         $row = $stmt->fetch();
         
         if ($row) {
@@ -56,8 +56,9 @@ class WaConfig
         $stmt = $db->prepare("
             UPDATE wa_config SET valor = :valor, fecha_actualizacion = NOW() 
             WHERE clave = :clave
+            AND id_tenant = :id_tenant
         ");
-        $stmt->execute(['valor' => $valor, 'clave' => $clave]);
+        $stmt->execute(['valor' => $valor, 'clave' => $clave, 'id_tenant' => TenantContext::id()]);
 
         if ($stmt->rowCount() > 0) {
             Flight::json(['success' => true]);
@@ -79,9 +80,10 @@ class WaConfig
             LEFT JOIN colaboradores col ON col.id_persona = p.id AND col.activo = 1
             LEFT JOIN cargos car ON col.id_cargo = car.id
             WHERE p.id = :id_persona
+            AND p.id_tenant = :id_tenant
             LIMIT 1
         ");
-        $stmt->execute(['id_persona' => $id_persona]);
+        $stmt->execute(['id_persona' => $id_persona, 'id_tenant' => TenantContext::id()]);
         $row = $stmt->fetch();
         Flight::json(['etiqueta' => $row ? $row['etiqueta'] : null]);
     }

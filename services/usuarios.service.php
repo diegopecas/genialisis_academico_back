@@ -117,10 +117,11 @@ class Usuarios
                 SELECT DISTINCT pxr.codigo_permiso
                 FROM permisos_x_rol pxr
                 INNER JOIN roles_x_usuario rxu ON pxr.id_rol = rxu.id_rol
-                WHERE rxu.id_usuario = :id_usuario
+                WHERE rxu.id_usuario = :id_usuario AND rxu.id_tenant = :id_tenant
                 ORDER BY pxr.codigo_permiso
             ");
             $stmt->bindParam(':id_usuario', $idUsuario);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $permisos = $stmt->fetchAll(PDO::FETCH_COLUMN);
             return $permisos;
@@ -141,7 +142,9 @@ class Usuarios
                     FROM usuarios u 
                     INNER JOIN personas p ON u.id_persona = p.id
                     INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
-                    INNER JOIN generos g ON p.id_genero = g.id");
+                    INNER JOIN generos g ON p.id_genero = g.id
+                    WHERE u.id_tenant = :id_tenant");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response, 200);
@@ -157,8 +160,9 @@ class Usuarios
             $usuario = Flight::request()->data['usuario'];
             $clave = Flight::request()->data['clave'];
 
-            $checkUser = $db->prepare("SELECT id, usuario, clave, activo FROM usuarios WHERE usuario = :usuario");
+            $checkUser = $db->prepare("SELECT id, usuario, clave, activo FROM usuarios WHERE usuario = :usuario AND id_tenant = :id_tenant");
             $checkUser->bindParam(':usuario', $usuario);
+            $checkUser->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkUser->execute();
             $userExists = $checkUser->fetch();
 
@@ -195,9 +199,9 @@ class Usuarios
                     g.nombre nombre_genero, 
                     p.direccion, 
                     u.activo, 
-                    d.id id_docente, 
-                    cd.id id_casa_docente, 
-                    cd.nombre nombre_casa_docente,
+                    NULL id_docente, 
+                    NULL id_casa_docente, 
+                    NULL nombre_casa_docente,
                     u.acceso_institucional,
                     u.acceso_chat_wa,
                     u.acceso_portal_padres,
@@ -210,16 +214,16 @@ class Usuarios
                 INNER JOIN personas p ON u.id_persona = p.id
                 LEFT JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
                 LEFT JOIN generos g ON p.id_genero = g.id
-                LEFT JOIN docentes d ON p.id = d.id_persona
-                LEFT JOIN casas_docentes cd ON d.id_casa_docente = cd.id
                 LEFT JOIN colaboradores c ON p.id = c.id_persona
                 WHERE u.usuario = :usuario
                 AND u.clave = :clave
                 AND u.activo = 1
+                AND u.id_tenant = :id_tenant
             ");
 
             $sentence->bindParam(':usuario', $usuario);
             $sentence->bindParam(':clave', $clave);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
 
@@ -230,7 +234,7 @@ class Usuarios
                     $permisos = self::obtenerPermisosUsuario($response[0]['id']);
                 }
 
-                $token = JWTService::generarToken($response[0], $permisos);
+                $token = JWTService::generarToken($response[0], $permisos, TenantContext::codigo());
                 $response[0]['token'] = $token;
                 $response[0]['permisos'] = $permisos;
             }
@@ -259,8 +263,9 @@ class Usuarios
                 return;
             }
 
-            $verificarClave = $db->prepare("SELECT id, usuario, clave FROM usuarios WHERE id = :id");
+            $verificarClave = $db->prepare("SELECT id, usuario, clave FROM usuarios WHERE id = :id AND id_tenant = :id_tenant");
             $verificarClave->bindParam(':id', $id);
+            $verificarClave->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $verificarClave->execute();
             $usuarioActual = $verificarClave->fetch(PDO::FETCH_ASSOC);
 
@@ -280,9 +285,10 @@ class Usuarios
                 return;
             }
 
-            $actualizarClave = $db->prepare("UPDATE usuarios SET clave = :clave WHERE id = :id");
+            $actualizarClave = $db->prepare("UPDATE usuarios SET clave = :clave WHERE id = :id AND id_tenant = :id_tenant");
             $actualizarClave->bindParam(':clave', $claveNueva);
             $actualizarClave->bindParam(':id', $id);
+            $actualizarClave->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $resultado = $actualizarClave->execute();
 
             if ($resultado) {
@@ -311,8 +317,9 @@ class Usuarios
             $sentence = $db->prepare("SELECT u.id, u.id_persona, u.usuario, u.correo_electronico, u.activo, 
                                 u.acceso_institucional, u.acceso_chat_wa, u.acceso_portal_padres
                                 FROM usuarios u 
-                                WHERE u.id_persona = :id_persona");
+                                WHERE u.id_persona = :id_persona AND u.id_tenant = :id_tenant");
             $sentence->bindParam(':id_persona', $idPersona);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -335,8 +342,9 @@ class Usuarios
             $acceso_chat_wa = isset(Flight::request()->data['acceso_chat_wa']) ? Flight::request()->data['acceso_chat_wa'] : 1;
             $acceso_portal_padres = isset(Flight::request()->data['acceso_portal_padres']) ? Flight::request()->data['acceso_portal_padres'] : 0;
 
-            $checkUsuario = $db->prepare("SELECT id FROM usuarios WHERE id_persona = :id_persona");
+            $checkUsuario = $db->prepare("SELECT id FROM usuarios WHERE id_persona = :id_persona AND id_tenant = :id_tenant");
             $checkUsuario->bindParam(':id_persona', $id_persona);
+            $checkUsuario->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkUsuario->execute();
             if ($checkUsuario->fetch()) {
                 $db->rollBack();
@@ -344,8 +352,9 @@ class Usuarios
                 return;
             }
 
-            $getPersona = $db->prepare("SELECT numero_identificacion FROM personas WHERE id = :id_persona");
+            $getPersona = $db->prepare("SELECT numero_identificacion FROM personas WHERE id = :id_persona AND id_tenant = :id_tenant");
             $getPersona->bindParam(':id_persona', $id_persona);
+            $getPersona->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $getPersona->execute();
             $persona = $getPersona->fetch();
 
@@ -357,8 +366,11 @@ class Usuarios
 
             $usuario = $persona['numero_identificacion'];
 
-            $sentence = $db->prepare("INSERT INTO usuarios(id_persona, usuario, clave, correo_electronico, activo, acceso_institucional, acceso_chat_wa, acceso_portal_padres) 
-                                     VALUES (:id_persona, :usuario, :clave, :correo_electronico, :activo, :acceso_institucional, :acceso_chat_wa, :acceso_portal_padres)");
+            $sentence = $db->prepare("INSERT INTO usuarios(id, id_tenant, id_persona, usuario, clave, correo_electronico, activo, acceso_institucional, acceso_chat_wa, acceso_portal_padres) 
+                                     VALUES (:id, :id_tenant, :id_persona, :usuario, :clave, :correo_electronico, :activo, :acceso_institucional, :acceso_chat_wa, :acceso_portal_padres)");
+            $idUsr = Uuid::generar();
+            $sentence->bindValue(':id', $idUsr);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindParam(':usuario', $usuario);
             $sentence->bindParam(':clave', $clave);
@@ -369,7 +381,7 @@ class Usuarios
             $sentence->bindParam(':acceso_portal_padres', $acceso_portal_padres);
             $sentence->execute();
 
-            $id_usuario = $db->lastInsertId();
+            $id_usuario = $idUsr;
 
             $db->commit();
 
@@ -396,8 +408,9 @@ class Usuarios
             $acceso_portal_padres = isset(Flight::request()->data['acceso_portal_padres']) ? Flight::request()->data['acceso_portal_padres'] : 0;
             $clave = isset(Flight::request()->data['clave']) ? Flight::request()->data['clave'] : null;
 
-            $checkUsuario = $db->prepare("SELECT id FROM usuarios WHERE id = :id");
+            $checkUsuario = $db->prepare("SELECT id FROM usuarios WHERE id = :id AND id_tenant = :id_tenant");
             $checkUsuario->bindParam(':id', $id);
+            $checkUsuario->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkUsuario->execute();
             if (!$checkUsuario->fetch()) {
                 $db->rollBack();
@@ -406,10 +419,10 @@ class Usuarios
             }
 
             if ($clave !== null && $clave !== '') {
-                $sentence = $db->prepare("UPDATE usuarios SET correo_electronico = :correo_electronico, clave = :clave, activo = :activo, acceso_institucional = :acceso_institucional, acceso_chat_wa = :acceso_chat_wa, acceso_portal_padres = :acceso_portal_padres WHERE id = :id");
+                $sentence = $db->prepare("UPDATE usuarios SET correo_electronico = :correo_electronico, clave = :clave, activo = :activo, acceso_institucional = :acceso_institucional, acceso_chat_wa = :acceso_chat_wa, acceso_portal_padres = :acceso_portal_padres WHERE id = :id AND id_tenant = :id_tenant");
                 $sentence->bindParam(':clave', $clave);
             } else {
-                $sentence = $db->prepare("UPDATE usuarios SET correo_electronico = :correo_electronico, activo = :activo, acceso_institucional = :acceso_institucional, acceso_chat_wa = :acceso_chat_wa, acceso_portal_padres = :acceso_portal_padres WHERE id = :id");
+                $sentence = $db->prepare("UPDATE usuarios SET correo_electronico = :correo_electronico, activo = :activo, acceso_institucional = :acceso_institucional, acceso_chat_wa = :acceso_chat_wa, acceso_portal_padres = :acceso_portal_padres WHERE id = :id AND id_tenant = :id_tenant");
             }
 
             $sentence->bindParam(':correo_electronico', $correo_electronico);
@@ -418,6 +431,7 @@ class Usuarios
             $sentence->bindParam(':acceso_chat_wa', $acceso_chat_wa);
             $sentence->bindParam(':acceso_portal_padres', $acceso_portal_padres);
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             $db->commit();
@@ -436,8 +450,9 @@ class Usuarios
 
             $id = Flight::request()->data['id'];
 
-            $getUsuario = $db->prepare("SELECT usuario FROM usuarios WHERE id = :id");
+            $getUsuario = $db->prepare("SELECT usuario FROM usuarios WHERE id = :id AND id_tenant = :id_tenant");
             $getUsuario->bindParam(':id', $id);
+            $getUsuario->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $getUsuario->execute();
             $usuarioData = $getUsuario->fetch();
 
@@ -447,8 +462,9 @@ class Usuarios
                 return;
             }
 
-            $sentence = $db->prepare("DELETE FROM usuarios WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM usuarios WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             if ($sentence->rowCount() == 0) {

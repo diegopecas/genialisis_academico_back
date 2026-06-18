@@ -4,7 +4,8 @@ class EjesCurriculares
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM ejes_curriculares ORDER BY nombre ASC");
+        $sentence = $db->prepare("SELECT * FROM ejes_curriculares WHERE id_tenant = :id_tenant ORDER BY nombre ASC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -13,8 +14,9 @@ class EjesCurriculares
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM ejes_curriculares WHERE id = :id");
+        $sentence = $db->prepare("SELECT * FROM ejes_curriculares WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -29,12 +31,15 @@ class EjesCurriculares
             
             error_log("Creando eje curricular: nombre=$nombre");
             
-            $sentence = $db->prepare("INSERT INTO ejes_curriculares (nombre, descripcion) VALUES (:nombre, :descripcion)");
+            $idNew = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO ejes_curriculares (id, id_tenant, nombre, descripcion) VALUES (:id, :id_tenant, :nombre, :descripcion)");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':descripcion', $descripcion);
             $sentence->execute();
             
-            $id = $db->lastInsertId();
+            $id = $idNew;
             error_log("Eje curricular creado con ID: $id");
             
             Flight::json(array('id' => $id));
@@ -59,10 +64,11 @@ class EjesCurriculares
                 return;
             }
             
-            $sentence = $db->prepare("UPDATE ejes_curriculares SET nombre = :nombre, descripcion = :descripcion WHERE id = :id");
+            $sentence = $db->prepare("UPDATE ejes_curriculares SET nombre = :nombre, descripcion = :descripcion WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':descripcion', $descripcion);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             if ($sentence->rowCount() == 0) {
@@ -86,8 +92,9 @@ class EjesCurriculares
             
             error_log("Eliminando eje curricular ID: $id");
             
-            $sentence = $db->prepare("DELETE FROM ejes_curriculares WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM ejes_curriculares WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             Flight::json(array('id' => $id));

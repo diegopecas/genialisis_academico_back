@@ -52,6 +52,7 @@ if (strpos($requestUri, '/webhooks/whatsapp') !== false) {
 if (strpos($requestUri, '/auth/webauthn') !== false) {
     require 'flight/Flight.php';
     require_once __DIR__ . '/config/master.env.php';
+    require_once __DIR__ . '/config/jwt.env.php';
     require_once __DIR__ . '/vendor/firebase/php-jwt/src/JWT.php';
     require_once __DIR__ . '/vendor/firebase/php-jwt/src/Key.php';
     require_once __DIR__ . '/services/jwt.service.php';
@@ -84,6 +85,12 @@ if (strpos($requestUri, '/google-calendar/callback') !== false) {
 }
 
 require 'flight/Flight.php';
+
+// ===================================================================
+// SEGURIDAD - clave JWT (no versionada) y contexto de tenant centralizado
+// ===================================================================
+require_once __DIR__ . '/config/jwt.env.php';
+require_once __DIR__ . '/services/tenant-context.service.php';
 
 
 // ===================================================================
@@ -154,6 +161,10 @@ if (!file_exists($configFile)) {
 
 // ✅ Si llegamos aquí, cargar la configuración
 require_once $configFile;
+
+// Fijar el contexto de tenant (codigo validado). El id numerico se obtiene
+// via TenantContext::id() desde la constante TENANT_ID del .env.php del tenant.
+TenantContext::setCodigo($tenant);
 // error_log("✅ Tenant cargado exitosamente: {$tenant} -> BD: " . DB_NAME);
 
 function convertirNumerosEnArray(&$array) {
@@ -309,6 +320,47 @@ Flight::map('json', function($data, $code = 200, $encode = true) {
         ->header('Content-Type', 'application/json; charset=utf-8')
         ->write($json)
         ->send();
+});
+
+// ===================================================================
+// AUTENTICACION CENTRAL - exige token valido + tenant firmado en todas las
+// rutas que no sean publicas (login). Las rutas que hacen exit(0) mas arriba
+// (webhooks, /auth/pre-login, /auth/webauthn, /google-calendar/callback) no
+// llegan hasta este punto.
+// ===================================================================
+Flight::before('start', function (&$params, &$output) {
+    $metodo = Flight::request()->method;
+
+    if ($metodo === 'OPTIONS') {
+        return;
+    }
+
+    // Ruta sin query string ni slash final
+    $ruta = Flight::request()->url;
+    $posQuery = strpos($ruta, '?');
+    if ($posQuery !== false) {
+        $ruta = substr($ruta, 0, $posQuery);
+    }
+    $ruta = rtrim($ruta, '/');
+    if ($ruta === '') {
+        $ruta = '/';
+    }
+
+    // Rutas publicas: son el medio para OBTENER el token, no pueden exigirlo.
+    $rutasPublicas = [
+        '/',                        // healthcheck
+        '/usuarios-auth',           // login usuario + clave
+        '/webauthn/auth/opciones',  // login biometrico (con tenant) - paso 1
+        '/webauthn/auth/verificar', // login biometrico (con tenant) - paso 2
+        '/webauthn/disponible',     // verificacion previa al login
+    ];
+
+    if (in_array($ruta, $rutasPublicas, true)) {
+        return;
+    }
+
+    // Resto: token valido y que el tenant del token coincida con el del request.
+    JWTService::requerirTenant(TenantContext::codigo());
 });
 
 Flight::start();

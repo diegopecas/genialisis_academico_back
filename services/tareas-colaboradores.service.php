@@ -24,8 +24,10 @@ class TareasColaboradores
                 LEFT JOIN tipos_tareas_colaboradores ttt ON tc.id_tipo_tarea = ttt.id
                 LEFT JOIN estudiantes e ON tc.id_estudiante = e.id
                 LEFT JOIN personas pe ON e.id_persona = pe.id
+                WHERE tc.id_tenant = :id_tenant
                 ORDER BY tc.fecha_registro DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             Flight::json($sentence->fetchAll(PDO::FETCH_ASSOC));
         } catch (Exception $e) {
@@ -55,9 +57,11 @@ class TareasColaboradores
                 LEFT JOIN estudiantes e ON tc.id_estudiante = e.id
                 LEFT JOIN personas pe ON e.id_persona = pe.id
                 WHERE tc.id_colaborador = :id_colaborador
+                AND tc.id_tenant = :id_tenant
                 ORDER BY tc.id_estado ASC, tc.fecha_limite ASC, tc.fecha_registro DESC
             ");
             $sentence->bindParam(':id_colaborador', $id_colaborador, PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             Flight::json($sentence->fetchAll(PDO::FETCH_ASSOC));
         } catch (Exception $e) {
@@ -100,10 +104,12 @@ class TareasColaboradores
                 WHERE tc.fecha_limite IS NOT NULL
                   AND MONTH(tc.fecha_limite) = :mes
                   AND YEAR(tc.fecha_limite) = :anio
+                  AND tc.id_tenant = :id_tenant
                 ORDER BY tc.fecha_limite ASC, tc.hora_inicio ASC
             ");
             $sentence->bindParam(':mes', $mes, PDO::PARAM_INT);
             $sentence->bindParam(':anio', $anio, PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             Flight::json($sentence->fetchAll(PDO::FETCH_ASSOC));
         } catch (Exception $e) {
@@ -133,8 +139,10 @@ class TareasColaboradores
                 LEFT JOIN estudiantes e ON tc.id_estudiante = e.id
                 LEFT JOIN personas pe ON e.id_persona = pe.id
                 WHERE tc.id = :id
+                AND tc.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id, PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             Flight::json($sentence->fetchAll(PDO::FETCH_ASSOC));
         } catch (Exception $e) {
@@ -164,16 +172,19 @@ class TareasColaboradores
 
             $sentence = $db->prepare("
                 INSERT INTO tareas_colaboradores (
-                    id_colaborador, id_estudiante, id_tipo_tarea, descripcion, fecha_limite,
+                    id, id_tenant, id_colaborador, id_estudiante, id_tipo_tarea, descripcion, fecha_limite,
                     hora_inicio, hora_fin, id_estado, origen,
                     id_historial_origen, observaciones, id_usuario_registro
                 ) VALUES (
-                    :id_colaborador, :id_estudiante, :id_tipo_tarea, :descripcion, :fecha_limite,
+                    :id, :id_tenant, :id_colaborador, :id_estudiante, :id_tipo_tarea, :descripcion, :fecha_limite,
                     :hora_inicio, :hora_fin, :id_estado, :origen,
                     :id_historial_origen, :observaciones, :id_usuario_registro
                 )
             ");
 
+            $id = Uuid::generar();
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_colaborador', $data['id_colaborador'], PDO::PARAM_INT);
             $sentence->bindParam(':id_estudiante', $id_estudiante, PDO::PARAM_INT);
             $sentence->bindParam(':id_tipo_tarea', $id_tipo_tarea, PDO::PARAM_INT);
@@ -188,7 +199,7 @@ class TareasColaboradores
             $sentence->bindParam(':id_usuario_registro', $id_usuario_registro, PDO::PARAM_INT);
 
             $sentence->execute();
-            Flight::json(array('id' => $db->lastInsertId()));
+            Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log('Error en TareasColaboradores::new: ' . $e->getMessage());
             Flight::json(array('error' => 'Error al crear tarea: ' . $e->getMessage()), 500);
@@ -211,10 +222,10 @@ class TareasColaboradores
 
             $sentence = $db->prepare("
                 INSERT INTO tareas_colaboradores (
-                    id_colaborador, id_estudiante, id_tipo_tarea, descripcion, fecha_limite,
+                    id, id_tenant, id_colaborador, id_estudiante, id_tipo_tarea, descripcion, fecha_limite,
                     hora_inicio, hora_fin, id_estado, origen, observaciones, id_usuario_registro
                 ) VALUES (
-                    :id_colaborador, :id_estudiante, :id_tipo_tarea, :descripcion, :fecha_limite,
+                    :id, :id_tenant, :id_colaborador, :id_estudiante, :id_tipo_tarea, :descripcion, :fecha_limite,
                     :hora_inicio, :hora_fin, 1, 'manual', :observaciones, :id_usuario_registro
                 )
             ");
@@ -230,6 +241,9 @@ class TareasColaboradores
                 $observaciones = isset($t['observaciones']) ? $t['observaciones'] : null;
                 $id_usuario_registro = isset($t['id_usuario_registro']) ? $t['id_usuario_registro'] : null;
 
+                $idTarea = Uuid::generar();
+                $sentence->bindValue(':id', $idTarea);
+                $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentence->bindParam(':id_colaborador', $t['id_colaborador'], PDO::PARAM_INT);
                 $sentence->bindParam(':id_estudiante', $id_estudiante, PDO::PARAM_INT);
                 $sentence->bindParam(':id_tipo_tarea', $id_tipo_tarea, PDO::PARAM_INT);
@@ -278,8 +292,10 @@ class TareasColaboradores
                     id_estado = :id_estado,
                     observaciones = :observaciones
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
 
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id', $data['id'], PDO::PARAM_INT);
             $sentence->bindParam(':id_estudiante', $id_estudiante, PDO::PARAM_INT);
             $sentence->bindParam(':id_tipo_tarea', $id_tipo_tarea, PDO::PARAM_INT);
@@ -319,7 +335,9 @@ class TareasColaboradores
                 UPDATE tareas_colaboradores 
                 SET id_estado = :id_estado 
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id', $data['id'], PDO::PARAM_INT);
             $sentence->bindParam(':id_estado', $data['id_estado'], PDO::PARAM_INT);
             $sentence->execute();
@@ -339,8 +357,9 @@ class TareasColaboradores
             $db = Flight::db();
             $data = Flight::request()->data->getData();
 
-            $check = $db->prepare("SELECT origen FROM tareas_colaboradores WHERE id = :id");
+            $check = $db->prepare("SELECT origen FROM tareas_colaboradores WHERE id = :id AND id_tenant = :id_tenant");
             $check->bindParam(':id', $data['id'], PDO::PARAM_INT);
+            $check->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $check->execute();
             $tarea = $check->fetch(PDO::FETCH_ASSOC);
 
@@ -349,8 +368,9 @@ class TareasColaboradores
                 return;
             }
 
-            $sentence = $db->prepare("DELETE FROM tareas_colaboradores WHERE id = :id AND origen = 'manual'");
+            $sentence = $db->prepare("DELETE FROM tareas_colaboradores WHERE id = :id AND origen = 'manual' AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $data['id'], PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $data['id']));

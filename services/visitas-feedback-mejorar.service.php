@@ -15,8 +15,10 @@ class VisitasFeedbackMejorar
                 INNER JOIN aspectos_mejorar am ON vfm.id_aspecto_mejorar = am.id
                 LEFT JOIN tipos_validez_feedback tvf ON vfm.id_validez_feedback = tvf.id
                 INNER JOIN visitas v ON vfm.id_visita = v.id
+                WHERE vfm.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -39,8 +41,10 @@ class VisitasFeedbackMejorar
                 INNER JOIN aspectos_mejorar am ON vfm.id_aspecto_mejorar = am.id
                 LEFT JOIN tipos_validez_feedback tvf ON vfm.id_validez_feedback = tvf.id
                 WHERE vfm.id = :id
+                AND vfm.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -63,9 +67,11 @@ class VisitasFeedbackMejorar
                 INNER JOIN aspectos_mejorar am ON vfm.id_aspecto_mejorar = am.id
                 LEFT JOIN tipos_validez_feedback tvf ON vfm.id_validez_feedback = tvf.id
                 WHERE vfm.id_visita = :id_visita
+                AND vfm.id_tenant = :id_tenant
                 ORDER BY vfm.id
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -84,19 +90,21 @@ class VisitasFeedbackMejorar
 
             $sentence = $db->prepare("
             INSERT INTO visitas_feedback_mejorar (
-                id_visita, id_aspecto_mejorar, comentarios_mejorar, id_validez_feedback
+                id, id_tenant, id_visita, id_aspecto_mejorar, comentarios_mejorar, id_validez_feedback
             ) VALUES (
-                :id_visita, :id_aspecto_mejorar, :comentarios_mejorar, :id_validez_feedback
+                :id, :id_tenant, :id_visita, :id_aspecto_mejorar, :comentarios_mejorar, :id_validez_feedback
             )
         ");
 
+            $id = Uuid::generar();
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $data['id_visita']);
             $sentence->bindParam(':id_aspecto_mejorar', $data['id_aspecto_mejorar']);
             $sentence->bindParam(':comentarios_mejorar', $data['comentarios_mejorar']);
             $sentence->bindParam(':id_validez_feedback', $data['id_validez_feedback']);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             if ($dataParam !== null) {
                 return $id;
@@ -126,12 +134,14 @@ class VisitasFeedbackMejorar
                     comentarios_mejorar = :comentarios_mejorar,
                     id_validez_feedback = :id_validez_feedback
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
 
             $sentence->bindParam(':id', $data['id']);
             $sentence->bindParam(':id_aspecto_mejorar', $data['id_aspecto_mejorar']);
             $sentence->bindParam(':comentarios_mejorar', $data['comentarios_mejorar']);
             $sentence->bindParam(':id_validez_feedback', $data['id_validez_feedback']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
             self::getById($data['id']);
@@ -147,8 +157,9 @@ class VisitasFeedbackMejorar
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_feedback_mejorar WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_feedback_mejorar WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -172,8 +183,8 @@ class VisitasFeedbackMejorar
             error_log("📋 Feedbacks recibidos: " . json_encode($feedbacks));
 
             // ✅ Eliminar feedbacks existentes
-            $stmt = $db->prepare("DELETE FROM visitas_feedback_mejorar WHERE id_visita = :id_visita");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt = $db->prepare("DELETE FROM visitas_feedback_mejorar WHERE id_visita = :id_visita AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
 
             $totalInsertados = 0;
 
@@ -251,9 +262,11 @@ class VisitasFeedbackMejorar
                 FROM visitas_feedback_mejorar vfm
                 INNER JOIN aspectos_mejorar am ON vfm.id_aspecto_mejorar = am.id
                 LEFT JOIN tipos_validez_feedback tvf ON vfm.id_validez_feedback = tvf.id
+                WHERE vfm.id_tenant = :id_tenant
                 GROUP BY vfm.id_aspecto_mejorar, am.nombre
                 ORDER BY veces_mencionado DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);

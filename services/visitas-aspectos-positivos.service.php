@@ -11,8 +11,10 @@ class VisitasAspectosPositivos
                     v.fecha as fecha_visita
                 FROM visitas_aspectos_positivos vap
                 INNER JOIN visitas v ON vap.id_visita = v.id
+                WHERE vap.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -31,8 +33,10 @@ class VisitasAspectosPositivos
                 FROM visitas_aspectos_positivos vap
                 INNER JOIN visitas v ON vap.id_visita = v.id
                 WHERE vap.id = :id
+                AND vap.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -49,8 +53,10 @@ class VisitasAspectosPositivos
             $sentence = $db->prepare("
                 SELECT * FROM visitas_aspectos_positivos 
                 WHERE id_visita = :id_visita
+                AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -65,21 +71,23 @@ class VisitasAspectosPositivos
         try {
             $db = Flight::db();
             $data = $dataParam ?? Flight::request()->data;
+            $id = Uuid::generar();
 
             $sentence = $db->prepare("
             INSERT INTO visitas_aspectos_positivos (
-                id_visita, otros_aspectos, factor_decisivo
+                id, id_tenant, id_visita, otros_aspectos, factor_decisivo
             ) VALUES (
-                :id_visita, :otros_aspectos, :factor_decisivo
+                :id, :id_tenant, :id_visita, :otros_aspectos, :factor_decisivo
             )
         ");
 
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $data['id_visita']);
             $sentence->bindParam(':otros_aspectos', $data['otros_aspectos']);
             $sentence->bindParam(':factor_decisivo', $data['factor_decisivo']);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             if ($dataParam !== null) {
                 return $id;
@@ -108,11 +116,13 @@ class VisitasAspectosPositivos
                 otros_aspectos = :otros_aspectos,
                 factor_decisivo = :factor_decisivo
             WHERE id = :id
+            AND id_tenant = :id_tenant
         ");
 
             $sentence->bindParam(':id', $data['id']);
             $sentence->bindParam(':otros_aspectos', $data['otros_aspectos']);
             $sentence->bindParam(':factor_decisivo', $data['factor_decisivo']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
 
@@ -138,8 +148,9 @@ class VisitasAspectosPositivos
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_aspectos_positivos WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_aspectos_positivos WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -159,8 +170,8 @@ class VisitasAspectosPositivos
             $id_visita = $data['id_visita'];
 
             // Verificar si ya existe
-            $stmt = $db->prepare("SELECT id FROM visitas_aspectos_positivos WHERE id_visita = :id_visita");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt = $db->prepare("SELECT id FROM visitas_aspectos_positivos WHERE id_visita = :id_visita AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
             $existe = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($existe) {

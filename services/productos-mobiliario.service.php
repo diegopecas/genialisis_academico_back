@@ -10,7 +10,9 @@ class ProductosMobiliario
             FROM productos_mobiliario pm
             INNER JOIN productos p ON pm.id_producto = p.id
             LEFT JOIN tipos_producto_mobiliario tpm ON pm.id_tipo_producto_mobiliario = tpm.id
+            WHERE pm.id_tenant = :id_tenant
             ORDER BY pm.id DESC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -25,8 +27,10 @@ class ProductosMobiliario
             FROM productos_mobiliario pm
             INNER JOIN productos p ON pm.id_producto = p.id
             LEFT JOIN tipos_producto_mobiliario tpm ON pm.id_tipo_producto_mobiliario = tpm.id
-            WHERE pm.id = :id");
+            WHERE pm.id = :id
+            AND pm.id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -43,7 +47,10 @@ class ProductosMobiliario
         $fecha_adquisicion = Flight::request()->data['fecha_adquisicion'];
         $numero_serie = Flight::request()->data['numero_serie'];
 
+        $id = Uuid::generar();
         $sentence = $db->prepare("INSERT INTO productos_mobiliario(
+            id,
+            id_tenant,
             id_producto,
             id_tipo_producto_mobiliario,
             requiere_limpieza,
@@ -51,6 +58,8 @@ class ProductosMobiliario
             fecha_adquisicion,
             numero_serie
         ) VALUES (
+            :id,
+            :id_tenant,
             :id_producto,
             :id_tipo_producto_mobiliario,
             :requiere_limpieza,
@@ -59,6 +68,8 @@ class ProductosMobiliario
             :numero_serie
         )");
 
+        $sentence->bindValue(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_producto', $id_producto);
         $sentence->bindParam(':id_tipo_producto_mobiliario', $id_tipo_producto_mobiliario);
         $sentence->bindParam(':requiere_limpieza', $requiere_limpieza);
@@ -67,7 +78,6 @@ class ProductosMobiliario
         $sentence->bindParam(':numero_serie', $numero_serie);
         $sentence->execute();
 
-        $id = $db->lastInsertId();
         Flight::json(array('id' => $id));
     }
 
@@ -90,7 +100,8 @@ class ProductosMobiliario
             requiere_desinfeccion = :requiere_desinfeccion,
             fecha_adquisicion = :fecha_adquisicion,
             numero_serie = :numero_serie
-            WHERE id = :id");
+            WHERE id = :id
+            AND id_tenant = :id_tenant");
 
         $sentence->bindParam(':id_producto', $id_producto);
         $sentence->bindParam(':id_tipo_producto_mobiliario', $id_tipo_producto_mobiliario);
@@ -99,6 +110,7 @@ class ProductosMobiliario
         $sentence->bindParam(':fecha_adquisicion', $fecha_adquisicion);
         $sentence->bindParam(':numero_serie', $numero_serie);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         self::getById($id);
@@ -108,8 +120,9 @@ class ProductosMobiliario
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("DELETE FROM productos_mobiliario WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM productos_mobiliario WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json(array('id' => $id));
@@ -126,11 +139,14 @@ class ProductosMobiliario
             LEFT JOIN tipos_producto tp ON p.id_tipo_producto = tp.id
             WHERE p.id_tipo_producto = 1 
             AND p.activo = 1
+            AND p.id_tenant = :id_tenant
             AND p.id NOT IN (
-                SELECT id_producto FROM productos_mobiliario
+                SELECT id_producto FROM productos_mobiliario WHERE id_tenant = :id_tenant_sub
             )
             ORDER BY p.nombre ASC
         ");
+        $sentence->bindValue(':id_tenant_sub', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -156,8 +172,10 @@ class ProductosMobiliario
             LEFT JOIN unidades_medida um ON p.id_unidad_medida = um.id
             WHERE p.stock_actual > 0 
             AND p.activo = 1
+            AND pm.id_tenant = :id_tenant
             ORDER BY p.nombre ASC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -184,12 +202,16 @@ class ProductosMobiliario
             // NOTA: Removido el campo 'activo' del INSERT
             $stmtAsignacion = $db->prepare("
                 INSERT INTO productos_mobiliario_x_areas_fisicas (
+                    id,
+                    id_tenant,
                     id_producto_mobiliario,
                     id_area,
                     cantidad,
                     orden_limpieza,
                     id_movimiento
                 ) VALUES (
+                    :id,
+                    :id_tenant,
                     :id_producto_mobiliario,
                     :id_area,
                     :cantidad,
@@ -202,6 +224,9 @@ class ProductosMobiliario
             ");
 
             foreach ($productos as $item) {
+                $idPmaf = Uuid::generar();
+                $stmtAsignacion->bindValue(':id', $idPmaf);
+                $stmtAsignacion->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtAsignacion->bindParam(':id_producto_mobiliario', $item['id_producto_mobiliario']);
                 $stmtAsignacion->bindParam(':id_area', $id_area);
                 $stmtAsignacion->bindParam(':cantidad', $item['cantidad']);
@@ -238,9 +263,11 @@ class ProductosMobiliario
             $stmt = $db->prepare("
                 DELETE FROM productos_mobiliario_x_areas_fisicas 
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
 
             $stmt->bindParam(':id', $id_asignacion);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             Flight::json([
@@ -262,8 +289,10 @@ class ProductosMobiliario
             FROM conceptos_movimiento 
             WHERE tipo = 'E' 
             AND (nombre LIKE '%Devolución%' OR nombre LIKE '%devolución%')
+            AND id_tenant = :id_tenant
             ORDER BY nombre
         ");
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->execute();
         $response = $stmt->fetchAll();
         Flight::json($response);
@@ -290,9 +319,11 @@ class ProductosMobiliario
                                 LEFT JOIN tipos_producto_limpieza tpl ON pl.id_tipo_producto_limpieza = tpl.id
                                 LEFT JOIN unidades_medida um ON p.id_unidad_medida = um.id
                                 WHERE pmpl.id_producto_mobiliario = :id_mobiliario
+                                AND pmpl.id_tenant = :id_tenant
                                 ORDER BY p.nombre
                             ");
         $sentence->bindParam(':id_mobiliario', $id_mobiliario);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -317,14 +348,18 @@ class ProductosMobiliario
         LEFT JOIN tipos_producto_limpieza tpl ON pl.id_tipo_producto_limpieza = tpl.id
         LEFT JOIN unidades_medida um ON p.id_unidad_medida = um.id
         WHERE p.activo = 1
+        AND pl.id_tenant = :id_tenant
         AND pl.id NOT IN (
             SELECT id_producto_limpieza 
             FROM productos_mobiliario_x_productos_limpieza 
             WHERE id_producto_mobiliario = :id_mobiliario
+            AND id_tenant = :id_tenant_sub
         )
         ORDER BY p.nombre
     ");
         $sentence->bindParam(':id_mobiliario', $id_mobiliario);
+        $sentence->bindValue(':id_tenant_sub', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -349,12 +384,15 @@ class ProductosMobiliario
             // Preparar statement para insertar
             $stmt = $db->prepare("
             INSERT IGNORE INTO productos_mobiliario_x_productos_limpieza 
-            (id_producto_mobiliario, id_producto_limpieza) 
-            VALUES (:id_producto_mobiliario, :id_producto_limpieza)
+            (id, id_tenant, id_producto_mobiliario, id_producto_limpieza) 
+            VALUES (:id, :id_tenant, :id_producto_mobiliario, :id_producto_limpieza)
         ");
 
             $insertados = 0;
             foreach ($productos_ids as $id_producto_limpieza) {
+                $idPmpl = Uuid::generar();
+                $stmt->bindValue(':id', $idPmpl);
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmt->bindParam(':id_producto_mobiliario', $id_producto_mobiliario);
                 $stmt->bindParam(':id_producto_limpieza', $id_producto_limpieza);
                 $stmt->execute();
@@ -387,8 +425,10 @@ class ProductosMobiliario
             SELECT COUNT(*) as total 
             FROM productos_mobiliario_x_procesos_limpieza_productos 
             WHERE id_productos_mobiliario_x_productos_limpieza = :id
+            AND id_tenant = :id_tenant
         ");
             $checkStmt->bindParam(':id', $id);
+            $checkStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkStmt->execute();
             $result = $checkStmt->fetch();
 
@@ -406,8 +446,10 @@ class ProductosMobiliario
             $stmt = $db->prepare("
             DELETE FROM productos_mobiliario_x_productos_limpieza 
             WHERE id = :id
+            AND id_tenant = :id_tenant
         ");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             Flight::json(['mensaje' => 'Producto desasociado correctamente']);
@@ -437,9 +479,11 @@ class ProductosMobiliario
             FROM productos_mobiliario_x_procesos_limpieza pmpl
             INNER JOIN tipos_proceso_limpieza tpl ON pmpl.id_tipo_proceso_limpieza = tpl.id
             WHERE pmpl.id_producto_mobiliario = :id_mobiliario
+            AND pmpl.id_tenant = :id_tenant
             ORDER BY tpl.nombre
         ");
         $sentence->bindParam(':id_mobiliario', $id_mobiliario);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $procesos = $sentence->fetchAll();
 
@@ -462,8 +506,10 @@ class ProductosMobiliario
                 INNER JOIN productos p ON pl.id_producto = p.id
                 LEFT JOIN unidades_medida um ON p.id_unidad_medida = um.id
                 WHERE pmlpp.id_proceso_limpieza = :id_proceso
+                AND pmlpp.id_tenant = :id_tenant
             ");
             $stmtProductos->bindParam(':id_proceso', $proceso['id']);
+            $stmtProductos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtProductos->execute();
             $proceso['productos'] = $stmtProductos->fetchAll();
         }
@@ -490,9 +536,11 @@ class ProductosMobiliario
         LEFT JOIN unidades_medida um ON p.id_unidad_medida = um.id
         LEFT JOIN tipos_producto_limpieza tpl ON pl.id_tipo_producto_limpieza = tpl.id
         WHERE pml.id_producto_mobiliario = :id_mobiliario
+        AND pml.id_tenant = :id_tenant
         ORDER BY p.nombre
     ");
         $sentence->bindParam(':id_mobiliario', $id_mobiliario);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -514,10 +562,12 @@ class ProductosMobiliario
                     FROM productos_mobiliario_x_procesos_limpieza 
                     WHERE id_producto_mobiliario = :id_producto_mobiliario 
                     AND id_tipo_proceso_limpieza = :id_tipo_proceso_limpieza
+                    AND id_tenant = :id_tenant
             ");
 
             $checkStmt->bindParam(':id_producto_mobiliario', $requestData['id_producto_mobiliario']);
             $checkStmt->bindParam(':id_tipo_proceso_limpieza', $requestData['id_tipo_proceso_limpieza']);
+            $checkStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkStmt->execute();
             $result = $checkStmt->fetch();
 
@@ -525,31 +575,40 @@ class ProductosMobiliario
                 throw new Exception("Este tipo de proceso ya está asignado al mobiliario");
             }
 
+            $id_proceso = Uuid::generar();
             $stmt = $db->prepare("
                 INSERT INTO productos_mobiliario_x_procesos_limpieza (
+                    id,
+                    id_tenant,
                     id_producto_mobiliario,
                     id_tipo_proceso_limpieza
                 ) VALUES (
+                    :id,
+                    :id_tenant,
                     :id_producto_mobiliario,
                     :id_tipo_proceso_limpieza
                 )
             ");
 
+            $stmt->bindValue(':id', $id_proceso);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_producto_mobiliario', $requestData['id_producto_mobiliario']);
             $stmt->bindParam(':id_tipo_proceso_limpieza', $requestData['id_tipo_proceso_limpieza']);
             $stmt->execute();
-
-            $id_proceso = $db->lastInsertId();
 
             // Si se enviaron productos, agregarlos
             if (isset($requestData['productos']) && is_array($requestData['productos'])) {
                 $stmtProducto = $db->prepare("
                     INSERT INTO productos_mobiliario_x_procesos_limpieza_productos (
+                        id,
+                        id_tenant,
                         id_proceso_limpieza,
                         id_productos_mobiliario_x_productos_limpieza,
                         cantidad_sugerida,
                         instrucciones
                     ) VALUES (
+                        :id,
+                        :id_tenant,
                         :id_proceso_limpieza,
                         :id_productos_mobiliario_x_productos_limpieza,
                         :cantidad_sugerida,
@@ -558,6 +617,9 @@ class ProductosMobiliario
                 ");
 
                 foreach ($requestData['productos'] as $producto) {
+                    $idPmplp = Uuid::generar();
+                    $stmtProducto->bindValue(':id', $idPmplp);
+                    $stmtProducto->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $stmtProducto->bindParam(':id_proceso_limpieza', $id_proceso);
                     $stmtProducto->bindParam(':id_productos_mobiliario_x_productos_limpieza', $producto['id_asignacion']);
                     $stmtProducto->bindParam(':cantidad_sugerida', $producto['cantidad_sugerida']);
@@ -589,19 +651,25 @@ class ProductosMobiliario
             $stmtDelete = $db->prepare("
                 DELETE FROM productos_mobiliario_x_procesos_limpieza_productos 
                 WHERE id_proceso_limpieza = :id_proceso
+                AND id_tenant = :id_tenant
             ");
             $stmtDelete->bindParam(':id_proceso', $id_proceso);
+            $stmtDelete->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtDelete->execute();
 
             // Insertar nuevos productos
             if (isset($requestData['productos']) && is_array($requestData['productos'])) {
                 $stmtInsert = $db->prepare("
                     INSERT INTO productos_mobiliario_x_procesos_limpieza_productos (
+                        id,
+                        id_tenant,
                         id_proceso_limpieza,
                         id_productos_mobiliario_x_productos_limpieza,
                         cantidad_sugerida,
                         instrucciones
                     ) VALUES (
+                        :id,
+                        :id_tenant,
                         :id_proceso_limpieza,
                         :id_productos_mobiliario_x_productos_limpieza,
                         :cantidad_sugerida,
@@ -610,6 +678,9 @@ class ProductosMobiliario
                 ");
 
                 foreach ($requestData['productos'] as $producto) {
+                    $idPmplp = Uuid::generar();
+                    $stmtInsert->bindValue(':id', $idPmplp);
+                    $stmtInsert->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $stmtInsert->bindParam(':id_proceso_limpieza', $id_proceso);
                     $stmtInsert->bindParam(':id_productos_mobiliario_x_productos_limpieza', $producto['id_asignacion']);
                     $stmtInsert->bindParam(':cantidad_sugerida', $producto['cantidad_sugerida']);
@@ -635,8 +706,10 @@ class ProductosMobiliario
             $stmt = $db->prepare("
                 DELETE FROM productos_mobiliario_x_procesos_limpieza 
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             Flight::json(['mensaje' => 'Proceso eliminado correctamente']);
@@ -652,13 +725,18 @@ class ProductosMobiliario
         try {
             $requestData = Flight::request()->data->getData();
 
+            $id = Uuid::generar();
             $stmt = $db->prepare("
                 INSERT INTO productos_mobiliario_x_procesos_limpieza_productos (
+                    id,
+                    id_tenant,
                     id_proceso_limpieza,
                     id_productos_mobiliario_x_productos_limpieza,
                     cantidad_sugerida,
                     instrucciones
                 ) VALUES (
+                    :id,
+                    :id_tenant,
                     :id_proceso_limpieza,
                     :id_productos_mobiliario_x_productos_limpieza,
                     :cantidad_sugerida,
@@ -666,13 +744,14 @@ class ProductosMobiliario
                 )
             ");
 
+            $stmt->bindValue(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_proceso_limpieza', $requestData['id_proceso_limpieza']);
             $stmt->bindParam(':id_productos_mobiliario_x_productos_limpieza', $requestData['id_productos_mobiliario_x_productos_limpieza']);
             $stmt->bindParam(':cantidad_sugerida', $requestData['cantidad_sugerida']);
             $stmt->bindParam(':instrucciones', $requestData['instrucciones']);
             $stmt->execute();
 
-            $id = $db->lastInsertId();
             Flight::json(['id' => $id, 'mensaje' => 'Producto agregado al proceso']);
         } catch (Exception $e) {
             Flight::json(['error' => 'Error al agregar producto: ' . $e->getMessage()], 500);
@@ -688,8 +767,10 @@ class ProductosMobiliario
             $stmt = $db->prepare("
                 DELETE FROM productos_mobiliario_x_procesos_limpieza_productos 
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             Flight::json(['mensaje' => 'Producto eliminado del proceso']);

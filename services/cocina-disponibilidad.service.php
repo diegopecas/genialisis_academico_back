@@ -23,8 +23,9 @@ class CocinaDisponibilidad
             $db = Flight::db();
 
             // Última fecha con registros previos a la fecha solicitada
-            $stmtUf = $db->prepare("SELECT MAX(fecha) FROM cocina_disponibilidad WHERE fecha < :fecha");
+            $stmtUf = $db->prepare("SELECT MAX(fecha) FROM cocina_disponibilidad WHERE fecha < :fecha AND id_tenant = :id_tenant");
             $stmtUf->bindValue(':fecha', $fecha);
+            $stmtUf->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtUf->execute();
             $ultimaFecha = $stmtUf->fetchColumn();
 
@@ -48,6 +49,7 @@ class CocinaDisponibilidad
                     WHERE ps.id_clasificacion_productos_servicios = 3
                       AND ps.id_periodicidad_cobro = 3
                       AND ps.disponible = 1
+                      AND ps.id_tenant = :id_tenant
                     ORDER BY 
                         COALESCE(cd_ultima.disponible, 0) DESC,
                         ps.nombre ASC";
@@ -55,6 +57,7 @@ class CocinaDisponibilidad
             $stmt = $db->prepare($sql);
             $stmt->bindValue(':fecha', $fecha);
             $stmt->bindValue(':ultima_fecha', $ultimaFecha ?: '1970-01-01');
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -113,14 +116,16 @@ class CocinaDisponibilidad
                 $keyId   = ":id_{$i}";
                 $keyFecha = ":fecha_{$i}";
                 $keyDisp = ":disp_{$i}";
+                $keyTen  = ":ten_{$i}";
 
-                $valores[]              = "({$keyId}, {$keyFecha}, {$keyDisp})";
-                $parametros[$keyId]     = (int)$p['id_producto_servicio'];
+                $valores[]              = "({$keyTen}, {$keyId}, {$keyFecha}, {$keyDisp})";
+                $parametros[$keyTen]    = TenantContext::id();
+                $parametros[$keyId]     = $p['id_producto_servicio'];
                 $parametros[$keyFecha]  = $fecha;
                 $parametros[$keyDisp]   = (int)$p['disponible'];
             }
 
-            $sql = "INSERT INTO cocina_disponibilidad (id_producto_servicio, fecha, disponible)
+            $sql = "INSERT INTO cocina_disponibilidad (id_tenant, id_producto_servicio, fecha, disponible)
                     VALUES " . implode(', ', $valores) . "
                     ON DUPLICATE KEY UPDATE disponible = VALUES(disponible)";
 

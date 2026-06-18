@@ -12,7 +12,9 @@ class PuntosCasasDocentes
             left outer join docentes de on pcd.id_docente_entrega = de.id
             left outer join docentes dr on pcd.id_docente_recibe = dr.id
             left outer join personas pde on de.id_persona = pde.id
-            left outer join personas pdr on dr.id_persona = pdr.id");
+            left outer join personas pdr on dr.id_persona = pdr.id
+            where pcd.id_tenant = :id_tenant");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -29,8 +31,9 @@ class PuntosCasasDocentes
             left outer join docentes dr on pcd.id_docente_recibe = dr.id
             left outer join personas pde on de.id_persona = pde.id
             left outer join personas pdr on dr.id_persona = pdr.id
-            where pcd.id_casa_docente = :id");
+            where pcd.id_casa_docente = :id and pcd.id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -46,7 +49,10 @@ class PuntosCasasDocentes
         $valor = Flight::request()->data['valor'];
         $observacion = Flight::request()->data['observacion'];
         
-        $sentence = $db->prepare("insert into puntos_casas_docentes(id_docente_entrega, id_docente_recibe, id_casa_docente, valor, observacion) values (:id_docente_entrega, :id_docente_recibe, :id_casa_docente, :valor, :observacion)");
+        $idNew = Uuid::generar();
+        $sentence = $db->prepare("insert into puntos_casas_docentes(id, id_tenant, id_docente_entrega, id_docente_recibe, id_casa_docente, valor, observacion) values (:id, :id_tenant, :id_docente_entrega, :id_docente_recibe, :id_casa_docente, :valor, :observacion)");
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_docente_entrega', $id_docente_entrega);
         $sentence->bindParam(':id_docente_recibe', $id_docente_recibe);
         $sentence->bindParam(':id_casa_docente', $id_casa_docente);
@@ -55,7 +61,7 @@ class PuntosCasasDocentes
         $sentence->bindParam(':observacion', $observacion);
         
         $sentence->execute();
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(array('id' => $id));
     }
 
@@ -70,7 +76,7 @@ class PuntosCasasDocentes
         $valor = Flight::request()->data['valor'];
         $observacion = Flight::request()->data['observacion'];
 
-        $sentence = $db->prepare("update puntos_casas_docentes set id_docente_entrega = :id_docente_entrega, id_docente_recibe = :id_docente_recibe, id_casa_docente = :id_casa_docente, valor = :valor, observacion = :observacion where id = :id");
+        $sentence = $db->prepare("update puntos_casas_docentes set id_docente_entrega = :id_docente_entrega, id_docente_recibe = :id_docente_recibe, id_casa_docente = :id_casa_docente, valor = :valor, observacion = :observacion where id = :id and id_tenant = :id_tenant");
         $sentence->bindParam(':id_docente_entrega', $id_docente_entrega);
         $sentence->bindParam(':id_docente_recibe', $id_docente_recibe);
         $sentence->bindParam(':id_casa_docente', $id_casa_docente);
@@ -78,6 +84,7 @@ class PuntosCasasDocentes
         $sentence->bindParam(':valor', $valor);
         $sentence->bindParam(':observacion', $observacion);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         // Flight::json(array('id' => $id));
         self::getById($id);

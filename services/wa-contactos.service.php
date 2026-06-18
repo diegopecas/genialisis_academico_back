@@ -18,8 +18,10 @@ class WaContactos
                    END AS nombre_completo
             FROM wa_contactos wc
             LEFT JOIN personas p ON wc.id_persona = p.id
+            WHERE wc.id_tenant = :id_tenant
             ORDER BY wc.fecha_primera_interaccion DESC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -28,8 +30,9 @@ class WaContactos
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM wa_contactos WHERE id = :id");
+        $sentence = $db->prepare("SELECT * FROM wa_contactos WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetch();
         Flight::json($response);
@@ -38,8 +41,9 @@ class WaContactos
     public static function getByPhone($phone)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM wa_contactos WHERE numero_telefono = :phone");
+        $sentence = $db->prepare("SELECT * FROM wa_contactos WHERE numero_telefono = :phone AND id_tenant = :id_tenant");
         $sentence->bindParam(':phone', $phone);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetch();
         Flight::json($response);
@@ -56,11 +60,15 @@ class WaContactos
             
             $sentence = $db->prepare("
                 INSERT INTO wa_contactos(
+                    id,
+                    id_tenant,
                     numero_telefono, 
                     nombre_whatsapp,
                     id_persona,
                     fecha_primera_interaccion
                 ) VALUES (
+                    :id,
+                    :id_tenant,
                     :numero_telefono, 
                     :nombre_whatsapp,
                     :id_persona,
@@ -68,13 +76,15 @@ class WaContactos
                 )
             ");
             
+            $idContacto = Uuid::generar();
+            $sentence->bindValue(':id', $idContacto);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':numero_telefono', $numero_telefono);
             $sentence->bindParam(':nombre_whatsapp', $nombre_whatsapp);
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->execute();
             
-            $id = $db->lastInsertId();
-            Flight::json(array('id' => $id));
+            Flight::json(array('id' => $idContacto));
             
         } catch (Exception $e) {
             error_log("Error creando contacto WA: " . $e->getMessage());
@@ -88,9 +98,10 @@ class WaContactos
         $id = Flight::request()->data['id'];
         $id_persona = Flight::request()->data['id_persona'];
         
-        $sentence = $db->prepare("UPDATE wa_contactos SET id_persona = :id_persona WHERE id = :id");
+        $sentence = $db->prepare("UPDATE wa_contactos SET id_persona = :id_persona WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id_persona', $id_persona);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         
         self::getById($id);
@@ -103,8 +114,9 @@ class WaContactos
         $nombre_whatsapp = Flight::request()->data['nombre_whatsapp'] ?? null;
         
         // Buscar existente
-        $sentence = $db->prepare("SELECT * FROM wa_contactos WHERE numero_telefono = :phone");
+        $sentence = $db->prepare("SELECT * FROM wa_contactos WHERE numero_telefono = :phone AND id_tenant = :id_tenant");
         $sentence->bindParam(':phone', $numero_telefono);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $contacto = $sentence->fetch();
         

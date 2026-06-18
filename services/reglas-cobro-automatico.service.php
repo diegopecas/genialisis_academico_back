@@ -20,8 +20,10 @@ class ReglasCobroAutomatico
                 LEFT JOIN grupos g ON g.id = r.id_grupo
                 LEFT JOIN dias_semana ds ON ds.id = r.id_dia_semana
                 LEFT JOIN convenios c ON c.id = r.id_convenio_exime
+                WHERE r.id_tenant = :id_tenant
                 ORDER BY r.id_tipo_evento, r.prioridad
             ");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $response = $stmt->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -49,9 +51,10 @@ class ReglasCobroAutomatico
                 LEFT JOIN grupos g ON g.id = r.id_grupo
                 LEFT JOIN dias_semana ds ON ds.id = r.id_dia_semana
                 LEFT JOIN convenios c ON c.id = r.id_convenio_exime
-                WHERE r.id = :id
+                WHERE r.id = :id AND r.id_tenant = :id_tenant
             ");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $response = $stmt->fetch(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -68,14 +71,17 @@ class ReglasCobroAutomatico
             $request = Flight::request();
             $data = $request->data->getData();
 
+            $idNew = Uuid::generar();
             $stmt = $db->prepare("
                 INSERT INTO reglas_cobro_automatico 
-                (nombre, id_tipo_evento, id_producto_servicio, id_grupo, hora_desde, hora_hasta, 
+                (id, id_tenant, nombre, id_tipo_evento, id_producto_servicio, id_grupo, hora_desde, hora_hasta, 
                  id_dia_semana, id_convenio_exime, prioridad, activo)
                 VALUES 
-                (:nombre, :id_tipo_evento, :id_producto_servicio, :id_grupo, :hora_desde, :hora_hasta,
+                (:id, :id_tenant, :nombre, :id_tipo_evento, :id_producto_servicio, :id_grupo, :hora_desde, :hora_hasta,
                  :id_dia_semana, :id_convenio_exime, :prioridad, :activo)
             ");
+            $stmt->bindValue(':id', $idNew);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':nombre', $data['nombre']);
             $stmt->bindParam(':id_tipo_evento', $data['id_tipo_evento']);
             $stmt->bindParam(':id_producto_servicio', $data['id_producto_servicio']);
@@ -88,7 +94,7 @@ class ReglasCobroAutomatico
             $stmt->bindParam(':activo', $data['activo']);
             $stmt->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idNew;
             Flight::json(['id' => $id]);
         } catch (Exception $e) {
             error_log('Error en ReglasCobroAutomatico::new: ' . $e->getMessage());
@@ -115,9 +121,10 @@ class ReglasCobroAutomatico
                     id_convenio_exime = :id_convenio_exime,
                     prioridad = :prioridad,
                     activo = :activo
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
             $stmt->bindParam(':id', $data['id']);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':nombre', $data['nombre']);
             $stmt->bindParam(':id_tipo_evento', $data['id_tipo_evento']);
             $stmt->bindParam(':id_producto_servicio', $data['id_producto_servicio']);
@@ -144,8 +151,9 @@ class ReglasCobroAutomatico
             $request = Flight::request();
             $id = $request->data['id'];
 
-            $stmt = $db->prepare("DELETE FROM reglas_cobro_automatico WHERE id = :id");
+            $stmt = $db->prepare("DELETE FROM reglas_cobro_automatico WHERE id = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             Flight::json(['id' => $id]);

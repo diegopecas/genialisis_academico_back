@@ -4,7 +4,8 @@ class Acudientes
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo FROM acudientes");
+        $sentence = $db->prepare("SELECT id, id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo FROM acudientes WHERE id_tenant = :id_tenant");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -13,8 +14,9 @@ class Acudientes
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo FROM acudientes WHERE id = :id");
+        $sentence = $db->prepare("SELECT id, id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo FROM acudientes WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -43,9 +45,10 @@ class Acudientes
                                 FROM acudientes a
                                 INNER JOIN tipos_acudiente ta ON ta.id = a.id_tipo_acudiente
                                 INNER JOIN personas p ON p.id = a.id_persona
-                                WHERE a.id_estudiante = :id_estudiante
+                                WHERE a.id_estudiante = :id_estudiante AND a.id_tenant = :id_tenant
                                 ORDER BY p.primer_apellido ASC, p.primer_nombre ASC");
         $sentence->bindParam(':id_estudiante', $idEstudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -68,8 +71,11 @@ class Acudientes
             $autorizado_sistema = Flight::request()->data['autorizado_sistema'];
             $activo = Flight::request()->data['activo'];
 
-            $sentence = $db->prepare("INSERT INTO acudientes(id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo) 
-                                 VALUES (:id_estudiante, :id_persona, :id_tipo_acudiente, :es_responsable_pago, :autorizado_recoger, :autorizado_sistema, :activo)");
+            $idNew = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO acudientes(id, id_tenant, id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo) 
+                                 VALUES (:id, :id_tenant, :id_estudiante, :id_persona, :id_tipo_acudiente, :es_responsable_pago, :autorizado_recoger, :autorizado_sistema, :activo)");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_estudiante', $id_estudiante);
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindParam(':id_tipo_acudiente', $id_tipo_acudiente);
@@ -78,7 +84,7 @@ class Acudientes
             $sentence->bindParam(':autorizado_sistema', $autorizado_sistema);
             $sentence->bindParam(':activo', $activo);
             $sentence->execute();
-            $id = $db->lastInsertId();
+            $id = $idNew;
 
             $db->commit();
             Flight::json(array('id' => $id));
@@ -115,8 +121,9 @@ class Acudientes
                                 autorizado_recoger = :autorizado_recoger,
                                 autorizado_sistema = :autorizado_sistema,
                                 activo = :activo 
-                                WHERE id = :id");
+                                WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_estudiante', $id_estudiante);
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindParam(':id_tipo_acudiente', $id_tipo_acudiente);
@@ -157,8 +164,9 @@ class Acudientes
                             INNER JOIN tipos_acudiente ta ON ta.id = a.id_tipo_acudiente
                             INNER JOIN personas p ON p.id = a.id_persona
                             LEFT JOIN usuarios u ON u.id_persona = a.id_persona
-                            WHERE a.id = :id");
+                            WHERE a.id = :id AND a.id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -173,8 +181,9 @@ class Acudientes
 
             $db = Flight::db();
 
-            $sentence = $db->prepare("DELETE FROM acudientes WHERE id = :id");
-            $sentence->bindParam(':id', $id, PDO::PARAM_INT);
+            $sentence = $db->prepare("DELETE FROM acudientes WHERE id = :id AND id_tenant = :id_tenant");
+            $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             if ($sentence->rowCount() > 0) {
@@ -197,10 +206,12 @@ class Acudientes
         $sentence = $db->prepare("SELECT COUNT(*) as total FROM acudientes 
                                 WHERE id_estudiante = :id_estudiante 
                                 AND id_persona = :id_persona 
-                                AND id_tipo_acudiente = :id_tipo_acudiente");
+                                AND id_tipo_acudiente = :id_tipo_acudiente
+                                AND id_tenant = :id_tenant");
         $sentence->bindParam(':id_estudiante', $id_estudiante);
         $sentence->bindParam(':id_persona', $id_persona);
         $sentence->bindParam(':id_tipo_acudiente', $id_tipo_acudiente);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetch();
 
@@ -215,8 +226,9 @@ class Acudientes
         $db = Flight::db();
 
         // Debug: verificar acudientes de esta persona
-        $checkAcudiente = $db->prepare("SELECT id, id_estudiante, id_persona, autorizado_sistema, activo FROM acudientes WHERE id_persona = :id_persona");
+        $checkAcudiente = $db->prepare("SELECT id, id_estudiante, id_persona, autorizado_sistema, activo FROM acudientes WHERE id_persona = :id_persona AND id_tenant = :id_tenant");
         $checkAcudiente->bindParam(':id_persona', $idPersona);
+        $checkAcudiente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $checkAcudiente->execute();
         $acudientesDebug = $checkAcudiente->fetchAll();
         error_log("Acudientes encontrados para id_persona $idPersona: " . json_encode($acudientesDebug));
@@ -260,9 +272,11 @@ class Acudientes
                             AND a.activo = 1 
                             AND a.autorizado_sistema = 1
                             AND e.activo = 1
+                            AND a.id_tenant = :id_tenant
                             ORDER BY grp.orden ASC, p.primer_apellido ASC, p.primer_nombre ASC");
 
         $sentence->bindParam(':id_persona', $idPersona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
 
@@ -278,9 +292,11 @@ class Acudientes
                                 WHERE a.id_persona = :id_persona 
                                 AND a.activo = 1 
                                 AND a.autorizado_sistema = 1
-                                AND e.activo = 1");
+                                AND e.activo = 1
+                                AND a.id_tenant = :id_tenant");
 
         $sentence->bindParam(':id_persona', $idPersona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);

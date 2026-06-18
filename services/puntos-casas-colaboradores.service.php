@@ -15,7 +15,9 @@ class PuntosCasasColaboradores
         LEFT OUTER JOIN personas pe ON ce.id_persona = pe.id
         LEFT OUTER JOIN colaboradores cr ON pcc.id_colaborador_recibe = cr.id
         LEFT OUTER JOIN personas pr ON cr.id_persona = pr.id
+        WHERE pcc.id_tenant = :id_tenant
         ORDER BY pcc.fecha DESC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         
@@ -47,8 +49,10 @@ class PuntosCasasColaboradores
         LEFT OUTER JOIN colaboradores cr ON pcc.id_colaborador_recibe = cr.id
         LEFT OUTER JOIN personas pr ON cr.id_persona = pr.id
         WHERE pcc.id_casa_colaborador = :id_casa
+        AND pcc.id_tenant = :id_tenant
         ORDER BY pcc.fecha DESC");
         $sentence->bindParam(':id_casa', $id_casa);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         
@@ -85,21 +89,22 @@ class PuntosCasasColaboradores
             error_log("Creando punto casa colaborador: id_colaborador_entrega=$id_colaborador_entrega, id_colaborador_recibe=$id_colaborador_recibe, valor=$valor, id_casa_colaborador=$id_casa_colaborador, observacion=$observacion, fecha=$fecha");
             
             // Insertar punto
-            $sentence = $db->prepare("INSERT INTO puntos_casas_colaboradores(id_colaborador_entrega, id_colaborador_recibe, valor, fecha, id_casa_colaborador, observacion) 
-                VALUES (:id_colaborador_entrega, :id_colaborador_recibe, :valor, :fecha, :id_casa_colaborador, :observacion)");
+            $id = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO puntos_casas_colaboradores(id, id_tenant, id_colaborador_entrega, id_colaborador_recibe, valor, fecha, id_casa_colaborador, observacion) 
+                VALUES (:id, :id_tenant, :id_colaborador_entrega, :id_colaborador_recibe, :valor, :fecha, :id_casa_colaborador, :observacion)");
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_colaborador_entrega', $id_colaborador_entrega);
             $sentence->bindParam(':id_colaborador_recibe', $id_colaborador_recibe);
             $sentence->bindParam(':valor', $valor);
             $sentence->bindParam(':fecha', $fecha);
             $sentence->bindParam(':id_casa_colaborador', $id_casa_colaborador);
             $sentence->bindParam(':observacion', $observacion);
-            $sentence->execute();
+            $ok = $sentence->execute();
             
-            $id = $db->lastInsertId();
-            
-            if ($id == 0) {
+            if (!$ok) {
                 $db->rollBack();
-                error_log("Error: El ID insertado es 0.");
+                error_log("Error: no se pudo insertar el punto.");
                 Flight::json(array('error' => 'No se pudo crear el punto. Intente de nuevo.'), 500);
                 return;
             }
@@ -107,16 +112,18 @@ class PuntosCasasColaboradores
             // Actualizar puntos de la casa colaborador
             if ($valor > 0) {
                 // Sumar a puntos_entregar
-                $updateCasa = $db->prepare("UPDATE casas_colaboradores SET puntos_entregar = puntos_entregar + :valor WHERE id = :id_casa");
+                $updateCasa = $db->prepare("UPDATE casas_colaboradores SET puntos_entregar = puntos_entregar + :valor WHERE id = :id_casa AND id_tenant = :id_tenant");
                 $updateCasa->bindParam(':valor', $valor);
                 $updateCasa->bindParam(':id_casa', $id_casa_colaborador);
+                $updateCasa->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $updateCasa->execute();
             } else {
                 // Sumar a puntos_quitar (el valor ya viene negativo)
                 $valorAbsoluto = abs($valor);
-                $updateCasa = $db->prepare("UPDATE casas_colaboradores SET puntos_quitar = puntos_quitar + :valor WHERE id = :id_casa");
+                $updateCasa = $db->prepare("UPDATE casas_colaboradores SET puntos_quitar = puntos_quitar + :valor WHERE id = :id_casa AND id_tenant = :id_tenant");
                 $updateCasa->bindParam(':valor', $valorAbsoluto);
                 $updateCasa->bindParam(':id_casa', $id_casa_colaborador);
+                $updateCasa->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $updateCasa->execute();
             }
             

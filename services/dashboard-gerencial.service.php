@@ -112,6 +112,7 @@ class DashboardGerencial
                 LEFT JOIN calendarios c ON c.fecha = :fecha_cal
                 LEFT JOIN dias_semana ds ON ds.id = c.id_dia_semana
                 WHERE e.activo = 1
+                AND e.id_tenant = " . TenantContext::id() . "
                 ORDER BY g.orden, g.nombre, p.primer_nombre, p.primer_apellido";
 
             $sentence = $db->prepare($sql);
@@ -162,7 +163,7 @@ class DashboardGerencial
             $idsEstudiantes = [];
             foreach ($registros as $r) {
                 if (!empty($r['id_estudiante'])) {
-                    $idsEstudiantes[] = (int)$r['id_estudiante'];
+                    $idsEstudiantes[] = $r['id_estudiante'];
                 }
             }
 
@@ -181,7 +182,7 @@ class DashboardGerencial
                 $stmtR = $db->prepare($sqlRec);
                 $stmtR->execute($idsEstudiantes);
                 foreach ($stmtR->fetchAll(PDO::FETCH_ASSOC) as $row) {
-                    $recordatorios[(int)$row['id_estudiante']] = [
+                    $recordatorios[$row['id_estudiante']] = [
                         'tipo' => $row['tipo_recordatorio'],
                         'fecha_envio' => $row['fecha_envio']
                     ];
@@ -189,7 +190,7 @@ class DashboardGerencial
             }
 
             foreach ($registros as &$r) {
-                $idEst = !empty($r['id_estudiante']) ? (int)$r['id_estudiante'] : null;
+                $idEst = !empty($r['id_estudiante']) ? $r['id_estudiante'] : null;
                 if ($idEst !== null && isset($recordatorios[$idEst])) {
                     $r['recordatorio'] = $recordatorios[$idEst];
                 } else {
@@ -282,6 +283,7 @@ class DashboardGerencial
                     AND hc.activo = 1
                 WHERE c.activo = 1
                   AND c.valida_ingreso_jornada = 1
+                  AND c.id_tenant = " . TenantContext::id() . "
                 ORDER BY p.primer_nombre, p.primer_apellido";
 
             $sentence = $db->prepare($sql);
@@ -335,7 +337,7 @@ class DashboardGerencial
                 SELECT DISTINCT e.id, e.permanente, exg.id_grupo
                 FROM estudiantes e
                 INNER JOIN estudiantes_x_grupos exg ON e.id = exg.id_estudiante AND exg.activo = 1
-                WHERE e.activo = 1
+                WHERE e.activo = 1 AND e.id_tenant = " . TenantContext::id() . "
             ) sub ON sub.id_grupo = g.id
             GROUP BY g.id, g.nombre, g.color, g.icono, g.orden
             ORDER BY g.orden, g.nombre";
@@ -358,7 +360,7 @@ class DashboardGerencial
                 FROM asistencia_estudiantes ae
                 INNER JOIN estudiantes e ON ae.id_estudiante = e.id
                 INNER JOIN estudiantes_x_grupos exg ON e.id = exg.id_estudiante AND exg.activo = 1
-                WHERE DATE(ae.fecha_ingreso) = :fecha
+                WHERE DATE(ae.fecha_ingreso) = :fecha AND ae.id_tenant = " . TenantContext::id() . "
             ) sub ON sub.id_grupo = g.id
             GROUP BY g.id";
 
@@ -388,6 +390,7 @@ class DashboardGerencial
                 INNER JOIN grupos g ON exg.id_grupo = g.id
                 WHERE DATE(ae.fecha_ingreso) = :fecha
                   AND ae.fecha_salida IS NULL
+                  AND ae.id_tenant = " . TenantContext::id() . "
                 GROUP BY g.id";
 
             $s3 = $db->prepare($sqlPresentes);
@@ -484,7 +487,7 @@ class DashboardGerencial
         // Total colaboradores activos (solo los que deben validar ingreso de jornada)
         $sqlTotal = "SELECT COUNT(*) AS total
             FROM colaboradores c
-            WHERE c.activo = 1 AND c.valida_ingreso_jornada = 1";
+            WHERE c.activo = 1 AND c.valida_ingreso_jornada = 1 AND c.id_tenant = " . TenantContext::id();
         $stmt = $db->prepare($sqlTotal);
         $stmt->execute();
         $totalRow = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -506,7 +509,7 @@ class DashboardGerencial
             INNER JOIN tipos_registro_asistencia tra ON ra.id_tipo_registro = tra.id
             LEFT JOIN estados_registro_asistencia era ON ra.id_estado = era.id
             INNER JOIN colaboradores c ON ra.id_colaborador = c.id
-            WHERE ra.fecha = :fecha AND c.activo = 1";
+            WHERE ra.fecha = :fecha AND c.activo = 1 AND ra.id_tenant = " . TenantContext::id();
         $s = $db->prepare($sqlAg);
         $s->bindParam(':fecha', $fecha);
         $s->execute();
@@ -572,6 +575,7 @@ class DashboardGerencial
               AND ps.id_periodicidad_cobro = 2
               AND YEAR(cpc.fecha) = :anio
               AND MONTH(cpc.fecha) = :mes
+              AND cpc.id_tenant = " . TenantContext::id() . "
             GROUP BY ha.id, ha.nombre, ha.orden";
 
         $s = $db->prepare($sqlMensServidos);
@@ -595,6 +599,7 @@ class DashboardGerencial
               AND ps.id_periodicidad_cobro = 2
               AND YEAR(cpc.fecha) = :anio
               AND MONTH(cpc.fecha) = :mes
+              AND cpc.id_tenant = " . TenantContext::id() . "
             GROUP BY ha.id, ha.nombre, ha.orden";
 
         $s2 = $db->prepare($sqlMensContratados);
@@ -616,6 +621,7 @@ class DashboardGerencial
               AND cpc.anulado = 0
               AND ps.id_periodicidad_cobro = 3
               AND cpc.fecha = :fecha
+              AND cpc.id_tenant = " . TenantContext::id() . "
             GROUP BY ha.id, ha.nombre, ha.orden";
 
         $s3 = $db->prepare($sqlDiariosServidos);
@@ -629,7 +635,7 @@ class DashboardGerencial
         $registrarHorario = function (&$horarios, $id, $nombre, $orden) {
             if (!isset($horarios[$id])) {
                 $horarios[$id] = [
-                    'id_horario' => (int)$id,
+                    'id_horario' => $id,
                     'nombre_horario' => $nombre,
                     'orden' => (int)$orden,
                     'mensuales_servidos' => 0,
@@ -845,6 +851,7 @@ class DashboardGerencial
                 LEFT JOIN acudientes a ON pr.id_acudiente = a.id
                 LEFT JOIN personas p ON p.id = COALESCE(e.id_persona, c.id_persona, a.id_persona)
                 WHERE (pr.anulado = 0 OR pr.anulado IS NULL)
+                  AND pr.id_tenant = " . TenantContext::id() . "
                   $whereFecha
                 ORDER BY pr.fecha DESC, pr.id DESC";
 
@@ -868,6 +875,7 @@ class DashboardGerencial
                 FROM pagos_recibidos pr
                 INNER JOIN tipos_pagos tp ON pr.id_tipo_pago = tp.id AND tp.es_ingreso = 1
                 WHERE (pr.anulado = 0 OR pr.anulado IS NULL)
+                  AND pr.id_tenant = " . TenantContext::id() . "
                   $whereFecha
                 GROUP BY tp.id, tp.nombre
                 ORDER BY total DESC";
@@ -882,7 +890,7 @@ class DashboardGerencial
             unset($t);
 
             // También devolver lista de tipos de pago (para el filtro del front)
-            $sqlTipos = "SELECT id, nombre FROM tipos_pagos WHERE es_ingreso = 1 ORDER BY nombre";
+            $sqlTipos = "SELECT id, nombre FROM tipos_pagos WHERE es_ingreso = 1 AND id_tenant = " . TenantContext::id() . " ORDER BY nombre";
             $stmtT = $db->prepare($sqlTipos);
             $stmtT->execute();
             $tipos = $stmtT->fetchAll(PDO::FETCH_ASSOC);
@@ -957,9 +965,11 @@ class DashboardGerencial
                     LEFT JOIN cuenta_pagada cp ON cp.id_cuenta_por_cobrar = cpc.id
                     LEFT JOIN pagos_recibidos pr ON cp.id_pago_recibido = pr.id
                     WHERE (cpc.anulado = 0 OR cpc.anulado IS NULL)
+                    AND cpc.id_tenant = " . TenantContext::id() . "
                     GROUP BY cpc.id, cpc.id_persona, cpc.fecha, cpc.valor
                     HAVING saldo > 0
                 ) sub ON sub.id_persona = p.id
+                WHERE p.id_tenant = " . TenantContext::id() . "
                 GROUP BY p.id, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido,
                          p.numero_identificacion, e.id, e.activo, g.nombre, col.id, col.activo, ca.nombre
                 ORDER BY saldo_vencido DESC, saldo_pendiente DESC";
@@ -972,7 +982,7 @@ class DashboardGerencial
             $idsEstudiantes = [];
             foreach ($registros as $r) {
                 if (!empty($r['id_estudiante'])) {
-                    $idsEstudiantes[] = (int)$r['id_estudiante'];
+                    $idsEstudiantes[] = $r['id_estudiante'];
                 }
             }
 
@@ -995,7 +1005,7 @@ class DashboardGerencial
                 $stmtP = $db->prepare($sqlPago);
                 $stmtP->execute($idsEstudiantes);
                 foreach ($stmtP->fetchAll(PDO::FETCH_ASSOC) as $row) {
-                    $recordatorios[(int)$row['id_estudiante']] = [
+                    $recordatorios[$row['id_estudiante']] = [
                         'origen' => 'pago',
                         'tipo' => $row['tipo_recordatorio'],
                         'compromiso' => $row['compromiso'],
@@ -1021,7 +1031,7 @@ class DashboardGerencial
                     $stmtG = $db->prepare($sqlGen);
                     $stmtG->execute($sinPago);
                     foreach ($stmtG->fetchAll(PDO::FETCH_ASSOC) as $row) {
-                        $recordatorios[(int)$row['id_estudiante']] = [
+                        $recordatorios[$row['id_estudiante']] = [
                             'origen' => 'general',
                             'tipo' => $row['tipo_recordatorio'],
                             'compromiso' => $row['compromiso'],
@@ -1041,7 +1051,7 @@ class DashboardGerencial
                 $r['activo'] = (int)$r['activo'];
 
                 // Adjuntar último recordatorio si existe
-                $idEst = !empty($r['id_estudiante']) ? (int)$r['id_estudiante'] : null;
+                $idEst = !empty($r['id_estudiante']) ? $r['id_estudiante'] : null;
                 if ($idEst !== null && isset($recordatorios[$idEst])) {
                     $rec = $recordatorios[$idEst];
                     $r['recordatorio'] = [
@@ -1137,7 +1147,7 @@ class DashboardGerencial
                 LEFT JOIN pagos_recibidos pr ON cp.id_pago_recibido = pr.id
                 GROUP BY cp.id_cuenta_por_cobrar
             ) cp_sum ON c.id = cp_sum.id_cuenta_por_cobrar
-            WHERE (c.anulado = 0 OR c.anulado IS NULL)";
+            WHERE (c.anulado = 0 OR c.anulado IS NULL) AND c.id_tenant = " . TenantContext::id();
 
         $stmt = $db->prepare($sqlEstado);
         $stmt->bindParam(':fecha_ref', $fecha);
@@ -1182,7 +1192,7 @@ class DashboardGerencial
                 GROUP BY cp.id_cuenta_por_cobrar
             ) cp_sum ON c.id = cp_sum.id_cuenta_por_cobrar
             WHERE (c.anulado = 0 OR c.anulado IS NULL)
-              AND c.fecha <= :fecha_ayer3";
+              AND c.fecha <= :fecha_ayer3 AND c.id_tenant = " . TenantContext::id();
         $stmt = $db->prepare($sqlAyer);
         $stmt->bindParam(':fecha_ayer', $fechaAyer);
         $stmt->bindParam(':fecha_ayer2', $fechaAyer);
@@ -1240,7 +1250,7 @@ class DashboardGerencial
             FROM cuentas_por_cobrar 
             WHERE anulado = 1 
               AND YEAR(fecha_anulacion) = :anio 
-              AND MONTH(fecha_anulacion) = :mes";
+              AND MONTH(fecha_anulacion) = :mes AND id_tenant = " . TenantContext::id();
         $stmt = $db->prepare($sqlAnuladasMes);
         $stmt->bindParam(':anio', $anio);
         $stmt->bindParam(':mes', $mes);
@@ -1293,7 +1303,7 @@ class DashboardGerencial
                 LEFT JOIN pagos_recibidos pr ON cp.id_pago_recibido = pr.id
                 GROUP BY cp.id_cuenta_por_cobrar
             ) cp_sum ON c.id = cp_sum.id_cuenta_por_cobrar
-            WHERE (c.anulado = 0 OR c.anulado IS NULL) AND $whereExtra";
+            WHERE (c.anulado = 0 OR c.anulado IS NULL) AND $whereExtra AND c.id_tenant = " . TenantContext::id();
 
         $stmt = $db->prepare($sql);
         foreach ($params as $k => $v) $stmt->bindValue($k, $v);
@@ -1334,7 +1344,7 @@ class DashboardGerencial
                 COALESCE(SUM(pr.valor_recibido), 0) AS total
             FROM pagos_recibidos pr
             INNER JOIN tipos_pagos tp ON pr.id_tipo_pago = tp.id AND tp.es_ingreso = 1
-            WHERE (pr.anulado = 0 OR pr.anulado IS NULL) AND pr.fecha = :fecha";
+            WHERE (pr.anulado = 0 OR pr.anulado IS NULL) AND pr.fecha = :fecha AND pr.id_tenant = " . TenantContext::id();
         $stmt = $db->prepare($sqlHoy);
         $stmt->bindParam(':fecha', $fecha);
         $stmt->execute();
@@ -1346,7 +1356,7 @@ class DashboardGerencial
                 COALESCE(SUM(pr.valor_recibido), 0) AS total
             FROM pagos_recibidos pr
             INNER JOIN tipos_pagos tp ON pr.id_tipo_pago = tp.id AND tp.es_ingreso = 1
-            WHERE (pr.anulado = 0 OR pr.anulado IS NULL) AND DATE(pr.fecha_registro) = :fecha";
+            WHERE (pr.anulado = 0 OR pr.anulado IS NULL) AND DATE(pr.fecha_registro) = :fecha AND pr.id_tenant = " . TenantContext::id();
         $stmt = $db->prepare($sqlRegHoy);
         $stmt->bindParam(':fecha', $fecha);
         $stmt->execute();
@@ -1359,7 +1369,7 @@ class DashboardGerencial
             FROM pagos_recibidos pr
             INNER JOIN tipos_pagos tp ON pr.id_tipo_pago = tp.id AND tp.es_ingreso = 1
             WHERE (pr.anulado = 0 OR pr.anulado IS NULL) 
-              AND YEAR(pr.fecha) = :anio AND MONTH(pr.fecha) = :mes";
+              AND YEAR(pr.fecha) = :anio AND MONTH(pr.fecha) = :mes AND pr.id_tenant = " . TenantContext::id();
         $stmt = $db->prepare($sqlMes);
         $stmt->bindParam(':anio', $anio);
         $stmt->bindParam(':mes', $mes);
@@ -1373,7 +1383,7 @@ class DashboardGerencial
             INNER JOIN tipos_pagos tp ON pr.id_tipo_pago = tp.id AND tp.es_ingreso = 1
             WHERE (pr.anulado = 0 OR pr.anulado IS NULL) 
               AND YEAR(pr.fecha) = :anio AND MONTH(pr.fecha) = :mes
-              AND pr.fecha <= :fecha_ayer";
+              AND pr.fecha <= :fecha_ayer AND pr.id_tenant = " . TenantContext::id();
         $stmt = $db->prepare($sqlMesAyer);
         $stmt->bindParam(':anio', $anio);
         $stmt->bindParam(':mes', $mes);
@@ -1391,7 +1401,7 @@ class DashboardGerencial
             FROM pagos_recibidos pr
             INNER JOIN tipos_pagos tp ON pr.id_tipo_pago = tp.id AND tp.es_ingreso = 1
             WHERE (pr.anulado = 0 OR pr.anulado IS NULL) 
-              AND YEAR(pr.fecha) = :anio";
+              AND YEAR(pr.fecha) = :anio AND pr.id_tenant = " . TenantContext::id();
         $stmt = $db->prepare($sqlAnio);
         $stmt->bindParam(':anio', $anio);
         $stmt->execute();
@@ -1408,7 +1418,7 @@ class DashboardGerencial
             WHERE (pr.anulado = 0 OR pr.anulado IS NULL)
               AND YEAR(pr.fecha) = :anio AND MONTH(pr.fecha) = :mes
               AND c.fecha >= :primer_dia
-              AND (c.anulado = 0 OR c.anulado IS NULL)";
+              AND (c.anulado = 0 OR c.anulado IS NULL) AND cp.id_tenant = " . TenantContext::id();
         $stmt = $db->prepare($sqlMesCorriente);
         $stmt->bindParam(':anio', $anio);
         $stmt->bindParam(':mes', $mes);
@@ -1427,7 +1437,7 @@ class DashboardGerencial
             WHERE (pr.anulado = 0 OR pr.anulado IS NULL)
               AND YEAR(pr.fecha) = :anio AND MONTH(pr.fecha) = :mes
               AND c.fecha < :primer_dia
-              AND (c.anulado = 0 OR c.anulado IS NULL)";
+              AND (c.anulado = 0 OR c.anulado IS NULL) AND cp.id_tenant = " . TenantContext::id();
         $stmt = $db->prepare($sqlMesAnteriores);
         $stmt->bindParam(':anio', $anio);
         $stmt->bindParam(':mes', $mes);
@@ -1443,7 +1453,7 @@ class DashboardGerencial
             INNER JOIN tipos_pagos tp ON pr.id_tipo_pago = tp.id AND tp.es_ingreso = 1
             WHERE (pr.anulado = 0 OR pr.anulado IS NULL) 
               AND YEAR(pr.fecha) = :anio AND MONTH(pr.fecha) = :mes
-              AND pr.id_estudiante IS NOT NULL";
+              AND pr.id_estudiante IS NOT NULL AND pr.id_tenant = " . TenantContext::id();
         $stmt = $db->prepare($sqlMesEst);
         $stmt->bindParam(':anio', $anio);
         $stmt->bindParam(':mes', $mes);
@@ -1458,7 +1468,7 @@ class DashboardGerencial
             INNER JOIN tipos_pagos tp ON pr.id_tipo_pago = tp.id AND tp.es_ingreso = 1
             WHERE (pr.anulado = 0 OR pr.anulado IS NULL) 
               AND YEAR(pr.fecha) = :anio AND MONTH(pr.fecha) = :mes
-              AND pr.id_colaborador IS NOT NULL";
+              AND pr.id_colaborador IS NOT NULL AND pr.id_tenant = " . TenantContext::id();
         $stmt = $db->prepare($sqlMesCol);
         $stmt->bindParam(':anio', $anio);
         $stmt->bindParam(':mes', $mes);
@@ -1473,7 +1483,7 @@ class DashboardGerencial
             INNER JOIN tipos_pagos tp ON pr.id_tipo_pago = tp.id AND tp.es_ingreso = 1
             WHERE pr.anulado = 1
               AND YEAR(pr.fecha_anulacion) = :anio 
-              AND MONTH(pr.fecha_anulacion) = :mes";
+              AND MONTH(pr.fecha_anulacion) = :mes AND pr.id_tenant = " . TenantContext::id();
         $stmt = $db->prepare($sqlAnulMes);
         $stmt->bindParam(':anio', $anio);
         $stmt->bindParam(':mes', $mes);
@@ -1490,6 +1500,7 @@ class DashboardGerencial
             INNER JOIN tipos_pagos tp ON pr.id_tipo_pago = tp.id AND tp.es_ingreso = 1
             WHERE (pr.anulado = 0 OR pr.anulado IS NULL) 
               AND YEAR(pr.fecha) = :anio AND MONTH(pr.fecha) = :mes
+              AND pr.id_tenant = " . TenantContext::id() . "
             GROUP BY tp.id, tp.nombre
             ORDER BY total DESC";
         $stmt = $db->prepare($sqlPorTipo);
@@ -1643,6 +1654,7 @@ class DashboardGerencial
                 INNER JOIN tipos_movimientos_financieros tmf ON cmf.id_tipo_movimiento = tmf.id
                 LEFT JOIN medios_pago_financieros mpf ON m.id_medio_pago_financiero = mpf.id
                 WHERE 1=1
+                  AND m.id_tenant = " . TenantContext::id() . "
                   $whereFecha
                 ORDER BY m.fecha DESC, m.id DESC";
 
@@ -1658,12 +1670,12 @@ class DashboardGerencial
             unset($r);
 
             // Catálogos para filtros
-            $sqlCat = "SELECT id, nombre, id_tipo_movimiento FROM categorias_movimientos_financieros ORDER BY nombre";
+            $sqlCat = "SELECT id, nombre, id_tipo_movimiento FROM categorias_movimientos_financieros WHERE id_tenant = " . TenantContext::id() . " ORDER BY nombre";
             $stmtC = $db->prepare($sqlCat);
             $stmtC->execute();
             $categorias = $stmtC->fetchAll(PDO::FETCH_ASSOC);
 
-            $sqlMed = "SELECT id, nombre FROM medios_pago_financieros ORDER BY nombre";
+            $sqlMed = "SELECT id, nombre FROM medios_pago_financieros WHERE id_tenant = " . TenantContext::id() . " ORDER BY nombre";
             $stmtM = $db->prepare($sqlMed);
             $stmtM->execute();
             $medios = $stmtM->fetchAll(PDO::FETCH_ASSOC);
@@ -1718,7 +1730,7 @@ class DashboardGerencial
                 WHERE (m.anulado = 0 OR m.anulado IS NULL)
                   AND m.fecha_aprobacion IS NOT NULL
                   AND cmf.id_tipo_movimiento = :id_tipo
-                  AND $where";
+                  AND $where AND m.id_tenant = " . TenantContext::id();
             $stmt = $db->prepare($sql);
             $stmt->bindValue(':id_tipo', $idTipo, PDO::PARAM_INT);
             $stmt->bindValue(':anio', $anio);
@@ -1749,7 +1761,7 @@ class DashboardGerencial
                 COALESCE(SUM(m.valor), 0) AS total
             FROM movimientos_financieros m
             WHERE (m.anulado = 0 OR m.anulado IS NULL)
-              AND m.fecha_aprobacion IS NULL";
+              AND m.fecha_aprobacion IS NULL AND m.id_tenant = " . TenantContext::id();
         $stmt = $db->prepare($sqlPend);
         $stmt->execute();
         $pendientes = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -1768,6 +1780,7 @@ class DashboardGerencial
               AND m.fecha_aprobacion IS NOT NULL
               AND cmf.id_tipo_movimiento = :id_tipo
               AND YEAR(m.fecha) = :anio AND MONTH(m.fecha) = :mes
+              AND m.id_tenant = " . TenantContext::id() . "
             GROUP BY cmf.id, cmf.nombre, cmf.color
             ORDER BY total DESC
             LIMIT 1";
@@ -1793,6 +1806,7 @@ class DashboardGerencial
               AND m.fecha_aprobacion IS NOT NULL
               AND cmf.id_tipo_movimiento = :id_tipo
               AND YEAR(m.fecha) = :anio AND MONTH(m.fecha) = :mes
+              AND m.id_tenant = " . TenantContext::id() . "
             GROUP BY cf.id, cf.nombre, cmf.nombre, cmf.color
             ORDER BY total DESC
             LIMIT 1";

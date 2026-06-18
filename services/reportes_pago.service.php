@@ -37,8 +37,10 @@ class ReportesPago
             INNER JOIN personas pc ON pc.id = col.id_persona
             INNER JOIN tipos_pagos tp ON tp.id = rp.id_tipo_pago
             LEFT JOIN documentos_personas dp ON dp.id = rp.id_documento_persona
+            WHERE rp.id_tenant = :id_tenant
             ORDER BY rp.fecha_registro DESC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
 
@@ -79,9 +81,10 @@ class ReportesPago
             INNER JOIN colaboradores col ON col.id = rp.id_colaborador_recibio
             INNER JOIN personas pc ON pc.id = col.id_persona
             INNER JOIN tipos_pagos tp ON tp.id = rp.id_tipo_pago
-            WHERE rp.id = :id
+            WHERE rp.id = :id AND rp.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -117,10 +120,11 @@ class ReportesPago
             INNER JOIN personas pr ON pr.id = rp.id_persona_reporta
             INNER JOIN tipos_pagos tp ON tp.id = rp.id_tipo_pago
             LEFT JOIN documentos_personas dp ON dp.id = rp.id_documento_persona
-            WHERE rp.id_estudiante = :id_estudiante
+            WHERE rp.id_estudiante = :id_estudiante AND rp.id_tenant = :id_tenant
             ORDER BY rp.fecha_registro DESC
         ");
         $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
 
@@ -155,10 +159,11 @@ class ReportesPago
             INNER JOIN colaboradores col ON col.id = rp.id_colaborador_recibio
             INNER JOIN personas pc ON pc.id = col.id_persona
             INNER JOIN tipos_pagos tp ON tp.id = rp.id_tipo_pago
-            WHERE rp.id_persona_reporta = :id_persona
+            WHERE rp.id_persona_reporta = :id_persona AND rp.id_tenant = :id_tenant
             ORDER BY rp.fecha_registro DESC
         ");
         $sentence->bindParam(':id_persona', $id_persona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -197,9 +202,10 @@ class ReportesPago
             INNER JOIN colaboradores col ON col.id = rp.id_colaborador_recibio
             INNER JOIN personas pc ON pc.id = col.id_persona
             INNER JOIN tipos_pagos tp ON tp.id = rp.id_tipo_pago
-            WHERE rp.estado = 'pendiente'
+            WHERE rp.estado = 'pendiente' AND rp.id_tenant = :id_tenant
             ORDER BY rp.fecha_registro ASC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
 
@@ -232,9 +238,11 @@ class ReportesPago
             INNER JOIN tipos_pagos tp ON tp.id = rp.id_tipo_pago
             WHERE rp.id_colaborador_recibio = :id_colaborador
               AND rp.estado = 'pendiente'
+              AND rp.id_tenant = :id_tenant
             ORDER BY rp.fecha_registro ASC
         ");
         $sentence->bindParam(':id_colaborador', $id_colaborador);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
 
@@ -263,8 +271,10 @@ class ReportesPago
                 WHERE id_persona = :id_persona 
                   AND id_estudiante = :id_estudiante 
                   AND activo = 1 
+                  AND id_tenant = :id_tenant
                 LIMIT 1
             ");
+            $stmtAcudiente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtAcudiente->bindParam(':id_persona', $id_persona_reporta);
             $stmtAcudiente->bindParam(':id_estudiante', $id_estudiante);
             $stmtAcudiente->execute();
@@ -278,12 +288,15 @@ class ReportesPago
 
             $id_acudiente = $acudiente['id'];
 
+            $idNew = Uuid::generar();
             $sentence = $db->prepare("
                 INSERT INTO reportes_pago 
-                    (id_estudiante, id_acudiente, id_persona_reporta, id_colaborador_recibio, id_tipo_pago, valor, fecha_pago, observaciones, estado, fecha_registro) 
+                    (id, id_tenant, id_estudiante, id_acudiente, id_persona_reporta, id_colaborador_recibio, id_tipo_pago, valor, fecha_pago, observaciones, estado, fecha_registro) 
                 VALUES 
-                    (:id_estudiante, :id_acudiente, :id_persona_reporta, :id_colaborador_recibio, :id_tipo_pago, :valor, :fecha_pago, :observaciones, 'pendiente', NOW())
+                    (:id, :id_tenant, :id_estudiante, :id_acudiente, :id_persona_reporta, :id_colaborador_recibio, :id_tipo_pago, :valor, :fecha_pago, :observaciones, 'pendiente', NOW())
             ");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_estudiante', $id_estudiante);
             $sentence->bindParam(':id_acudiente', $id_acudiente);
             $sentence->bindParam(':id_persona_reporta', $id_persona_reporta);
@@ -293,7 +306,7 @@ class ReportesPago
             $sentence->bindParam(':fecha_pago', $fecha_pago);
             $sentence->bindParam(':observaciones', $observaciones);
             $sentence->execute();
-            $id = $db->lastInsertId();
+            $id = $idNew;
 
             $db->commit();
             Flight::json(array('id' => $id));
@@ -321,9 +334,10 @@ class ReportesPago
                 SET id_pago_recibido = :id_pago_recibido, 
                     estado = 'asociado', 
                     fecha_asociacion = NOW() 
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_pago_recibido', $id_pago_recibido);
             $sentence->execute();
 
@@ -354,9 +368,10 @@ class ReportesPago
             FROM reportes_pago rp
             INNER JOIN personas pr ON pr.id = rp.id_persona_reporta
             INNER JOIN tipos_pagos tp ON tp.id = rp.id_tipo_pago
-            WHERE rp.id_pago_recibido = :id_pago_recibido
+            WHERE rp.id_pago_recibido = :id_pago_recibido AND rp.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id_pago_recibido', $id_pago_recibido);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -390,9 +405,11 @@ class ReportesPago
             LEFT JOIN documentos_personas dp ON dp.id = rp.id_documento_persona
             WHERE rp.id_estudiante = :id_estudiante
               AND rp.estado = 'pendiente'
+              AND rp.id_tenant = :id_tenant
             ORDER BY rp.fecha_registro ASC
         ");
         $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
 
@@ -405,8 +422,9 @@ class ReportesPago
     {
         try {
             $db = Flight::db();
-            $sentence = $db->prepare("DELETE FROM reportes_pago WHERE id = :id AND estado = 'pendiente'");
-            $sentence->bindParam(':id', $id, PDO::PARAM_INT);
+            $sentence = $db->prepare("DELETE FROM reportes_pago WHERE id = :id AND estado = 'pendiente' AND id_tenant = :id_tenant");
+            $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             if ($sentence->rowCount() > 0) {
@@ -425,7 +443,8 @@ class ReportesPago
     public static function getTiposPagoPortal()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, nombre FROM tipos_pagos WHERE visible_portal_padres = 1 ORDER BY nombre");
+        $sentence = $db->prepare("SELECT id, nombre FROM tipos_pagos WHERE visible_portal_padres = 1 AND id_tenant = :id_tenant ORDER BY nombre");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -446,8 +465,10 @@ class ReportesPago
             INNER JOIN personas p ON p.id = c.id_persona
             LEFT JOIN cargos car ON car.id = c.id_cargo
             WHERE c.activo = 1
+            AND c.id_tenant = :id_tenant
             ORDER BY p.primer_nombre, p.primer_apellido
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -467,9 +488,10 @@ class ReportesPago
             $sentence = $db->prepare("
                 UPDATE reportes_pago 
                 SET id_documento_persona = :id_documento_persona 
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_documento_persona', $id_documento_persona);
             $sentence->execute();
 

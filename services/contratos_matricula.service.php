@@ -25,8 +25,10 @@ class ContratosMatricula
             INNER JOIN estudiantes e ON cm.id_estudiante = e.id
             INNER JOIN personas p ON e.id_persona = p.id
             INNER JOIN grupos g ON cm.id_grupo = g.id
+            WHERE cm.id_tenant = :id_tenant
             ORDER BY cm.fecha_generacion DESC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -56,9 +58,10 @@ class ContratosMatricula
             INNER JOIN estudiantes e ON cm.id_estudiante = e.id
             INNER JOIN personas p ON e.id_persona = p.id
             INNER JOIN grupos g ON cm.id_grupo = g.id
-            WHERE cm.id = :id
+            WHERE cm.id = :id AND cm.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -86,10 +89,11 @@ class ContratosMatricula
             INNER JOIN grupos g ON cm.id_grupo = g.id
             LEFT JOIN usuarios u ON cm.id_usuario_genera = u.id
             LEFT JOIN personas pu ON u.id_persona = pu.id
-            WHERE cm.id_estudiante = :id_estudiante
+            WHERE cm.id_estudiante = :id_estudiante AND cm.id_tenant = :id_tenant
             ORDER BY cm.anio DESC, cm.fecha_generacion DESC
         ");
         $sentence->bindParam(':id_estudiante', $idEstudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -114,10 +118,11 @@ class ContratosMatricula
             INNER JOIN estudiantes e ON cm.id_estudiante = e.id
             INNER JOIN personas p ON e.id_persona = p.id
             INNER JOIN grupos g ON cm.id_grupo = g.id
-            WHERE cm.anio = :anio
+            WHERE cm.anio = :anio AND cm.id_tenant = :id_tenant
             ORDER BY g.orden, p.primer_nombre
         ");
         $sentence->bindParam(':anio', $anio);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -157,17 +162,20 @@ class ContratosMatricula
             $id_usuario_genera = isset(Flight::request()->data['id_usuario_genera']) ? Flight::request()->data['id_usuario_genera'] : null;
             $acudientes = isset(Flight::request()->data['acudientes']) ? Flight::request()->data['acudientes'] : [];
 
+            $idNew = Uuid::generar();
             $sentence = $db->prepare("INSERT INTO contratos_matricula 
-                (id_estudiante, anio, id_grupo, valor_matricula, descuento_matricula, recargo_matricula, 
+                (id, id_tenant, id_estudiante, anio, id_grupo, valor_matricula, descuento_matricula, recargo_matricula, 
                  valor_pension, descuento_pension, recargo_pension, razon_descuento, razon_recargo,
                  numero_cuotas, cuotas_matricula, valor_total, fecha_firma, fecha_inicio, fecha_fin, lugar_firma, 
                  autoriza_imagenes, autoriza_pagare, observaciones, id_usuario_genera) 
                 VALUES 
-                (:id_estudiante, :anio, :id_grupo, :valor_matricula, :descuento_matricula, :recargo_matricula,
+                (:id, :id_tenant, :id_estudiante, :anio, :id_grupo, :valor_matricula, :descuento_matricula, :recargo_matricula,
                  :valor_pension, :descuento_pension, :recargo_pension, :razon_descuento, :razon_recargo,
                  :numero_cuotas, :cuotas_matricula, :valor_total, :fecha_firma, :fecha_inicio, :fecha_fin, :lugar_firma, 
                  :autoriza_imagenes, :autoriza_pagare, :observaciones, :id_usuario_genera)");
             
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_estudiante', $id_estudiante);
             $sentence->bindParam(':anio', $anio);
             $sentence->bindParam(':id_grupo', $id_grupo);
@@ -192,11 +200,12 @@ class ContratosMatricula
             $sentence->bindParam(':id_usuario_genera', $id_usuario_genera);
             
             $sentence->execute();
-            $id_contrato = $db->lastInsertId();
+            $id_contrato = $idNew;
 
             if (!empty($acudientes)) {
                 $sentenceAcudiente = $db->prepare("INSERT INTO contratos_matricula_acudientes 
-                    (id_contrato, id_acudiente, orden) VALUES (:id_contrato, :id_acudiente, :orden)");
+                    (id_tenant, id_contrato, id_acudiente, orden) VALUES (:id_tenant, :id_contrato, :id_acudiente, :orden)");
+                $sentenceAcudiente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 
                 $orden = 1;
                 foreach ($acudientes as $id_acudiente) {
@@ -275,9 +284,10 @@ class ContratosMatricula
                 observaciones = :observaciones,
                 firmado = :firmado,
                 ruta_documento_firmado = :ruta_documento_firmado
-                WHERE id = :id");
+                WHERE id = :id AND id_tenant = :id_tenant");
 
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':anio', $anio);
             $sentence->bindParam(':id_grupo', $id_grupo);
             $sentence->bindParam(':valor_matricula', $valor_matricula);
@@ -304,12 +314,14 @@ class ContratosMatricula
             $sentence->execute();
 
             if (!empty($acudientes)) {
-                $sentenceDelete = $db->prepare("DELETE FROM contratos_matricula_acudientes WHERE id_contrato = :id");
+                $sentenceDelete = $db->prepare("DELETE FROM contratos_matricula_acudientes WHERE id_contrato = :id AND id_tenant = :id_tenant");
                 $sentenceDelete->bindParam(':id', $id);
+                $sentenceDelete->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentenceDelete->execute();
 
                 $sentenceAcudiente = $db->prepare("INSERT INTO contratos_matricula_acudientes 
-                    (id_contrato, id_acudiente, orden) VALUES (:id_contrato, :id_acudiente, :orden)");
+                    (id_tenant, id_contrato, id_acudiente, orden) VALUES (:id_tenant, :id_contrato, :id_acudiente, :orden)");
+                $sentenceAcudiente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 
                 $orden = 1;
                 foreach ($acudientes as $id_acudiente) {
@@ -344,9 +356,10 @@ class ContratosMatricula
             $sentence = $db->prepare("UPDATE contratos_matricula SET 
                 firmado = :firmado,
                 ruta_documento_firmado = :ruta_documento_firmado
-                WHERE id = :id");
+                WHERE id = :id AND id_tenant = :id_tenant");
             
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':firmado', $firmado);
             $sentence->bindParam(':ruta_documento_firmado', $ruta_documento_firmado);
             $sentence->execute();
@@ -367,8 +380,9 @@ class ContratosMatricula
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("UPDATE contratos_matricula SET activo = 0 WHERE id = :id");
+            $sentence = $db->prepare("UPDATE contratos_matricula SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id, 'activo' => 0));
@@ -386,12 +400,14 @@ class ContratosMatricula
         $db = Flight::db();
         $id = Flight::request()->data['id'];
         
-        $sentence = $db->prepare("DELETE FROM contratos_matricula_acudientes WHERE id_contrato = :id");
+        $sentence = $db->prepare("DELETE FROM contratos_matricula_acudientes WHERE id_contrato = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         
-        $sentence = $db->prepare("DELETE FROM contratos_matricula WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM contratos_matricula WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json(array('id' => $id));
@@ -415,10 +431,11 @@ class ContratosMatricula
             INNER JOIN personas p ON a.id_persona = p.id
             INNER JOIN tipos_acudiente ta ON a.id_tipo_acudiente = ta.id
             INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
-            WHERE cma.id_contrato = :id_contrato
+            WHERE cma.id_contrato = :id_contrato AND cma.id_tenant = :id_tenant
             ORDER BY cma.orden
         ");
         $sentence->bindParam(':id_contrato', $idContrato);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -435,9 +452,10 @@ class ContratosMatricula
             SELECT cm.*, g.nombre AS nombre_grupo
             FROM contratos_matricula cm
             INNER JOIN grupos g ON cm.id_grupo = g.id
-            WHERE cm.id = :id
+            WHERE cm.id = :id AND cm.id_tenant = :id_tenant
         ");
         $sentenceContrato->bindParam(':id', $idContrato);
+        $sentenceContrato->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentenceContrato->execute();
         $contrato = $sentenceContrato->fetch();
 
@@ -456,9 +474,10 @@ class ContratosMatricula
             INNER JOIN personas p ON e.id_persona = p.id
             INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
             LEFT JOIN ciudades c ON p.id_ciudad = c.id
-            WHERE e.id = :id_estudiante
+            WHERE e.id = :id_estudiante AND e.id_tenant = :id_tenant
         ");
         $sentenceEstudiante->bindParam(':id_estudiante', $contrato['id_estudiante']);
+        $sentenceEstudiante->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentenceEstudiante->execute();
         $estudiante = $sentenceEstudiante->fetch();
 
@@ -475,10 +494,11 @@ class ContratosMatricula
             INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
             INNER JOIN tipos_acudiente ta ON a.id_tipo_acudiente = ta.id
             LEFT JOIN ciudades c ON p.id_ciudad = c.id
-            WHERE cma.id_contrato = :id_contrato
+            WHERE cma.id_contrato = :id_contrato AND cma.id_tenant = :id_tenant
             ORDER BY cma.orden
         ");
         $sentenceAcudientes->bindParam(':id_contrato', $idContrato);
+        $sentenceAcudientes->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentenceAcudientes->execute();
         $acudientes = $sentenceAcudientes->fetchAll();
 
@@ -488,7 +508,9 @@ class ContratosMatricula
             WHERE clave IN ('representante_legal_nombre', 'representante_legal_cedula', 
                            'representante_legal_cedula_lugar', 'institucion_nombre', 'institucion_nit',
                            'institucion_telefono', 'institucion_email', 'institucion_web', 'institucion_direccion')
+            AND id_tenant = :id_tenant
         ");
+        $sentenceConfig->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentenceConfig->execute();
         $configRows = $sentenceConfig->fetchAll();
         
@@ -517,9 +539,10 @@ class ContratosMatricula
         $sentence = $db->prepare("
             SELECT id, fecha_firma, activo 
             FROM contratos_matricula 
-            WHERE id_estudiante = :id_estudiante AND anio = :anio AND activo = 1
+            WHERE id_estudiante = :id_estudiante AND anio = :anio AND activo = 1 AND id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':anio', $anio);
         $sentence->execute();
         $response = $sentence->fetch();
@@ -543,9 +566,10 @@ class ContratosMatricula
             $sentence = $db->prepare("UPDATE contratos_matricula SET 
                 firmado = 0,
                 ruta_documento_firmado = NULL
-                WHERE id = :id");
+                WHERE id = :id AND id_tenant = :id_tenant");
             
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id, 'firmado' => 0, 'mensaje' => 'Contrato desmarcado exitosamente'));

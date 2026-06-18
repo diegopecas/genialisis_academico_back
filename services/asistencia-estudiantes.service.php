@@ -13,7 +13,8 @@ class AsistenciaEstudiantes
     {
         self::setTimeZone();
         $db = Flight::db();
-        $sentence = $db->prepare("select id, id_estudiante, fecha_ingreso, fecha_salida, observacion_ingreso, observacion_salida from asistencia_estudiantes");
+        $sentence = $db->prepare("select id, id_estudiante, fecha_ingreso, fecha_salida, observacion_ingreso, observacion_salida from asistencia_estudiantes where id_tenant = :id_tenant");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -23,8 +24,9 @@ class AsistenciaEstudiantes
     {
         self::setTimeZone();
         $db = Flight::db();
-        $sentence = $db->prepare("select id, id_estudiante, fecha_ingreso, fecha_salida, observacion_ingreso, observacion_salida from asistencia_estudiantes where id = :id");
+        $sentence = $db->prepare("select id, id_estudiante, fecha_ingreso, fecha_salida, observacion_ingreso, observacion_salida from asistencia_estudiantes where id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -34,8 +36,9 @@ class AsistenciaEstudiantes
     {
         self::setTimeZone();
         $db = Flight::db();
-        $sentence = $db->prepare("select id, id_estudiante, fecha_ingreso, fecha_salida, observacion_ingreso, observacion_salida from asistencia_estudiantes where id_estudiante = :id_estudiante");
+        $sentence = $db->prepare("select id, id_estudiante, fecha_ingreso, fecha_salida, observacion_ingreso, observacion_salida from asistencia_estudiantes where id_estudiante = :id_estudiante AND id_tenant = :id_tenant");
         $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -49,8 +52,9 @@ class AsistenciaEstudiantes
         from asistencia_estudiantes ae
         inner join estudiantes e on ae.id_estudiante = e.id
         inner join personas p on e.id_persona = p.id
-        where DATE(ae.fecha_ingreso) = CURDATE()
+        where DATE(ae.fecha_ingreso) = CURDATE() and ae.id_tenant = :id_tenant
         order by p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -64,8 +68,9 @@ class AsistenciaEstudiantes
         from asistencia_estudiantes ae
         inner join estudiantes e on ae.id_estudiante = e.id
         inner join personas p on e.id_persona = p.id
-        where DATE(ae.fecha_salida) = CURDATE()
+        where DATE(ae.fecha_salida) = CURDATE() and ae.id_tenant = :id_tenant
         order by p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -83,10 +88,14 @@ class AsistenciaEstudiantes
         where e.id not in (select ae.id_estudiante
         from asistencia_estudiantes ae 
         where DATE(ae.fecha_ingreso) = CURDATE()
-        and ae.fecha_salida is null)
+        and ae.fecha_salida is null
+        and ae.id_tenant = :id_tenant_sub)
         and exg.activo = 1
         and e.activo = 1
+        and e.id_tenant = :id_tenant
         order by p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_sub', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -105,7 +114,9 @@ class AsistenciaEstudiantes
         where DATE(ae.fecha_ingreso) = CURDATE()
         and ae.fecha_salida is null
         and exg.activo = 1
+        and ae.id_tenant = :id_tenant
         order by p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -118,12 +129,15 @@ class AsistenciaEstudiantes
         $id_estudiante = Flight::request()->data['id_estudiante'];
         $observacion = Flight::request()->data['observacion'];
         $id_usuario_ingreso = Flight::request()->data['id_usuario'];
-        $sentence = $db->prepare("insert into asistencia_estudiantes(id_estudiante, fecha_ingreso, observacion_ingreso, id_usuario_ingreso) values (:id_estudiante, NOW(), :observacion, :id_usuario_ingreso)");
+        $idNew = Uuid::generar();
+        $sentence = $db->prepare("insert into asistencia_estudiantes(id, id_tenant, id_estudiante, fecha_ingreso, observacion_ingreso, id_usuario_ingreso) values (:id, :id_tenant, :id_estudiante, NOW(), :observacion, :id_usuario_ingreso)");
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
         $sentence->bindParam(':observacion', $observacion);
         $sentence->bindParam(':id_usuario_ingreso', $id_usuario_ingreso);
         $sentence->execute();
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(array('id' => $id));
     }
 
@@ -134,7 +148,8 @@ class AsistenciaEstudiantes
         $id = Flight::request()->data['id'];
         $observacion = Flight::request()->data['observacion'];
         $id_usuario_salida = Flight::request()->data['id_usuario'];
-        $sentence = $db->prepare("update asistencia_estudiantes set fecha_salida = NOW(), observacion_salida = :observacion, id_usuario_salida = :id_usuario_salida where id = :id");
+        $sentence = $db->prepare("update asistencia_estudiantes set fecha_salida = NOW(), observacion_salida = :observacion, id_usuario_salida = :id_usuario_salida where id = :id AND id_tenant = :id_tenant");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':observacion', $observacion);
         $sentence->bindParam(':id', $id);
         $sentence->bindParam(':id_usuario_salida', $id_usuario_salida);
@@ -147,8 +162,9 @@ class AsistenciaEstudiantes
         self::setTimeZone();
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("delete from asistencia_estudiantes where id = :id");
+        $sentence = $db->prepare("delete from asistencia_estudiantes where id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }
@@ -171,9 +187,11 @@ class AsistenciaEstudiantes
                 INNER JOIN estudiantes e ON ae.id_estudiante = e.id
                 INNER JOIN personas p ON e.id_persona = p.id
                 WHERE ae.id_estudiante = :id_estudiante 
-                AND DATE(ae.fecha_ingreso) = :fecha";
+                AND DATE(ae.fecha_ingreso) = :fecha
+                AND ae.id_tenant = :id_tenant";
 
             $stmt = $db->prepare($sql);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_estudiante', $id_estudiante);
             $stmt->bindParam(':fecha', $fecha);
             $stmt->execute();
@@ -246,10 +264,12 @@ class AsistenciaEstudiantes
         INNER JOIN dias_semana ds ON c.id_dia_semana = ds.id
         WHERE ae.id_estudiante = :id_estudiante 
         AND DATE(ae.fecha_ingreso) BETWEEN :fecha_inicio AND :fecha_fin
+        AND ae.id_tenant = :id_tenant
         AND c.id_tipo_dia IN (1, 3)
         ORDER BY ae.fecha_ingreso";
 
             $stmt = $db->prepare($sql);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_estudiante', $id_estudiante);
             $stmt->bindParam(':fecha_inicio', $fecha_inicio);
             $stmt->bindParam(':fecha_fin', $fecha_fin);
@@ -296,9 +316,11 @@ class AsistenciaEstudiantes
         INNER JOIN dias_semana ds ON c.id_dia_semana = ds.id
         WHERE ae.id_estudiante = :id_estudiante
         AND DATE(ae.fecha_ingreso) BETWEEN :fecha_inicio AND :fecha_fin
+        AND ae.id_tenant = :id_tenant
         AND c.id_tipo_dia IN (1, 3)";
 
         $stmt_asistencia = $db->prepare($sql_asistencia);
+        $stmt_asistencia->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt_asistencia->bindParam(':id_estudiante', $id_estudiante);
         $stmt_asistencia->bindParam(':fecha_inicio', $fecha_inicio);
         $stmt_asistencia->bindParam(':fecha_fin', $fecha_fin);
@@ -353,12 +375,14 @@ class AsistenciaEstudiantes
         INNER JOIN asistencia_estudiantes ae ON eg.id_estudiante = ae.id_estudiante
         WHERE g.id = :id_grupo
         AND DATE(ae.fecha_ingreso) BETWEEN :fecha_inicio AND :fecha_fin
+        AND g.id_tenant = :id_tenant
         GROUP BY g.id, g.nombre";
 
             $stmt = $db->prepare($sql);
             $stmt->bindParam(':id_grupo', $id_grupo);
             $stmt->bindParam(':fecha_inicio', $fecha_inicio);
             $stmt->bindParam(':fecha_fin', $fecha_fin);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             $resultado = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -497,7 +521,7 @@ class AsistenciaEstudiantes
         LEFT JOIN personas p_ui ON u_ing.id_persona = p_ui.id
         LEFT JOIN usuarios u_sal ON ae.id_usuario_salida = u_sal.id
         LEFT JOIN personas p_us ON u_sal.id_persona = p_us.id
-        WHERE e.activo = 1";
+        WHERE e.activo = 1 AND e.id_tenant = :id_tenant";
 
             $sql .= " ORDER BY 
             DATE(ae.fecha_ingreso) DESC,
@@ -511,6 +535,7 @@ class AsistenciaEstudiantes
             p.primer_apellido";
 
             $stmt = $db->prepare($sql);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':fecha_inicio', $fecha_inicio);
             $stmt->bindParam(':fecha_fin', $fecha_fin);
             $stmt->execute();
@@ -588,9 +613,11 @@ class AsistenciaEstudiantes
                 INNER JOIN calendarios c ON DATE(ae.fecha_ingreso) = c.fecha
                 INNER JOIN dias_semana ds ON c.id_dia_semana = ds.id
                 WHERE DATE(ae.fecha_ingreso) BETWEEN :fecha_inicio AND :fecha_fin
+                AND ae.id_tenant = :id_tenant
                 AND c.id_tipo_dia IN (1, 3)";
 
         $stmt = $db->prepare($sql);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->bindParam(':fecha_inicio', $fecha_inicio);
         $stmt->bindParam(':fecha_fin', $fecha_fin);
         $stmt->execute();
@@ -686,7 +713,7 @@ class AsistenciaEstudiantes
         INNER JOIN personas p ON e.id_persona = p.id
         INNER JOIN estudiantes_x_grupos exg ON e.id = exg.id_estudiante AND exg.activo = 1
         INNER JOIN grupos g ON exg.id_grupo = g.id
-        WHERE e.activo = 1
+        WHERE e.activo = 1 AND e.id_tenant = :id_tenant
         ORDER BY g.nombre, p.primer_nombre, p.segundo_nombre, p.primer_apellido";
 
             $stmt = $db->prepare($sql);
@@ -699,6 +726,7 @@ class AsistenciaEstudiantes
             $stmt->bindParam(':fecha_inicio_semana', $fecha_inicio_semana);
             $stmt->bindParam(':fecha_inicio_mes', $fecha_inicio_mes);
             $stmt->bindParam(':fecha_30_dias_atras', $fecha_30_dias_atras);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             $indicadores = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -750,9 +778,11 @@ class AsistenciaEstudiantes
         $sql = "SELECT MAX(DATE(fecha_ingreso)) as ultima_fecha
             FROM asistencia_estudiantes 
             WHERE id_estudiante = :id_estudiante 
-            AND DATE(fecha_ingreso) < :fecha_referencia";
+            AND DATE(fecha_ingreso) < :fecha_referencia
+            AND id_tenant = :id_tenant";
 
         $stmt = $db->prepare($sql);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->bindParam(':id_estudiante', $id_estudiante);
         $stmt->bindParam(':fecha_referencia', $fecha_referencia);
         $stmt->execute();
@@ -761,8 +791,9 @@ class AsistenciaEstudiantes
         $ultima_fecha = $resultado['ultima_fecha'];
 
         if (!$ultima_fecha) {
-            $sql_fecha_ingreso = "SELECT fecha_ingreso FROM estudiantes WHERE id = :id_estudiante";
+            $sql_fecha_ingreso = "SELECT fecha_ingreso FROM estudiantes WHERE id = :id_estudiante AND id_tenant = :id_tenant";
             $stmt = $db->prepare($sql_fecha_ingreso);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_estudiante', $id_estudiante);
             $stmt->execute();
             $fecha_ingreso_estudiante = $stmt->fetch(PDO::FETCH_ASSOC)['fecha_ingreso'];
@@ -813,9 +844,10 @@ class AsistenciaEstudiantes
         TIME_FORMAT(AVG(TIME(ae.fecha_ingreso)), '%H:%i') as promedio_hora_ingreso,
         TIME_FORMAT(AVG(TIME(ae.fecha_salida)), '%H:%i') as promedio_hora_salida
     FROM asistencia_estudiantes ae
-    WHERE DATE(ae.fecha_ingreso) = :fecha";
+    WHERE DATE(ae.fecha_ingreso) = :fecha AND ae.id_tenant = :id_tenant";
 
         $stmt = $db->prepare($sql);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->bindParam(':fecha', $fecha);
         $stmt->bindParam(':hora_entrada', $hora_entrada);
         $stmt->bindParam(':hora_salida', $hora_salida);
@@ -877,9 +909,11 @@ class AsistenciaEstudiantes
             INNER JOIN calendarios c ON DATE(ae.fecha_ingreso) = c.fecha
             WHERE ae.id_estudiante = :id_estudiante
             AND DATE(ae.fecha_ingreso) BETWEEN :fecha_inicio AND :fecha_fin
-            AND c.id_tipo_dia = 1";
+            AND c.id_tipo_dia = 1
+            AND ae.id_tenant = :id_tenant";
 
         $stmt = $db->prepare($sql);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->bindParam(':id_estudiante', $id_estudiante);
         $stmt->bindParam(':fecha_inicio', $fecha_inicio);
         $stmt->bindParam(':fecha_fin', $fecha_fin);
@@ -912,9 +946,11 @@ class AsistenciaEstudiantes
             INNER JOIN grupos g ON exg.id_grupo = g.id
             WHERE DATE(ae.fecha_ingreso) = :fecha
             AND e.activo = 1
+            AND ae.id_tenant = :id_tenant
             ORDER BY g.nombre, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido";
 
             $stmt = $db->prepare($sql);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':fecha', $fecha);
             $stmt->execute();
 
@@ -1018,7 +1054,7 @@ class AsistenciaEstudiantes
         INNER JOIN personas p ON e.id_persona = p.id
         INNER JOIN estudiantes_x_grupos exg ON e.id = exg.id_estudiante AND exg.activo = 1
         INNER JOIN grupos g ON exg.id_grupo = g.id
-        WHERE e.activo = 1
+        WHERE e.activo = 1 AND e.id_tenant = :id_tenant
         ORDER BY g.nombre, p.primer_nombre, p.segundo_nombre, p.primer_apellido";
 
             $stmt = $db->prepare($sql);
@@ -1031,6 +1067,7 @@ class AsistenciaEstudiantes
             $stmt->bindParam(':fecha_inicio_semana', $fecha_inicio_semana);
             $stmt->bindParam(':fecha_inicio_mes', $fecha_inicio_mes);
             $stmt->bindParam(':fecha_30_dias_atras', $fecha_30_dias_atras);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             $indicadores = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -1072,9 +1109,11 @@ class AsistenciaEstudiantes
             INNER JOIN tipos_acudiente ta ON ta.id = a.id_tipo_acudiente
             INNER JOIN personas pa ON pa.id = a.id_persona
             WHERE e.activo = 1
+            AND e.id_tenant = :id_tenant
             ORDER BY e.id, ta.nombre";
 
             $stmt_acu = $db->prepare($sql_acudientes);
+            $stmt_acu->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt_acu->execute();
             $acudientes = $stmt_acu->fetchAll(PDO::FETCH_ASSOC);
 
@@ -1083,9 +1122,11 @@ class AsistenciaEstudiantes
                 id_estudiante, 
                 MAX(fecha_envio) as ultimo_recordatorio
             FROM historial_recordatorios_asistencia
+            WHERE id_tenant = :id_tenant
             GROUP BY id_estudiante";
 
             $stmt_ultimo = $db->prepare($sql_ultimo_recordatorio);
+            $stmt_ultimo->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt_ultimo->execute();
             $ultimos_recordatorios = $stmt_ultimo->fetchAll(PDO::FETCH_ASSOC);
 

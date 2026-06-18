@@ -13,8 +13,10 @@ class VisitasCompetencia
                 FROM visitas_competencia vc
                 LEFT JOIN tipos_inclinacion_decision tid ON vc.id_hacia_donde_se_inclinan = tid.id
                 INNER JOIN visitas v ON vc.id_visita = v.id
+                WHERE vc.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -35,8 +37,10 @@ class VisitasCompetencia
                 FROM visitas_competencia vc
                 LEFT JOIN tipos_inclinacion_decision tid ON vc.id_hacia_donde_se_inclinan = tid.id
                 WHERE vc.id = :id
+                AND vc.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -57,8 +61,10 @@ class VisitasCompetencia
                 FROM visitas_competencia vc
                 LEFT JOIN tipos_inclinacion_decision tid ON vc.id_hacia_donde_se_inclinan = tid.id
                 WHERE vc.id_visita = :id_visita
+                AND vc.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -76,14 +82,17 @@ class VisitasCompetencia
 
             $sentence = $db->prepare("
             INSERT INTO visitas_competencia (
-                id_visita, menciono_competencia, jardines_mencionados, que_les_gusto_competencia,
+                id, id_tenant, id_visita, menciono_competencia, jardines_mencionados, que_les_gusto_competencia,
                 por_que_nos_consideran, principal_competidor, id_hacia_donde_se_inclinan
             ) VALUES (
-                :id_visita, :menciono_competencia, :jardines_mencionados, :que_les_gusto_competencia,
+                :id, :id_tenant, :id_visita, :menciono_competencia, :jardines_mencionados, :que_les_gusto_competencia,
                 :por_que_nos_consideran, :principal_competidor, :id_hacia_donde_se_inclinan
             )
         ");
 
+            $id = Uuid::generar();
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $data['id_visita']);
             $sentence->bindParam(':menciono_competencia', $data['menciono_competencia']);
             $sentence->bindParam(':jardines_mencionados', $data['jardines_mencionados']);
@@ -93,7 +102,6 @@ class VisitasCompetencia
             $sentence->bindParam(':id_hacia_donde_se_inclinan', $data['id_hacia_donde_se_inclinan']);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             if ($dataParam !== null) {
                 return $id;
@@ -126,6 +134,7 @@ class VisitasCompetencia
                 principal_competidor = :principal_competidor,
                 id_hacia_donde_se_inclinan = :id_hacia_donde_se_inclinan
             WHERE id = :id
+            AND id_tenant = :id_tenant
         ");
 
             $sentence->bindParam(':id', $data['id']);
@@ -135,6 +144,7 @@ class VisitasCompetencia
             $sentence->bindParam(':por_que_nos_consideran', $data['por_que_nos_consideran']);
             $sentence->bindParam(':principal_competidor', $data['principal_competidor']);
             $sentence->bindParam(':id_hacia_donde_se_inclinan', $data['id_hacia_donde_se_inclinan']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
 
@@ -160,8 +170,9 @@ class VisitasCompetencia
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_competencia WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_competencia WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -181,8 +192,8 @@ class VisitasCompetencia
             $id_visita = $data['id_visita'];
 
             // Verificar si ya existe
-            $stmt = $db->prepare("SELECT id FROM visitas_competencia WHERE id_visita = :id_visita");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt = $db->prepare("SELECT id FROM visitas_competencia WHERE id_visita = :id_visita AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
             $existe = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($existe) {
@@ -219,10 +230,12 @@ class VisitasCompetencia
                     COUNT(*) as veces_mencionado
                 FROM visitas_competencia
                 WHERE principal_competidor IS NOT NULL AND principal_competidor != ''
+                AND id_tenant = :id_tenant
                 GROUP BY principal_competidor
                 ORDER BY veces_mencionado DESC
                 LIMIT 10
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);

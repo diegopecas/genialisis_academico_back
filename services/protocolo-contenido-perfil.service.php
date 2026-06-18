@@ -8,8 +8,10 @@ class ProtocoloContenidoPerfil
             SELECT pcp.*, pp.nombre as nombre_paso 
             FROM protocolo_contenido_perfil pcp
             INNER JOIN protocolo_pasos pp ON pcp.id_protocolo_paso = pp.id
+            WHERE pcp.id_tenant = :id_tenant
             ORDER BY pp.orden, pcp.perfil
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -18,8 +20,9 @@ class ProtocoloContenidoPerfil
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM protocolo_contenido_perfil WHERE id = :id");
+        $sentence = $db->prepare("SELECT * FROM protocolo_contenido_perfil WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -28,8 +31,9 @@ class ProtocoloContenidoPerfil
     public static function getByPaso($id_paso)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM protocolo_contenido_perfil WHERE id_protocolo_paso = :id_paso ORDER BY perfil");
+        $sentence = $db->prepare("SELECT * FROM protocolo_contenido_perfil WHERE id_protocolo_paso = :id_paso AND id_tenant = :id_tenant ORDER BY perfil");
         $sentence->bindParam(':id_paso', $id_paso);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -38,9 +42,10 @@ class ProtocoloContenidoPerfil
     public static function getByPasoYPerfil($id_paso, $perfil)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM protocolo_contenido_perfil WHERE id_protocolo_paso = :id_paso AND perfil = :perfil");
+        $sentence = $db->prepare("SELECT * FROM protocolo_contenido_perfil WHERE id_protocolo_paso = :id_paso AND perfil = :perfil AND id_tenant = :id_tenant");
         $sentence->bindParam(':id_paso', $id_paso);
         $sentence->bindParam(':perfil', $perfil);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -57,7 +62,10 @@ class ProtocoloContenidoPerfil
             $que_mostrar = isset(Flight::request()->data['que_mostrar']) ? Flight::request()->data['que_mostrar'] : null;
             $que_evitar = isset(Flight::request()->data['que_evitar']) ? Flight::request()->data['que_evitar'] : null;
 
-            $sentence = $db->prepare("INSERT INTO protocolo_contenido_perfil (id_protocolo_paso, perfil, puntos_enfatizar, frases_efectivas, que_mostrar, que_evitar) VALUES (:id_protocolo_paso, :perfil, :puntos_enfatizar, :frases_efectivas, :que_mostrar, :que_evitar)");
+            $id = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO protocolo_contenido_perfil (id, id_tenant, id_protocolo_paso, perfil, puntos_enfatizar, frases_efectivas, que_mostrar, que_evitar) VALUES (:id, :id_tenant, :id_protocolo_paso, :perfil, :puntos_enfatizar, :frases_efectivas, :que_mostrar, :que_evitar)");
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_protocolo_paso', $id_protocolo_paso);
             $sentence->bindParam(':perfil', $perfil);
             $sentence->bindParam(':puntos_enfatizar', $puntos_enfatizar);
@@ -66,7 +74,6 @@ class ProtocoloContenidoPerfil
             $sentence->bindParam(':que_evitar', $que_evitar);
             $sentence->execute();
 
-            $id = $db->lastInsertId();
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log("Error en protocolo_contenido_perfil new: " . $e->getMessage());
@@ -86,7 +93,7 @@ class ProtocoloContenidoPerfil
             $que_mostrar = isset(Flight::request()->data['que_mostrar']) ? Flight::request()->data['que_mostrar'] : null;
             $que_evitar = isset(Flight::request()->data['que_evitar']) ? Flight::request()->data['que_evitar'] : null;
 
-            $sentence = $db->prepare("UPDATE protocolo_contenido_perfil SET id_protocolo_paso = :id_protocolo_paso, perfil = :perfil, puntos_enfatizar = :puntos_enfatizar, frases_efectivas = :frases_efectivas, que_mostrar = :que_mostrar, que_evitar = :que_evitar WHERE id = :id");
+            $sentence = $db->prepare("UPDATE protocolo_contenido_perfil SET id_protocolo_paso = :id_protocolo_paso, perfil = :perfil, puntos_enfatizar = :puntos_enfatizar, frases_efectivas = :frases_efectivas, que_mostrar = :que_mostrar, que_evitar = :que_evitar WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id_protocolo_paso', $id_protocolo_paso);
             $sentence->bindParam(':perfil', $perfil);
             $sentence->bindParam(':puntos_enfatizar', $puntos_enfatizar);
@@ -94,6 +101,7 @@ class ProtocoloContenidoPerfil
             $sentence->bindParam(':que_mostrar', $que_mostrar);
             $sentence->bindParam(':que_evitar', $que_evitar);
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             self::getById($id);
@@ -109,8 +117,9 @@ class ProtocoloContenidoPerfil
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM protocolo_contenido_perfil WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM protocolo_contenido_perfil WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -127,9 +136,11 @@ class ProtocoloContenidoPerfil
             FROM protocolo_contenido_perfil pcp
             INNER JOIN protocolo_pasos pp ON pcp.id_protocolo_paso = pp.id
             WHERE pcp.perfil = :perfil
+            AND pcp.id_tenant = :id_tenant
             ORDER BY pp.orden
         ");
         $sentence->bindParam(':perfil', $perfil);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
         Flight::json($response);

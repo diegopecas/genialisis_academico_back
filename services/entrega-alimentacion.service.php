@@ -20,7 +20,7 @@ class EntregaAlimentacion
             }
 
             $fecha      = isset($data['fecha'])      ? $data['fecha']           : date('Y-m-d');
-            $id_horario = isset($data['id_horario']) ? (int)$data['id_horario'] : null;
+            $id_horario = isset($data['id_horario']) ? $data['id_horario'] : null;
 
             if (!$id_horario) {
                 Flight::json(['error' => 'Falta id_horario'], 400);
@@ -82,7 +82,8 @@ class EntregaAlimentacion
                     WHERE cpc.fecha = :fecha_diaria
                       AND cpc.id_horario_alimentacion = :id_horario_d
                       AND cpc.anulado = 0
-                      AND pc.id = 3";
+                      AND pc.id = 3
+                      AND cpc.id_tenant = :id_tenant_d";
 
             // Mensuales: mismo año/mes, solo presentes
             $sqlMensuales = $selectBase . "
@@ -91,12 +92,14 @@ class EntregaAlimentacion
                       AND cpc.id_horario_alimentacion = :id_horario_m
                       AND cpc.anulado = 0
                       AND pc.id = 2
-                      AND ae.id IS NOT NULL";
+                      AND ae.id IS NOT NULL
+                      AND cpc.id_tenant = :id_tenant_m";
 
             $stmtD = $db->prepare($sqlDiarios);
             $stmtD->bindValue(':fecha_ae',     $fecha);
             $stmtD->bindValue(':fecha_diaria', $fecha);
             $stmtD->bindValue(':id_horario_d', $id_horario);
+            $stmtD->bindValue(':id_tenant_d', TenantContext::id(), PDO::PARAM_INT);
             $stmtD->execute();
             $diarios = $stmtD->fetchAll(PDO::FETCH_ASSOC);
 
@@ -105,6 +108,7 @@ class EntregaAlimentacion
             $stmtM->bindValue(':anio',         $anio);
             $stmtM->bindValue(':mes',          $mes);
             $stmtM->bindValue(':id_horario_m', $id_horario);
+            $stmtM->bindValue(':id_tenant_m', TenantContext::id(), PDO::PARAM_INT);
             $stmtM->execute();
             $mensuales = $stmtM->fetchAll(PDO::FETCH_ASSOC);
 
@@ -157,8 +161,8 @@ class EntregaAlimentacion
             }
 
             $ids_cuentas  = isset($data['ids_cuentas'])  ? $data['ids_cuentas']  : [];
-            $id_usuario   = isset($data['id_usuario'])   ? (int)$data['id_usuario'] : null;
-            $id_horario   = isset($data['id_horario'])   ? (int)$data['id_horario'] : null;
+            $id_usuario   = isset($data['id_usuario'])   ? $data['id_usuario'] : null;
+            $id_horario   = isset($data['id_horario'])   ? $data['id_horario'] : null;
             $cuentasMenus = isset($data['cuentas_menus']) ? $data['cuentas_menus'] : [];
 
             if (empty($ids_cuentas)) {
@@ -169,16 +173,16 @@ class EntregaAlimentacion
             // Construir mapa id_cuenta → menús
             $mapaMenus = [];
             foreach ($cuentasMenus as $cm) {
-                $mapaMenus[(int)$cm['id_cuenta']] = $cm;
+                $mapaMenus[$cm['id_cuenta']] = $cm;
             }
 
             $db  = Flight::db();
             $now = date('Y-m-d H:i:s');
 
             $sql = "INSERT INTO entregas_alimentacion
-                        (id_cuenta_por_cobrar, id_horario_alimentacion, estado, fecha_hora_entrega,
+                        (id_tenant, id_cuenta_por_cobrar, id_horario_alimentacion, estado, fecha_hora_entrega,
                          id_usuario_entrega, id_menu_programado, id_menu_servido)
-                    VALUES (:id_cuenta, :id_horario, 1, :now, :id_usuario, :menu_prog, :menu_serv)
+                    VALUES (:id_tenant, :id_cuenta, :id_horario, 1, :now, :id_usuario, :menu_prog, :menu_serv)
                     ON DUPLICATE KEY UPDATE
                         estado = 1,
                         fecha_hora_entrega = :now2,
@@ -189,23 +193,24 @@ class EntregaAlimentacion
                         fecha_hora_anulacion = NULL";
 
             $stmt = $db->prepare($sql);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             foreach ($ids_cuentas as $id_cuenta) {
-                $id_cuenta_int = (int)$id_cuenta;
+                $id_cuenta_int = $id_cuenta;
                 $menu_prog = isset($mapaMenus[$id_cuenta_int]['id_menu_programado']) && $mapaMenus[$id_cuenta_int]['id_menu_programado']
-                    ? (int)$mapaMenus[$id_cuenta_int]['id_menu_programado'] : null;
+                    ? $mapaMenus[$id_cuenta_int]['id_menu_programado'] : null;
                 $menu_serv = isset($mapaMenus[$id_cuenta_int]['id_menu_servido']) && $mapaMenus[$id_cuenta_int]['id_menu_servido']
-                    ? (int)$mapaMenus[$id_cuenta_int]['id_menu_servido'] : null;
+                    ? $mapaMenus[$id_cuenta_int]['id_menu_servido'] : null;
 
                 $stmt->bindValue(':id_cuenta',   $id_cuenta_int);
                 $stmt->bindValue(':id_horario',  $id_horario);
                 $stmt->bindValue(':now',         $now);
                 $stmt->bindValue(':id_usuario',  $id_usuario);
-                $stmt->bindValue(':menu_prog',   $menu_prog, $menu_prog ? PDO::PARAM_INT : PDO::PARAM_NULL);
-                $stmt->bindValue(':menu_serv',   $menu_serv, $menu_serv ? PDO::PARAM_INT : PDO::PARAM_NULL);
+                $stmt->bindValue(':menu_prog',   $menu_prog, $menu_prog ? PDO::PARAM_STR : PDO::PARAM_NULL);
+                $stmt->bindValue(':menu_serv',   $menu_serv, $menu_serv ? PDO::PARAM_STR : PDO::PARAM_NULL);
                 $stmt->bindValue(':now2',        $now);
                 $stmt->bindValue(':id_usuario2', $id_usuario);
-                $stmt->bindValue(':menu_prog2',  $menu_prog, $menu_prog ? PDO::PARAM_INT : PDO::PARAM_NULL);
-                $stmt->bindValue(':menu_serv2',  $menu_serv, $menu_serv ? PDO::PARAM_INT : PDO::PARAM_NULL);
+                $stmt->bindValue(':menu_prog2',  $menu_prog, $menu_prog ? PDO::PARAM_STR : PDO::PARAM_NULL);
+                $stmt->bindValue(':menu_serv2',  $menu_serv, $menu_serv ? PDO::PARAM_STR : PDO::PARAM_NULL);
                 $stmt->execute();
             }
 
@@ -234,8 +239,8 @@ class EntregaAlimentacion
             }
 
             $ids_cuentas = isset($data['ids_cuentas']) ? $data['ids_cuentas'] : [];
-            $id_usuario  = isset($data['id_usuario'])  ? (int)$data['id_usuario']  : null;
-            $id_horario  = isset($data['id_horario'])  ? (int)$data['id_horario']  : null;
+            $id_usuario  = isset($data['id_usuario'])  ? $data['id_usuario']  : null;
+            $id_horario  = isset($data['id_horario'])  ? $data['id_horario']  : null;
 
             if (empty($ids_cuentas)) {
                 Flight::json(['error' => 'Faltan ids_cuentas'], 400);
@@ -245,8 +250,8 @@ class EntregaAlimentacion
             $db  = Flight::db();
             $now = date('Y-m-d H:i:s');
 
-            $sqlEntrega = "INSERT INTO entregas_alimentacion (id_cuenta_por_cobrar, id_horario_alimentacion, estado, fecha_hora_anulacion, id_usuario_anulacion)
-                           VALUES (:id_cuenta, :id_horario, 2, :now, :id_usuario)
+            $sqlEntrega = "INSERT INTO entregas_alimentacion (id_tenant, id_cuenta_por_cobrar, id_horario_alimentacion, estado, fecha_hora_anulacion, id_usuario_anulacion)
+                           VALUES (:id_tenant, :id_cuenta, :id_horario, 2, :now, :id_usuario)
                            ON DUPLICATE KEY UPDATE
                                estado = 2,
                                fecha_hora_anulacion = :now2,
@@ -258,13 +263,15 @@ class EntregaAlimentacion
                           SET anulado = 1,
                               fecha_anulacion = :now,
                               id_usuario_anulacion = :id_usuario
-                          WHERE id = :id_cuenta";
+                          WHERE id = :id_cuenta AND id_tenant = :id_tenant";
 
             $stmtEntrega = $db->prepare($sqlEntrega);
             $stmtCuenta  = $db->prepare($sqlCuenta);
+            $stmtEntrega->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtCuenta->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             foreach ($ids_cuentas as $id_cuenta) {
-                $stmtEntrega->bindValue(':id_cuenta',   (int)$id_cuenta);
+                $stmtEntrega->bindValue(':id_cuenta',   $id_cuenta);
                 $stmtEntrega->bindValue(':id_horario',  $id_horario);
                 $stmtEntrega->bindValue(':now',         $now);
                 $stmtEntrega->bindValue(':id_usuario',  $id_usuario);
@@ -274,7 +281,7 @@ class EntregaAlimentacion
 
                 $stmtCuenta->bindValue(':now',        $now);
                 $stmtCuenta->bindValue(':id_usuario', $id_usuario);
-                $stmtCuenta->bindValue(':id_cuenta',  (int)$id_cuenta);
+                $stmtCuenta->bindValue(':id_cuenta',  $id_cuenta);
                 $stmtCuenta->execute();
             }
 
@@ -320,17 +327,20 @@ class EntregaAlimentacion
             $sqlConteo = "SELECT cpc.id_producto_servicio, COUNT(*) AS total_entregas
                           FROM cuentas_por_cobrar cpc
                           WHERE cpc.id IN ($placeholders)
+                          AND cpc.id_tenant = ?
                           GROUP BY cpc.id_producto_servicio";
 
             $stmtConteo = $db->prepare($sqlConteo);
-            $stmtConteo->execute(array_map('intval', $ids_cuentas));
+            $paramsConteo = $ids_cuentas;
+            $paramsConteo[] = TenantContext::id();
+            $stmtConteo->execute($paramsConteo);
             $conteos = $stmtConteo->fetchAll(PDO::FETCH_ASSOC);
 
             // Para cada producto_servicio, buscar ingredientes via el menú
             $ingredientesTotales = [];
 
             foreach ($conteos as $conteo) {
-                $id_ps          = (int)$conteo['id_producto_servicio'];
+                $id_ps          = $conteo['id_producto_servicio'];
                 $total_entregas = (int)$conteo['total_entregas'];
 
                 $sqlIngredientes = "SELECT
@@ -347,15 +357,17 @@ class EntregaAlimentacion
                     INNER JOIN productos p ON p.id = pa.id_producto
                     LEFT JOIN unidades_medida um ON um.id = p.id_unidad_medida
                     WHERE mxps.id_producto_servicio = :id_ps
+                    AND mxps.id_tenant = :id_tenant
                     GROUP BY pa.id_producto, p.nombre, um.nombre, um.abreviatura, p.stock_actual";
 
                 $stmtIng = $db->prepare($sqlIngredientes);
                 $stmtIng->bindValue(':id_ps', $id_ps);
+                $stmtIng->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtIng->execute();
                 $ingredientes = $stmtIng->fetchAll(PDO::FETCH_ASSOC);
 
                 foreach ($ingredientes as $ing) {
-                    $id_prod = (int)$ing['id_producto'];
+                    $id_prod = $ing['id_producto'];
                     $cantidad_total = floatval($ing['cantidad_por_porcion']) * $total_entregas;
 
                     if (isset($ingredientesTotales[$id_prod])) {
@@ -407,9 +419,9 @@ class EntregaAlimentacion
             }
 
             $ids_cuentas            = isset($data['ids_cuentas'])            ? $data['ids_cuentas']               : [];
-            $id_horario             = isset($data['id_horario'])             ? (int)$data['id_horario']           : null;
-            $id_concepto_movimiento = isset($data['id_concepto_movimiento']) ? (int)$data['id_concepto_movimiento'] : null;
-            $id_usuario             = isset($data['id_usuario'])             ? (int)$data['id_usuario']           : null;
+            $id_horario             = isset($data['id_horario'])             ? $data['id_horario']           : null;
+            $id_concepto_movimiento = isset($data['id_concepto_movimiento']) ? $data['id_concepto_movimiento'] : null;
+            $id_usuario             = isset($data['id_usuario'])             ? $data['id_usuario']           : null;
             $observaciones          = isset($data['observaciones'])          ? $data['observaciones']             : '';
             $detalle                = isset($data['detalle'])                ? $data['detalle']                   : [];
 
@@ -424,42 +436,49 @@ class EntregaAlimentacion
             $db->beginTransaction();
 
             // 1. Crear movimiento de salida en estado 3 (registrado)
+            $idMovimiento = Uuid::generar();
             $stmtMov = $db->prepare("INSERT INTO movimientos_productos
-                        (fecha_movimiento, id_concepto_movimiento, observaciones, id_usuario_registro, fecha_registro, id_estado)
-                       VALUES (:fecha, :id_concepto, :obs, :id_usuario, :now, 3)");
+                        (id, id_tenant, fecha_movimiento, id_concepto_movimiento, observaciones, id_usuario_registro, fecha_registro, id_estado)
+                       VALUES (:id, :id_tenant, :fecha, :id_concepto, :obs, :id_usuario, :now, 3)");
+            $stmtMov->bindValue(':id',         $idMovimiento);
+            $stmtMov->bindValue(':id_tenant',  TenantContext::id(), PDO::PARAM_INT);
             $stmtMov->bindValue(':fecha',      $now);
             $stmtMov->bindValue(':id_concepto', $id_concepto_movimiento);
             $stmtMov->bindValue(':obs',         $observaciones);
             $stmtMov->bindValue(':id_usuario',  $id_usuario);
             $stmtMov->bindValue(':now',         $now);
             $stmtMov->execute();
-            $id_movimiento = $db->lastInsertId();
+            $id_movimiento = $idMovimiento;
 
             // 2. Insertar detalle + actualizar stock + guardar comparativa
             $stmtDet = $db->prepare("INSERT INTO movimientos_productos_detalle
-                            (id_movimiento, id_producto, cantidad, stock_anterior, precio_unitario)
-                           VALUES (:id_mov, :id_prod, :cantidad, :stock_ant, :precio)");
+                            (id_tenant, id_movimiento, id_producto, cantidad, stock_anterior, precio_unitario)
+                           VALUES (:id_tenant, :id_mov, :id_prod, :cantidad, :stock_ant, :precio)");
+            $stmtDet->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $stmtStock = $db->prepare("UPDATE productos
                          SET stock_actual = stock_actual - :cantidad,
                              stock_anterior = stock_actual,
                              id_ultimo_movimiento = :id_mov,
                              fecha_ultimo_movimiento = :now
-                         WHERE id = :id_prod");
+                         WHERE id = :id_prod AND id_tenant = :id_tenant");
+            $stmtStock->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $stmtComp = $db->prepare("INSERT INTO entrega_alimentacion_inventario
-                            (id_movimiento_productos, id_producto, cantidad_teorica, cantidad_real, id_unidad_medida)
-                        VALUES (:id_mov, :id_prod, :teorica, :real, :id_unidad)");
+                            (id_tenant, id_movimiento_productos, id_producto, cantidad_teorica, cantidad_real, id_unidad_medida)
+                        VALUES (:id_tenant, :id_mov, :id_prod, :teorica, :real, :id_unidad)");
+            $stmtComp->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             foreach ($detalle as $item) {
-                $id_producto      = (int)$item['id_producto'];
+                $id_producto      = $item['id_producto'];
                 $cantidad_real    = floatval($item['cantidad_real']);
                 $cantidad_teorica = floatval($item['cantidad_teorica']);
                 $precio_unitario  = floatval($item['precio_unitario'] ?? 0);
 
                 // Obtener stock anterior e id_unidad_medida real del producto
-                $stmtSA = $db->prepare("SELECT stock_actual, id_unidad_medida FROM productos WHERE id = :id");
+                $stmtSA = $db->prepare("SELECT stock_actual, id_unidad_medida FROM productos WHERE id = :id AND id_tenant = :id_tenant");
                 $stmtSA->bindValue(':id', $id_producto);
+                $stmtSA->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtSA->execute();
                 $prodRow       = $stmtSA->fetch(PDO::FETCH_ASSOC);
                 $stock_anterior = floatval($prodRow['stock_actual'] ?? 0);
@@ -491,14 +510,15 @@ class EntregaAlimentacion
 
             // 3. Asociar el movimiento a las entregas existentes
             $stmtEnt = $db->prepare("INSERT INTO entregas_alimentacion
-                            (id_cuenta_por_cobrar, id_horario_alimentacion, estado, fecha_hora_entrega,
+                            (id_tenant, id_cuenta_por_cobrar, id_horario_alimentacion, estado, fecha_hora_entrega,
                              id_usuario_entrega, id_movimiento_productos)
-                           VALUES (:id_cuenta, :id_horario, 1, :now, :id_usuario, :id_mov)
+                           VALUES (:id_tenant, :id_cuenta, :id_horario, 1, :now, :id_usuario, :id_mov)
                            ON DUPLICATE KEY UPDATE
                                id_movimiento_productos = :id_mov2");
+            $stmtEnt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             foreach ($ids_cuentas as $id_cuenta) {
-                $stmtEnt->bindValue(':id_cuenta',  (int)$id_cuenta);
+                $stmtEnt->bindValue(':id_cuenta',  $id_cuenta);
                 $stmtEnt->bindValue(':id_horario', $id_horario);
                 $stmtEnt->bindValue(':now',        $now);
                 $stmtEnt->bindValue(':id_usuario', $id_usuario);
@@ -558,10 +578,11 @@ class EntregaAlimentacion
                 SELECT mm.id_menu
                 FROM menu_minutas mm
                 INNER JOIN menus m ON m.id = mm.id_menu AND m.activo = 1
-                WHERE mm.semana = :semana AND mm.dia = :dia
+                WHERE mm.semana = :semana AND mm.dia = :dia AND mm.id_tenant = :id_tenant
             ");
             $stmtMinuta->bindValue(':semana', $semanaMes);
             $stmtMinuta->bindValue(':dia',    $diaSemana);
+            $stmtMinuta->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtMinuta->execute();
             $idsMinuta = $stmtMinuta->fetchAll(PDO::FETCH_COLUMN);
             $sinMinuta = empty($idsMinuta);
@@ -574,15 +595,17 @@ class EntregaAlimentacion
                 FROM menus m
                 LEFT JOIN clasificacion_menus cm ON cm.id = m.id_clasificacion_menu
                 WHERE m.activo = 1
+                AND m.id_tenant = :id_tenant
                 ORDER BY m.nombre
             ");
+            $stmtAll->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtAll->execute();
             $todosMenus = $stmtAll->fetchAll(PDO::FETCH_ASSOC);
 
             // Para cada menú traer productos_servicios e ingredientes
             $sqlPS = "SELECT mxps.id_producto_servicio
                       FROM menu_x_productos_servicios mxps
-                      WHERE mxps.id_menu = :id_menu";
+                      WHERE mxps.id_menu = :id_menu AND mxps.id_tenant = :id_tenant";
 
             $sqlIngredientes = "SELECT
                         pa.id_producto,
@@ -597,14 +620,17 @@ class EntregaAlimentacion
                     INNER JOIN productos p ON p.id = pa.id_producto
                     LEFT JOIN unidades_medida um ON um.id = p.id_unidad_medida
                     WHERE mxi.id_menu = :id_menu
+                    AND mxi.id_tenant = :id_tenant
                     GROUP BY pa.id_producto, p.nombre, um.nombre, um.abreviatura, p.stock_actual
                     ORDER BY p.nombre";
 
             $stmtPS  = $db->prepare($sqlPS);
             $stmtIng = $db->prepare($sqlIngredientes);
+            $stmtPS->bindValue(':id_tenant',  TenantContext::id(), PDO::PARAM_INT);
+            $stmtIng->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             foreach ($todosMenus as &$menu) {
-                $id_menu = (int)$menu['id_menu'];
+                $id_menu = $menu['id_menu'];
 
                 $stmtPS->bindValue(':id_menu', $id_menu);
                 $stmtPS->execute();
@@ -655,7 +681,7 @@ class EntregaAlimentacion
             }
 
             $fecha      = isset($data['fecha'])      ? $data['fecha']           : date('Y-m-d');
-            $id_horario = isset($data['id_horario']) ? (int)$data['id_horario'] : null;
+            $id_horario = isset($data['id_horario']) ? $data['id_horario'] : null;
 
             if (!$id_horario) {
                 Flight::json(['error' => 'Falta id_horario'], 400);
@@ -708,6 +734,7 @@ class EntregaAlimentacion
                       AND cpc.id_horario_alimentacion = :id_horario
                       AND cpc.anulado = 0
                       AND pc.id = 3
+                      AND cpc.id_tenant = :id_tenant
                     ORDER BY g.orden, ps.nombre, p.primer_nombre";
 
             // Mensuales presentes
@@ -719,11 +746,13 @@ class EntregaAlimentacion
                       AND cpc.id_horario_alimentacion = :id_horario_m
                       AND cpc.anulado = 0
                       AND pc.id = 2
+                      AND cpc.id_tenant = :id_tenant
                     ORDER BY g.orden, ps.nombre, p.primer_nombre";
 
             $stmtD = $db->prepare($sqlDiarios);
             $stmtD->bindValue(':fecha',      $fecha);
             $stmtD->bindValue(':id_horario', $id_horario);
+            $stmtD->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtD->execute();
             $diarios = $stmtD->fetchAll(PDO::FETCH_ASSOC);
 
@@ -732,6 +761,7 @@ class EntregaAlimentacion
             $stmtM->bindValue(':anio',       $anio);
             $stmtM->bindValue(':mes',        $mes);
             $stmtM->bindValue(':id_horario_m', $id_horario);
+            $stmtM->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtM->execute();
             $mensuales = $stmtM->fetchAll(PDO::FETCH_ASSOC);
 
@@ -794,7 +824,7 @@ class EntregaAlimentacion
             }
 
             $fecha      = isset($data['fecha'])      ? $data['fecha']           : date('Y-m-d');
-            $id_horario = isset($data['id_horario']) ? (int)$data['id_horario'] : null;
+            $id_horario = isset($data['id_horario']) ? $data['id_horario'] : null;
 
             $db = Flight::db();
 
@@ -813,12 +843,14 @@ class EntregaAlimentacion
                     LEFT JOIN productos p ON p.id = mpd.id_producto
                     WHERE ea.id_horario_alimentacion = :id_horario
                       AND DATE(ea.fecha_hora_entrega) = :fecha
+                      AND ea.id_tenant = :id_tenant
                     GROUP BY mp.id, mp.fecha_movimiento, cm.nombre, mp.observaciones
                     ORDER BY mp.fecha_movimiento DESC";
 
             $stmt = $db->prepare($sql);
             $stmt->bindValue(':id_horario', $id_horario);
             $stmt->bindValue(':fecha',      $fecha);
+            $stmt->bindValue(':id_tenant',  TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -838,15 +870,17 @@ class EntregaAlimentacion
                         ON eai.id_movimiento_productos = mpd.id_movimiento
                         AND eai.id_producto = mpd.id_producto
                     WHERE mpd.id_movimiento = :id_movimiento
+                    AND mpd.id_tenant = :id_tenant
                     ORDER BY p.nombre";
 
             $stmtDet = $db->prepare($sqlDetalle);
+            $stmtDet->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             foreach ($rows as &$r) {
                 $r['id_movimiento']   = (string)$r['id_movimiento'];
                 $r['total_productos'] = (int)$r['total_productos'];
 
-                $stmtDet->bindValue(':id_movimiento', (int)$r['id_movimiento']);
+                $stmtDet->bindValue(':id_movimiento', $r['id_movimiento']);
                 $stmtDet->execute();
                 $detalle = $stmtDet->fetchAll(PDO::FETCH_ASSOC);
                 foreach ($detalle as &$d) {

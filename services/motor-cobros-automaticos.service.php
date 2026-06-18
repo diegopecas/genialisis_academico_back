@@ -51,10 +51,11 @@ class MotorCobrosAutomaticos
             $stmtHorario = $db->prepare("
                 SELECT hora_entrada, hora_salida 
                 FROM horarios_estudiante 
-                WHERE id_estudiante = :id_estudiante AND id_dia_semana = :dia_semana
+                WHERE id_estudiante = :id_estudiante AND id_dia_semana = :dia_semana AND id_tenant = :id_tenant
             ");
             $stmtHorario->bindParam(':id_estudiante', $id_estudiante);
             $stmtHorario->bindParam(':dia_semana', $dia_semana);
+            $stmtHorario->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtHorario->execute();
             $horario = $stmtHorario->fetch(PDO::FETCH_ASSOC);
 
@@ -76,8 +77,9 @@ class MotorCobrosAutomaticos
             $horaEntradaSegundos = self::horaASegundos($horaEntradaProgramada);
 
             // Obtener id_persona del estudiante (necesario para validar cuentas)
-            $stmtPersona = $db->prepare("SELECT id_persona FROM estudiantes WHERE id = :id_estudiante");
+            $stmtPersona = $db->prepare("SELECT id_persona FROM estudiantes WHERE id = :id_estudiante AND id_tenant = :id_tenant");
             $stmtPersona->bindParam(':id_estudiante', $id_estudiante);
+            $stmtPersona->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtPersona->execute();
             $personaRow = $stmtPersona->fetch(PDO::FETCH_ASSOC);
             $id_persona = $personaRow ? $personaRow['id_persona'] : null;
@@ -91,6 +93,7 @@ class MotorCobrosAutomaticos
                 FROM convenios_estudiante ce
                 INNER JOIN convenios c ON c.id = ce.id_convenio AND c.activo = 1
                 WHERE ce.id_estudiante = :id_estudiante
+                  AND ce.id_tenant = :id_tenant
                   AND ce.fecha_inicio <= :fecha
                   AND (ce.fecha_fin IS NULL OR ce.fecha_fin >= :fecha2)
                   AND EXISTS (
@@ -102,6 +105,7 @@ class MotorCobrosAutomaticos
                   )
             ");
             $stmtConvenios->bindParam(':id_estudiante', $id_estudiante);
+            $stmtConvenios->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtConvenios->bindParam(':fecha', $fecha);
             $stmtConvenios->bindParam(':fecha2', $fecha);
             $stmtConvenios->bindParam(':id_persona', $id_persona);
@@ -113,9 +117,10 @@ class MotorCobrosAutomaticos
             // Obtener grupo del estudiante
             $stmtGrupo = $db->prepare("
                 SELECT id_grupo FROM estudiantes_x_grupos 
-                WHERE id_estudiante = :id_estudiante AND activo = 1
+                WHERE id_estudiante = :id_estudiante AND activo = 1 AND id_tenant = :id_tenant
             ");
             $stmtGrupo->bindParam(':id_estudiante', $id_estudiante);
+            $stmtGrupo->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtGrupo->execute();
             $grupoRow = $stmtGrupo->fetch(PDO::FETCH_ASSOC);
             $id_grupo = $grupoRow ? $grupoRow['id_grupo'] : null;
@@ -125,16 +130,18 @@ class MotorCobrosAutomaticos
             $stmtMatricula = $db->prepare("
                 SELECT COUNT(*) as tiene_matricula
                 FROM contratos_matricula 
-                WHERE id_estudiante = :id_estudiante AND anio = :anio AND activo = 1
+                WHERE id_estudiante = :id_estudiante AND anio = :anio AND activo = 1 AND id_tenant = :id_tenant
             ");
             $stmtMatricula->bindParam(':id_estudiante', $id_estudiante);
             $stmtMatricula->bindParam(':anio', $anio_actual);
+            $stmtMatricula->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtMatricula->execute();
             $matriculaRow = $stmtMatricula->fetch(PDO::FETCH_ASSOC);
             $tiene_matricula = $matriculaRow['tiene_matricula'] > 0;
 
             // Cargar ids de tipos_evento_cobro por nombre para no depender de ids fijos
-            $stmtTipos = $db->prepare("SELECT id, nombre FROM tipos_evento_cobro WHERE activo = 1");
+            $stmtTipos = $db->prepare("SELECT id, nombre FROM tipos_evento_cobro WHERE activo = 1 AND id_tenant = :id_tenant");
+            $stmtTipos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtTipos->execute();
             $tiposEventoMap = [];
             foreach ($stmtTipos->fetchAll(PDO::FETCH_ASSOC) as $te) {
@@ -193,10 +200,11 @@ class MotorCobrosAutomaticos
                 INNER JOIN productos_servicios ps ON ps.id = r.id_producto_servicio
                 WHERE r.activo = 1
                   AND r.id_tipo_evento IN ($placeholders)
+                  AND r.id_tenant = ?
                 ORDER BY r.id_tipo_evento, r.prioridad
             ";
             $stmtReglas = $db->prepare($sql);
-            $stmtReglas->execute($tipos_evento);
+            $stmtReglas->execute(array_merge($tipos_evento, [TenantContext::id()]));
             $reglas = $stmtReglas->fetchAll(PDO::FETCH_ASSOC);
 
             $cobrosAplicables = [];
@@ -380,8 +388,9 @@ class MotorCobrosAutomaticos
                 return;
             }
 
-            $stmtPersona = $db->prepare("SELECT id_persona FROM estudiantes WHERE id = :id_estudiante");
+            $stmtPersona = $db->prepare("SELECT id_persona FROM estudiantes WHERE id = :id_estudiante AND id_tenant = :id_tenant");
             $stmtPersona->bindParam(':id_estudiante', $id_estudiante);
+            $stmtPersona->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtPersona->execute();
             $personaRow = $stmtPersona->fetch(PDO::FETCH_ASSOC);
             if (!$personaRow) {
@@ -396,24 +405,27 @@ class MotorCobrosAutomaticos
 
             $stmtCuenta = $db->prepare("
                 INSERT INTO cuentas_por_cobrar 
-                (id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion)
-                VALUES (:id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario, 0, NULL, NULL, NULL)
+                (id, id_tenant, id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion)
+                VALUES (:id, :id_tenant, :id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario, 0, NULL, NULL, NULL)
             ");
+            $stmtCuenta->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $stmtHistorial = $db->prepare("
                 INSERT INTO cobros_automaticos_historial 
-                (id_regla_cobro, id_asistencia_estudiante, id_cuenta_por_cobrar, id_usuario, detalle)
-                VALUES (:id_regla_cobro, :id_asistencia, :id_cuenta, :id_usuario, :detalle)
+                (id_tenant, id_regla_cobro, id_asistencia_estudiante, id_cuenta_por_cobrar, id_usuario, detalle)
+                VALUES (:id_tenant, :id_regla_cobro, :id_asistencia, :id_cuenta, :id_usuario, :detalle)
             ");
+            $stmtHistorial->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             foreach ($cobros as $cobro) {
                 $stmtRegla = $db->prepare("
                     SELECT r.nombre, ps.nombre AS nombre_producto 
                     FROM reglas_cobro_automatico r
                     INNER JOIN productos_servicios ps ON ps.id = r.id_producto_servicio
-                    WHERE r.id = :id_regla
+                    WHERE r.id = :id_regla AND r.id_tenant = :id_tenant
                 ");
                 $stmtRegla->bindParam(':id_regla', $cobro['id_regla']);
+                $stmtRegla->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtRegla->execute();
                 $regla = $stmtRegla->fetch(PDO::FETCH_ASSOC);
 
@@ -422,6 +434,8 @@ class MotorCobrosAutomaticos
                     $detalle = "Cobro automático - " . $cobro['detalle'];
                 }
 
+                $idCuentaNew = Uuid::generar();
+                $stmtCuenta->bindValue(':id', $idCuentaNew);
                 $stmtCuenta->bindParam(':id_producto_servicio', $cobro['id_producto_servicio']);
                 $stmtCuenta->bindParam(':id_persona', $id_persona);
                 $stmtCuenta->bindParam(':fecha', $fecha);
@@ -430,7 +444,7 @@ class MotorCobrosAutomaticos
                 $stmtCuenta->bindParam(':id_usuario', $id_usuario);
                 $stmtCuenta->execute();
 
-                $id_cuenta = $db->lastInsertId();
+                $id_cuenta = $idCuentaNew;
 
                 $stmtHistorial->bindParam(':id_regla_cobro', $cobro['id_regla']);
                 $stmtHistorial->bindParam(':id_asistencia', $cobro['id_asistencia']);

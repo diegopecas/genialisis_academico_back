@@ -15,8 +15,10 @@ class VisitasObservacionesDisc
                 FROM visitas_observaciones_disc vod
                 INNER JOIN parametros_disc pd ON vod.id_parametro_disc = pd.id
                 INNER JOIN visitantes v ON vod.id_visitante = v.id
+                WHERE vod.id_tenant = :id_tenant
                 ORDER BY v.id, pd.orden
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -41,8 +43,10 @@ class VisitasObservacionesDisc
                 INNER JOIN parametros_disc pd ON vod.id_parametro_disc = pd.id
                 INNER JOIN visitantes v ON vod.id_visitante = v.id
                 WHERE vod.id = :id
+                AND vod.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -66,9 +70,11 @@ class VisitasObservacionesDisc
                 FROM visitas_observaciones_disc vod
                 INNER JOIN parametros_disc pd ON vod.id_parametro_disc = pd.id
                 WHERE vod.id_visitante = :id_visitante
+                AND vod.id_tenant = :id_tenant
                 ORDER BY pd.categoria, pd.orden
             ");
             $sentence->bindParam(':id_visitante', $id_visitante);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -88,18 +94,20 @@ class VisitasObservacionesDisc
 
             $sentence = $db->prepare("
                 INSERT INTO visitas_observaciones_disc (
-                    id_visitante, id_parametro_disc, marcado
+                    id, id_tenant, id_visitante, id_parametro_disc, marcado
                 ) VALUES (
-                    :id_visitante, :id_parametro_disc, :marcado
+                    :id, :id_tenant, :id_visitante, :id_parametro_disc, :marcado
                 )
             ");
 
+            $id = Uuid::generar();
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visitante', $data['id_visitante']);
             $sentence->bindParam(':id_parametro_disc', $data['id_parametro_disc']);
             $sentence->bindParam(':marcado', $data['marcado']);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             // ✅ Si se llamó desde otro método, retornar el ID
             if ($dataParam !== null) {
@@ -131,10 +139,12 @@ class VisitasObservacionesDisc
                 UPDATE visitas_observaciones_disc SET
                     marcado = :marcado
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
 
             $sentence->bindParam(':id', $data['id']);
             $sentence->bindParam(':marcado', $data['marcado']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
 
@@ -162,8 +172,9 @@ class VisitasObservacionesDisc
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_observaciones_disc WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_observaciones_disc WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -183,8 +194,8 @@ class VisitasObservacionesDisc
             $observaciones = $data['observaciones']; // Array de {id_parametro_disc, marcado}
 
             // Primero eliminar las existentes
-            $stmt = $db->prepare("DELETE FROM visitas_observaciones_disc WHERE id_visitante = :id_visitante");
-            $stmt->execute(['id_visitante' => $id_visitante]);
+            $stmt = $db->prepare("DELETE FROM visitas_observaciones_disc WHERE id_visitante = :id_visitante AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visitante' => $id_visitante, 'id_tenant' => TenantContext::id()]);
 
             // Insertar las nuevas usando el método new()
             foreach ($observaciones as $obs) {
@@ -236,8 +247,8 @@ class VisitasObservacionesDisc
             }
 
             // Obtener los visitantes de esta visita
-            $stmt = $db->prepare("SELECT id FROM visitantes WHERE id_visita = :id_visita ORDER BY id");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt = $db->prepare("SELECT id FROM visitantes WHERE id_visita = :id_visita AND id_tenant = :id_tenant ORDER BY id");
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
             $visitantesIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
             error_log("📋 IDs de visitantes encontrados: " . json_encode($visitantesIds));
@@ -249,8 +260,8 @@ class VisitasObservacionesDisc
                 error_log("📋 Observaciones: " . json_encode($observaciones));
 
                 // ✅ Eliminar observaciones existentes de este visitante
-                $stmt = $db->prepare("DELETE FROM visitas_observaciones_disc WHERE id_visitante = :id_visitante");
-                $stmt->execute(['id_visitante' => $id_visitante]);
+                $stmt = $db->prepare("DELETE FROM visitas_observaciones_disc WHERE id_visitante = :id_visitante AND id_tenant = :id_tenant");
+                $stmt->execute(['id_visitante' => $id_visitante, 'id_tenant' => TenantContext::id()]);
 
                 $totalInsertadas = 0;
 

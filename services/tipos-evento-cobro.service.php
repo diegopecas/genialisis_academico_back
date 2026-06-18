@@ -5,7 +5,8 @@ class TiposEventoCobro
     {
         try {
             $db = Flight::db();
-            $stmt = $db->prepare("SELECT * FROM tipos_evento_cobro WHERE activo = 1 ORDER BY id");
+            $stmt = $db->prepare("SELECT * FROM tipos_evento_cobro WHERE activo = 1 AND id_tenant = :id_tenant ORDER BY id");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $response = $stmt->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -19,8 +20,9 @@ class TiposEventoCobro
     {
         try {
             $db = Flight::db();
-            $stmt = $db->prepare("SELECT * FROM tipos_evento_cobro WHERE id = :id");
+            $stmt = $db->prepare("SELECT * FROM tipos_evento_cobro WHERE id = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $response = $stmt->fetch(PDO::FETCH_ASSOC);
             Flight::json($response);

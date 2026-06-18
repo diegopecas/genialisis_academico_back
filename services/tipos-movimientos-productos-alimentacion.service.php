@@ -13,9 +13,12 @@ class TiposMovimientosProductosAlimentacion
                     salida
                 FROM 
                     tipos_movimientos_productos_alimentacion
+                WHERE 
+                    id_tenant = :id_tenant
                 ORDER BY 
                     nombre
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -43,8 +46,10 @@ class TiposMovimientosProductosAlimentacion
                     tipos_movimientos_productos_alimentacion
                 WHERE 
                     id = :id
+                    AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -73,9 +78,11 @@ class TiposMovimientosProductosAlimentacion
                 tipos_movimientos_productos_alimentacion
             WHERE 
                 entrada = 1
+                AND id_tenant = :id_tenant
             ORDER BY 
                 nombre
         ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -102,9 +109,11 @@ class TiposMovimientosProductosAlimentacion
                     tipos_movimientos_productos_alimentacion
                 WHERE 
                     salida = 1
+                    AND id_tenant = :id_tenant
                 ORDER BY 
                     nombre
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -135,18 +144,21 @@ class TiposMovimientosProductosAlimentacion
             }
 
             $sql = "INSERT INTO tipos_movimientos_productos_alimentacion (
-                nombre, entrada, salida
+                id, id_tenant, nombre, entrada, salida
             ) VALUES (
-                :nombre, :entrada, :salida
+                :id, :id_tenant, :nombre, :entrada, :salida
             )";
 
             $stmt = $db->prepare($sql);
+            $idTipoMov = Uuid::generar();
+            $stmt->bindValue(':id', $idTipoMov);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':nombre', $data['nombre']);
             $stmt->bindParam(':entrada', $data['entrada']);
             $stmt->bindParam(':salida', $data['salida']);
             $stmt->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idTipoMov;
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log('Error en tipos_movimientos_productos_alimentacion->new(): ' . $e->getMessage());
@@ -174,13 +186,14 @@ class TiposMovimientosProductosAlimentacion
                 nombre = :nombre,
                 entrada = :entrada,
                 salida = :salida
-                WHERE id = :id";
+                WHERE id = :id AND id_tenant = :id_tenant";
 
             $stmt = $db->prepare($sql);
             $stmt->bindParam(':id', $data['id']);
             $stmt->bindParam(':nombre', $data['nombre']);
             $stmt->bindParam(':entrada', $data['entrada']);
             $stmt->bindParam(':salida', $data['salida']);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             if ($stmt->rowCount() == 0) {
@@ -222,8 +235,9 @@ class TiposMovimientosProductosAlimentacion
             }
 
             // Si no tiene registros asociados, procedemos con la eliminación
-            $stmt = $db->prepare("DELETE FROM tipos_movimientos_productos_alimentacion WHERE id = :id");
+            $stmt = $db->prepare("DELETE FROM tipos_movimientos_productos_alimentacion WHERE id = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             Flight::json(array('id' => $id));

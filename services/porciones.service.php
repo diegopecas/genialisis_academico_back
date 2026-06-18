@@ -6,8 +6,10 @@ class Porciones
         $db = Flight::db();
         $sentence = $db->prepare("
             SELECT * FROM porciones 
+            WHERE id_tenant = :id_tenant
             ORDER BY nombre ASC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -16,8 +18,9 @@ class Porciones
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM porciones WHERE id = :id");
+        $sentence = $db->prepare("SELECT * FROM porciones WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetch();
         Flight::json($response);
@@ -31,15 +34,18 @@ class Porciones
         $activo = Flight::request()->data['activo'] ?? 1;
         
         $sentence = $db->prepare("
-            INSERT INTO porciones (nombre, activo)
-            VALUES (:nombre, :activo)
+            INSERT INTO porciones (id, id_tenant, nombre, activo)
+            VALUES (:id, :id_tenant, :nombre, :activo)
         ");
         
+        $idNew = Uuid::generar();
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':activo', $activo);
         $sentence->execute();
         
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(['id' => $id]);
     }
 
@@ -55,12 +61,13 @@ class Porciones
             UPDATE porciones SET 
                 nombre = :nombre,
                 activo = :activo
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
         
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':activo', $activo);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         
         self::getById($id);
@@ -87,8 +94,9 @@ class Porciones
                 return;
             }
             
-            $sentence = $db->prepare("DELETE FROM porciones WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM porciones WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             Flight::json(['id' => $id, 'success' => true]);
@@ -104,8 +112,10 @@ class Porciones
         $sentence = $db->prepare("
             SELECT * FROM porciones 
             WHERE activo = 1
+            AND id_tenant = :id_tenant
             ORDER BY nombre ASC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);

@@ -63,7 +63,9 @@ class PushNotificationService
                 WHERE wps.activo = 1
                 AND u.activo = 1
                 AND u.acceso_chat_wa = 1
+                AND wps.id_tenant = :id_tenant
             ");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
         } catch (Exception $e) {

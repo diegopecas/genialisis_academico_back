@@ -16,8 +16,10 @@ class Visitas
                 LEFT JOIN tipos_como_conocio tcc ON v.id_como_conocio = tcc.id
                 INNER JOIN usuarios u ON v.id_usuario_registro = u.id
                 LEFT JOIN personas p ON u.id_persona = p.id
+                WHERE v.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC, v.hora DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -42,9 +44,10 @@ class Visitas
                 LEFT JOIN tipos_como_conocio tcc ON v.id_como_conocio = tcc.id
                 INNER JOIN usuarios u ON v.id_usuario_registro = u.id
                 LEFT JOIN personas p ON u.id_persona = p.id
-                WHERE v.id = :id
+                WHERE v.id = :id AND v.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -69,11 +72,12 @@ class Visitas
                 LEFT JOIN tipos_como_conocio tcc ON v.id_como_conocio = tcc.id
                 INNER JOIN usuarios u ON v.id_usuario_registro = u.id
                 LEFT JOIN personas p ON u.id_persona = p.id
-                WHERE v.fecha BETWEEN :fecha_inicio AND :fecha_fin
+                WHERE v.fecha BETWEEN :fecha_inicio AND :fecha_fin AND v.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC, v.hora DESC
             ");
             $sentence->bindParam(':fecha_inicio', $fecha_inicio);
             $sentence->bindParam(':fecha_fin', $fecha_fin);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -93,11 +97,11 @@ class Visitas
 
             $sentence = $db->prepare("
             INSERT INTO visitas (
-                fecha, hora, id_tipo_contacto, agendada, id_como_conocio, 
+                id, id_tenant, fecha, hora, id_tipo_contacto, agendada, id_como_conocio, 
                 detalle_como_conocio, comentarios_razones, observaciones,
                 id_usuario_registro
             ) VALUES (
-                :fecha, :hora, :id_tipo_contacto, :agendada, :id_como_conocio,
+                :id, :id_tenant, :fecha, :hora, :id_tipo_contacto, :agendada, :id_como_conocio,
                 :detalle_como_conocio, :comentarios_razones, :observaciones,
                 :id_usuario_registro
             )
@@ -106,6 +110,9 @@ class Visitas
             // Manejar conversión de booleanos
             $agendada = isset($data['agendada']) ? ($data['agendada'] ? 1 : 0) : 0;
 
+            $idVisitaNew = Uuid::generar();
+            $sentence->bindValue(':id', $idVisitaNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':fecha', $data['fecha']);
             $sentence->bindParam(':hora', $data['hora']);
             $sentence->bindParam(':id_tipo_contacto', $data['id_tipo_contacto']);
@@ -117,7 +124,7 @@ class Visitas
             $sentence->bindParam(':id_usuario_registro', $data['id_usuario_registro']);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
+            $id = $idVisitaNew;
 
             // ✅ Si se llamó con parámetro, retornar el ID, sino usar Flight::json
             if ($dataParam !== null) {
@@ -155,7 +162,7 @@ class Visitas
                 detalle_como_conocio = :detalle_como_conocio,
                 comentarios_razones = :comentarios_razones,
                 observaciones = :observaciones
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
 
             // Manejar conversión de booleanos
@@ -170,6 +177,7 @@ class Visitas
             $sentence->bindParam(':detalle_como_conocio', $data['detalle_como_conocio']);
             $sentence->bindParam(':comentarios_razones', $data['comentarios_razones']);
             $sentence->bindParam(':observaciones', $data['observaciones']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
 
@@ -197,8 +205,9 @@ class Visitas
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -215,8 +224,8 @@ class Visitas
             $db = Flight::db();
 
             // Visita principal
-            $stmt = $db->prepare("SELECT * FROM visitas WHERE id = :id");
-            $stmt->execute(['id' => $id]);
+            $stmt = $db->prepare("SELECT * FROM visitas WHERE id = :id AND id_tenant = :id_tenant");
+            $stmt->execute(['id' => $id, 'id_tenant' => TenantContext::id()]);
             $visita = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if (!$visita) {
@@ -415,7 +424,8 @@ class Visitas
 
             if (count($checklistItems) > 0) {
                 // Cargar los pasos con sus checklist_items para hacer el mapeo inverso
-                $stmt = $db->prepare("SELECT id, checklist_items FROM protocolo_pasos WHERE activo = 1");
+                $stmt = $db->prepare("SELECT id, checklist_items FROM protocolo_pasos WHERE activo = 1 AND id_tenant = :id_tenant");
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmt->execute();
                 $pasos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -600,7 +610,8 @@ class Visitas
             $catalogos['tipos_contacto'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // TIPOS CÓMO CONOCIÓ
-            $stmt = $db->prepare("SELECT * FROM tipos_como_conocio ORDER BY nombre");
+            $stmt = $db->prepare("SELECT * FROM tipos_como_conocio WHERE id_tenant = :id_tenant ORDER BY nombre");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $catalogos['tipos_como_conocio'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -610,7 +621,8 @@ class Visitas
             $catalogos['tipos_parentesco'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // TIPOS DE RAZONES DE BÚSQUEDA
-            $stmt = $db->prepare("SELECT * FROM tipos_razones_busqueda ORDER BY nombre");
+            $stmt = $db->prepare("SELECT * FROM tipos_razones_busqueda WHERE id_tenant = :id_tenant ORDER BY nombre");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $catalogos['tipos_razones_busqueda'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -628,7 +640,8 @@ class Visitas
             $catalogos['tipos_nivel_interes'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // TIPOS DE URGENCIA
-            $stmt = $db->prepare("SELECT * FROM tipos_urgencia ORDER BY nombre");
+            $stmt = $db->prepare("SELECT * FROM tipos_urgencia WHERE id_tenant = :id_tenant ORDER BY nombre");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $catalogos['tipos_urgencia'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -638,12 +651,14 @@ class Visitas
             $catalogos['tipos_cuando_seguimiento'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // TIPOS DE QUIÉN DECIDE
-            $stmt = $db->prepare("SELECT * FROM tipos_quien_decide ORDER BY nombre");
+            $stmt = $db->prepare("SELECT * FROM tipos_quien_decide WHERE id_tenant = :id_tenant ORDER BY nombre");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $catalogos['tipos_quien_decide'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // TIPOS DE COMPROMISOS
-            $stmt = $db->prepare("SELECT * FROM tipos_compromisos ORDER BY nombre");
+            $stmt = $db->prepare("SELECT * FROM tipos_compromisos WHERE id_tenant = :id_tenant ORDER BY nombre");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $catalogos['tipos_compromisos'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -653,22 +668,26 @@ class Visitas
             $catalogos['tipos_preferencias_seguimiento'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // PROTOCOLO PASOS
-            $stmt = $db->prepare("SELECT * FROM protocolo_pasos ORDER BY orden");
+            $stmt = $db->prepare("SELECT * FROM protocolo_pasos WHERE id_tenant = :id_tenant ORDER BY orden");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $catalogos['protocolo_pasos'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // TIPOS DE OBJECIONES
-            $stmt = $db->prepare("SELECT * FROM tipos_objeciones ORDER BY nombre");
+            $stmt = $db->prepare("SELECT * FROM tipos_objeciones WHERE id_tenant = :id_tenant ORDER BY nombre");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $catalogos['tipos_objeciones'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // TIPOS DE RESULTADO DE VISITA
-            $stmt = $db->prepare("SELECT * FROM tipos_resultado_visita ORDER BY nombre");
+            $stmt = $db->prepare("SELECT * FROM tipos_resultado_visita WHERE id_tenant = :id_tenant ORDER BY nombre");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $catalogos['tipos_resultado_visita'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // SERVICIOS DEL JARDÍN
-            $stmt = $db->prepare("SELECT * FROM servicios_jardin ORDER BY nombre");
+            $stmt = $db->prepare("SELECT * FROM servicios_jardin WHERE id_tenant = :id_tenant ORDER BY nombre");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $catalogos['servicios_jardin'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -683,7 +702,8 @@ class Visitas
             $catalogos['tipos_nivel_agradecimiento'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // SERVICIOS FALTANTES
-            $stmt = $db->prepare("SELECT * FROM servicios_faltantes ORDER BY nombre");
+            $stmt = $db->prepare("SELECT * FROM servicios_faltantes WHERE id_tenant = :id_tenant ORDER BY nombre");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $catalogos['servicios_faltantes'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -693,7 +713,8 @@ class Visitas
             $catalogos['tipos_importancia_servicio_faltante'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // ASPECTOS A MEJORAR
-            $stmt = $db->prepare("SELECT * FROM aspectos_mejorar ORDER BY nombre");
+            $stmt = $db->prepare("SELECT * FROM aspectos_mejorar WHERE id_tenant = :id_tenant ORDER BY nombre");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $catalogos['aspectos_mejorar'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -742,7 +763,8 @@ class Visitas
             $stmt->execute();
             $catalogos['ciudades'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
             // Grupos
-            $sentenceGrupos = $db->prepare("SELECT id, nombre, icono, color FROM grupos ORDER BY orden");
+            $sentenceGrupos = $db->prepare("SELECT id, nombre, icono, color FROM grupos WHERE id_tenant = :id_tenant ORDER BY orden");
+            $sentenceGrupos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentenceGrupos->execute();
             $catalogos['grupos'] = $sentenceGrupos->fetchAll(PDO::FETCH_ASSOC);
 
@@ -750,9 +772,10 @@ class Visitas
             $sentenceNecesidades = $db->prepare("
                 SELECT id, nombre, icono, orden 
                 FROM tipos_necesidades_especiales 
-                WHERE activo = 1 
+                WHERE activo = 1 AND id_tenant = :id_tenant 
                 ORDER BY orden, nombre
             ");
+            $sentenceNecesidades->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentenceNecesidades->execute();
             $catalogos['tipos_necesidades_especiales'] = $sentenceNecesidades->fetchAll(PDO::FETCH_ASSOC);
             // Log adicional para debug
@@ -1243,13 +1266,13 @@ class Visitas
             // 1. Total visitas mes actual vs anterior
             $stmt = $db->prepare("
             SELECT COUNT(*) as total FROM visitas 
-            WHERE fecha BETWEEN :inicio AND :fin
+            WHERE fecha BETWEEN :inicio AND :fin AND id_tenant = :id_tenant
         ");
 
-            $stmt->execute([':inicio' => $inicioMesActual, ':fin' => $hoy]);
+            $stmt->execute([':inicio' => $inicioMesActual, ':fin' => $hoy, ':id_tenant' => TenantContext::id()]);
             $stats['visitasMesActual'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
 
-            $stmt->execute([':inicio' => $inicioMesAnterior, ':fin' => $finMesAnterior]);
+            $stmt->execute([':inicio' => $inicioMesAnterior, ':fin' => $finMesAnterior, ':id_tenant' => TenantContext::id()]);
             $stats['visitasMesAnterior'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
 
             // 2. Distribución por resultado
@@ -1261,11 +1284,11 @@ class Visitas
             FROM visitas v
             INNER JOIN visitas_resultado vr ON v.id = vr.id_visita
             INNER JOIN tipos_resultado_visita trv ON vr.id_tipo_resultado = trv.id
-            WHERE v.fecha >= :inicio
+            WHERE v.fecha >= :inicio AND v.id_tenant = :id_tenant
             GROUP BY trv.id, trv.nombre, trv.codigo
             ORDER BY cantidad DESC
         ");
-            $stmt->execute([':inicio' => $inicioUltimos6Meses]);
+            $stmt->execute([':inicio' => $inicioUltimos6Meses, ':id_tenant' => TenantContext::id()]);
             $stats['porResultado'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // 3. Nivel de interés - conteo por tipo
@@ -1277,11 +1300,11 @@ class Visitas
             FROM visitas v
             INNER JOIN visitas_temperatura vt ON v.id = vt.id_visita
             INNER JOIN tipos_nivel_interes tni ON vt.id_nivel_interes = tni.id
-            WHERE v.fecha >= :inicio
+            WHERE v.fecha >= :inicio AND v.id_tenant = :id_tenant
             GROUP BY tni.id, tni.nombre
             ORDER BY tni.id DESC
         ");
-            $stmt->execute([':inicio' => $inicioMesActual]);
+            $stmt->execute([':inicio' => $inicioMesActual, ':id_tenant' => TenantContext::id()]);
             $nivelesInteres = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // Calcular promedio ponderado (asumiendo que el ID representa el nivel 1-5)
@@ -1303,11 +1326,11 @@ class Visitas
                 DATE_FORMAT(fecha, '%Y-%m') as mes,
                 COUNT(*) as total
             FROM visitas
-            WHERE fecha >= :inicio
+            WHERE fecha >= :inicio AND id_tenant = :id_tenant
             GROUP BY DATE_FORMAT(fecha, '%Y-%m')
             ORDER BY mes
         ");
-            $stmt->execute([':inicio' => $inicioUltimos6Meses]);
+            $stmt->execute([':inicio' => $inicioUltimos6Meses, ':id_tenant' => TenantContext::id()]);
             $stats['evolucionMensual'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // 5. Top 5 Cómo conoció
@@ -1317,12 +1340,12 @@ class Visitas
                 COUNT(*) as cantidad
             FROM visitas v
             INNER JOIN tipos_como_conocio tcc ON v.id_como_conocio = tcc.id
-            WHERE v.fecha >= :inicio
+            WHERE v.fecha >= :inicio AND v.id_tenant = :id_tenant
             GROUP BY tcc.id, tcc.nombre
             ORDER BY cantidad DESC
             LIMIT 5
         ");
-            $stmt->execute([':inicio' => $inicioUltimos6Meses]);
+            $stmt->execute([':inicio' => $inicioUltimos6Meses, ':id_tenant' => TenantContext::id()]);
             $stats['topComoConocio'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // 6. Objeciones más frecuentes
@@ -1334,12 +1357,12 @@ class Visitas
             FROM visitas_objeciones vo
             INNER JOIN tipos_objeciones tobj ON vo.id_tipo_objecion = tobj.id
             INNER JOIN visitas v ON vo.id_visita = v.id
-            WHERE v.fecha >= :inicio
+            WHERE v.fecha >= :inicio AND v.id_tenant = :id_tenant
             GROUP BY tobj.id, tobj.nombre
             ORDER BY cantidad DESC
             LIMIT 10
         ");
-            $stmt->execute([':inicio' => $inicioUltimos6Meses]);
+            $stmt->execute([':inicio' => $inicioUltimos6Meses, ':id_tenant' => TenantContext::id()]);
             $stats['objecionesFrecuentes'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // 7. Distribución perfiles DISC
@@ -1350,10 +1373,11 @@ class Visitas
             FROM visitantes
             WHERE perfil_disc_calculado IS NOT NULL
             AND es_contacto_principal = 1
+            AND id_tenant = :id_tenant
             GROUP BY perfil_disc_calculado
             ORDER BY cantidad DESC
         ");
-            $stmt->execute();
+            $stmt->execute([':id_tenant' => TenantContext::id()]);
             $stats['perfilesDisc'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             Flight::json($stats);

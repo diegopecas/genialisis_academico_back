@@ -7,7 +7,9 @@ class CuentasCobrarXCursoExtra
         $db = Flight::db();
         $sentence = $db->prepare("SELECT id, id_estudiante_x_curso_extra, id_cuenta_por_cobrar, fecha_registro
         FROM cuentas_cobrar_x_curso_extra
+        WHERE id_tenant = :id_tenant
         ORDER BY fecha_registro DESC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -18,8 +20,9 @@ class CuentasCobrarXCursoExtra
         $db = Flight::db();
         $sentence = $db->prepare("SELECT id, id_estudiante_x_curso_extra, id_cuenta_por_cobrar, fecha_registro
         FROM cuentas_cobrar_x_curso_extra
-        WHERE id = :id");
+        WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -39,10 +42,11 @@ class CuentasCobrarXCursoExtra
         INNER JOIN cuentas_por_cobrar cpc ON ccxce.id_cuenta_por_cobrar = cpc.id
         INNER JOIN productos_servicios ps ON cpc.id_producto_servicio = ps.id
         LEFT JOIN cuenta_pagada cp ON cpc.id = cp.id_cuenta_por_cobrar
-        WHERE ccxce.id_estudiante_x_curso_extra = :id_estudiante_x_curso_extra
+        WHERE ccxce.id_estudiante_x_curso_extra = :id_estudiante_x_curso_extra AND ccxce.id_tenant = :id_tenant
         GROUP BY ccxce.id, cpc.id, ps.nombre
         ORDER BY cpc.fecha");
         $sentence->bindParam(':id_estudiante_x_curso_extra', $id_estudiante_x_curso_extra);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -54,12 +58,15 @@ class CuentasCobrarXCursoExtra
         $id_estudiante_x_curso_extra = Flight::request()->data['id_estudiante_x_curso_extra'];
         $id_cuenta_por_cobrar = Flight::request()->data['id_cuenta_por_cobrar'];
 
-        $sentence = $db->prepare("INSERT INTO cuentas_cobrar_x_curso_extra(id_estudiante_x_curso_extra, id_cuenta_por_cobrar, fecha_registro) 
-        VALUES (:id_estudiante_x_curso_extra, :id_cuenta_por_cobrar, NOW())");
+        $idNew = Uuid::generar();
+        $sentence = $db->prepare("INSERT INTO cuentas_cobrar_x_curso_extra(id, id_tenant, id_estudiante_x_curso_extra, id_cuenta_por_cobrar, fecha_registro) 
+        VALUES (:id, :id_tenant, :id_estudiante_x_curso_extra, :id_cuenta_por_cobrar, NOW())");
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_estudiante_x_curso_extra', $id_estudiante_x_curso_extra);
         $sentence->bindParam(':id_cuenta_por_cobrar', $id_cuenta_por_cobrar);
         $sentence->execute();
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(array('id' => $id));
     }
 
@@ -67,8 +74,9 @@ class CuentasCobrarXCursoExtra
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("DELETE FROM cuentas_cobrar_x_curso_extra WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM cuentas_cobrar_x_curso_extra WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }

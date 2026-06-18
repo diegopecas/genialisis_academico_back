@@ -5,7 +5,8 @@ class HorariosAlimentacion
     {
         try {
             $db = Flight::db();
-            $sentence = $db->prepare("SELECT id, nombre, orden FROM horarios_alimentacion ORDER BY orden");
+            $sentence = $db->prepare("SELECT id, nombre, orden FROM horarios_alimentacion WHERE id_tenant = :id_tenant ORDER BY orden");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -23,8 +24,9 @@ class HorariosAlimentacion
     {
         try {
             $db = Flight::db();
-            $sentence = $db->prepare("SELECT id, nombre, orden FROM horarios_alimentacion WHERE id = :id");
+            $sentence = $db->prepare("SELECT id, nombre, orden FROM horarios_alimentacion WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -47,12 +49,15 @@ class HorariosAlimentacion
             // Obtener los datos como un array asociativo
             $data = $request->data->getData();
             
-            $sentence = $db->prepare("INSERT INTO horarios_alimentacion(nombre, orden) VALUES (:nombre, :orden)");
+            $idNew = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO horarios_alimentacion(id, id_tenant, nombre, orden) VALUES (:id, :id_tenant, :nombre, :orden)");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':nombre', $data['nombre']);
             $sentence->bindParam(':orden', $data['orden']);
             $sentence->execute();
             
-            $id = $db->lastInsertId();
+            $id = $idNew;
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log('Error en HorariosAlimentacion->new(): ' . $e->getMessage());
@@ -73,10 +78,11 @@ class HorariosAlimentacion
             // Obtener los datos como un array asociativo
             $data = $request->data->getData();
             
-            $sentence = $db->prepare("UPDATE horarios_alimentacion SET nombre = :nombre, orden = :orden WHERE id = :id");
+            $sentence = $db->prepare("UPDATE horarios_alimentacion SET nombre = :nombre, orden = :orden WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':nombre', $data['nombre']);
             $sentence->bindParam(':orden', $data['orden']);
             $sentence->bindParam(':id', $data['id']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             // Verificar si se actualizó algún registro
@@ -107,8 +113,9 @@ class HorariosAlimentacion
             $id = Flight::request()->data['id'];
             
             // Primero verificamos si el horario está siendo utilizado en cuentas por cobrar
-            $checkUsage = $db->prepare("SELECT COUNT(*) as total FROM cuentas_por_cobrar WHERE id_horario_alimentacion = :id");
+            $checkUsage = $db->prepare("SELECT COUNT(*) as total FROM cuentas_por_cobrar WHERE id_horario_alimentacion = :id AND id_tenant = :id_tenant");
             $checkUsage->bindParam(':id', $id);
+            $checkUsage->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkUsage->execute();
             $result = $checkUsage->fetch(PDO::FETCH_ASSOC);
             
@@ -122,8 +129,9 @@ class HorariosAlimentacion
             }
             
             // Si no está siendo utilizado, procedemos a eliminarlo
-            $sentence = $db->prepare("DELETE FROM horarios_alimentacion WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM horarios_alimentacion WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             // Verificar si se eliminó algún registro
@@ -151,7 +159,8 @@ class HorariosAlimentacion
     {
         try {
             $db = Flight::db();
-            $sentence = $db->prepare("SELECT COALESCE(MAX(orden), 0) as max_orden FROM horarios_alimentacion");
+            $sentence = $db->prepare("SELECT COALESCE(MAX(orden), 0) as max_orden FROM horarios_alimentacion WHERE id_tenant = :id_tenant");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $result = $sentence->fetch(PDO::FETCH_ASSOC);
             Flight::json(['max_orden' => $result['max_orden']]);

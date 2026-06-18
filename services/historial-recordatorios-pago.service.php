@@ -5,7 +5,8 @@ class HistorialRecordatoriosPago
     {
         try {
             $db = Flight::db();
-            $sentence = $db->prepare("SELECT id, id_estudiante, id_persona_acudiente, telefono_usado, nombre_destinatario, tipo_recordatorio, monto_notificado, compromiso, fecha_compromiso, id_usuario, fecha_envio FROM historial_recordatorios_pago ORDER BY fecha_envio DESC");
+            $sentence = $db->prepare("SELECT id, id_estudiante, id_persona_acudiente, telefono_usado, nombre_destinatario, tipo_recordatorio, monto_notificado, compromiso, fecha_compromiso, id_usuario, fecha_envio FROM historial_recordatorios_pago WHERE id_tenant = :id_tenant ORDER BY fecha_envio DESC");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -36,10 +37,11 @@ class HistorialRecordatoriosPago
                 FROM historial_recordatorios_pago hrp
                 LEFT JOIN usuarios u ON u.id = hrp.id_usuario
                 LEFT JOIN personas pu ON pu.id = u.id_persona
-                WHERE hrp.id_estudiante = :id_estudiante
+                WHERE hrp.id_estudiante = :id_estudiante AND hrp.id_tenant = :id_tenant
                 ORDER BY hrp.fecha_envio DESC
             ");
             $sentence->bindParam(':id_estudiante', $idEstudiante);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -55,10 +57,13 @@ class HistorialRecordatoriosPago
             $db = Flight::db();
             $data = Flight::request()->data->getData();
 
+            $idNew = Uuid::generar();
             $sentence = $db->prepare("
-                INSERT INTO historial_recordatorios_pago (id_estudiante, id_persona_acudiente, telefono_usado, nombre_destinatario, tipo_recordatorio, monto_notificado, id_usuario, fecha_envio) 
-                VALUES (:id_estudiante, :id_persona_acudiente, :telefono_usado, :nombre_destinatario, :tipo_recordatorio, :monto_notificado, :id_usuario, NOW())
+                INSERT INTO historial_recordatorios_pago (id, id_tenant, id_estudiante, id_persona_acudiente, telefono_usado, nombre_destinatario, tipo_recordatorio, monto_notificado, id_usuario, fecha_envio) 
+                VALUES (:id, :id_tenant, :id_estudiante, :id_persona_acudiente, :telefono_usado, :nombre_destinatario, :tipo_recordatorio, :monto_notificado, :id_usuario, NOW())
             ");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_estudiante', $data['id_estudiante']);
             $sentence->bindParam(':id_persona_acudiente', $data['id_persona_acudiente']);
             $sentence->bindParam(':telefono_usado', $data['telefono_usado']);
@@ -68,7 +73,7 @@ class HistorialRecordatoriosPago
             $sentence->bindParam(':id_usuario', $data['id_usuario']);
             $sentence->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idNew;
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log('Error en new historial_recordatorios_pago: ' . $e->getMessage());
@@ -90,10 +95,11 @@ class HistorialRecordatoriosPago
                 UPDATE historial_recordatorios_pago SET
                     compromiso = :compromiso,
                     fecha_compromiso = :fecha_compromiso
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
 
-            $sentence->bindParam(':id', $id, PDO::PARAM_INT);
+            $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':compromiso', $compromiso);
             $sentence->bindParam(':fecha_compromiso', $fecha_compromiso);
             $sentence->execute();

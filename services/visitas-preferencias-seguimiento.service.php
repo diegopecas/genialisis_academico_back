@@ -13,8 +13,10 @@ class VisitasPreferenciasSeguimiento
                     tps.icono as icono_preferencia
                 FROM visitas_preferencias_seguimiento vps
                 INNER JOIN tipos_preferencias_seguimiento tps ON vps.id_preferencia_seguimiento = tps.id
+                WHERE vps.id_tenant = :id_tenant
                 ORDER BY vps.id_visita, tps.orden
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -37,8 +39,10 @@ class VisitasPreferenciasSeguimiento
                 FROM visitas_preferencias_seguimiento vps
                 INNER JOIN tipos_preferencias_seguimiento tps ON vps.id_preferencia_seguimiento = tps.id
                 WHERE vps.id = :id
+                AND vps.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -61,9 +65,11 @@ class VisitasPreferenciasSeguimiento
                 FROM visitas_preferencias_seguimiento vps
                 INNER JOIN tipos_preferencias_seguimiento tps ON vps.id_preferencia_seguimiento = tps.id
                 WHERE vps.id_visita = :id_visita
+                AND vps.id_tenant = :id_tenant
                 ORDER BY tps.orden
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -86,18 +92,20 @@ class VisitasPreferenciasSeguimiento
             }
 
             $sentence = $db->prepare("
-            INSERT INTO visitas_preferencias_seguimiento (id_visita, id_preferencia_seguimiento) 
-            VALUES (:id_visita, :id_preferencia_seguimiento)
+            INSERT INTO visitas_preferencias_seguimiento (id, id_tenant, id_visita, id_preferencia_seguimiento) 
+            VALUES (:id, :id_tenant, :id_visita, :id_preferencia_seguimiento)
         ");
 
             $id_visita = $data['id_visita'] ?? null;
             $id_preferencia_seguimiento = $data['id_preferencia_seguimiento'] ?? null;
+            $id = Uuid::generar();
 
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $id_visita);
             $sentence->bindParam(':id_preferencia_seguimiento', $id_preferencia_seguimiento);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             // ✅ Si se llamó con parámetro, retornar el ID
             if ($dataParam !== null) {
@@ -133,6 +141,7 @@ class VisitasPreferenciasSeguimiento
             UPDATE visitas_preferencias_seguimiento SET
                 id_preferencia_seguimiento = :id_preferencia_seguimiento
             WHERE id = :id
+            AND id_tenant = :id_tenant
         ");
 
             $id = $data['id'];
@@ -140,6 +149,7 @@ class VisitasPreferenciasSeguimiento
 
             $sentence->bindParam(':id', $id);
             $sentence->bindParam(':id_preferencia_seguimiento', $id_preferencia_seguimiento);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
 
@@ -166,8 +176,9 @@ class VisitasPreferenciasSeguimiento
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_preferencias_seguimiento WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_preferencias_seguimiento WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -194,8 +205,8 @@ class VisitasPreferenciasSeguimiento
             $preferencias = $data['preferencias'] ?? []; // Array de IDs
 
             // Primero eliminar las existentes
-            $stmt = $db->prepare("DELETE FROM visitas_preferencias_seguimiento WHERE id_visita = :id_visita");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt = $db->prepare("DELETE FROM visitas_preferencias_seguimiento WHERE id_visita = :id_visita AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
 
             // Insertar las nuevas usando el método new()
             if (is_array($preferencias) && count($preferencias) > 0) {

@@ -15,8 +15,10 @@ class ProductosServicios
         LEFT JOIN clasificacion_productos_servicios cl ON cl.id = ps.id_clasificacion_productos_servicios
         LEFT JOIN periodicidad_cobro pc ON pc.id = ps.id_periodicidad_cobro
         LEFT JOIN horarios_alimentacion ha ON ha.id = ps.id_horario_alimentacion_sugerido
+        WHERE ps.id_tenant = :id_tenant
         ORDER BY ps.nombre
     ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -37,9 +39,11 @@ class ProductosServicios
         LEFT JOIN periodicidad_cobro pc ON pc.id = ps.id_periodicidad_cobro
         LEFT JOIN horarios_alimentacion ha ON ha.id = ps.id_horario_alimentacion_sugerido
         WHERE ps.id = :id
+        AND ps.id_tenant = :id_tenant
         ORDER BY ps.nombre
     ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetch();
         Flight::json($response);
@@ -60,9 +64,11 @@ class ProductosServicios
         LEFT JOIN periodicidad_cobro pc ON pc.id = ps.id_periodicidad_cobro
         LEFT JOIN horarios_alimentacion ha ON ha.id = ps.id_horario_alimentacion_sugerido
         WHERE ps.id_clasificacion_productos_servicios = :id
+        AND ps.id_tenant = :id_tenant
         ORDER BY ps.nombre
     ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -91,8 +97,10 @@ class ProductosServicios
             LEFT JOIN periodicidad_cobro pc ON pc.id = ps.id_periodicidad_cobro
             LEFT JOIN horarios_alimentacion ha ON ha.id = ps.id_horario_alimentacion_sugerido
             WHERE ps.disponible = 1
+            AND ps.id_tenant = :id_tenant
             ORDER BY cl.nombre, ps.nombre
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -114,9 +122,12 @@ class ProductosServicios
             $anio = $request->data->anio;
             $id_horario = $request->data->id_horario_alimentacion_sugerido;
 
-            $sentence = $db->prepare("INSERT INTO productos_servicios(nombre, detalles, id_clasificacion_productos_servicios, id_categoria_productos_servicios, id_periodicidad_cobro, valor_sugerido, disponible, anio, id_horario_alimentacion_sugerido) 
-            VALUES (:nombre, :detalles, :id_clas, :id_cat, :id_period, :valor, :disponible, :anio, :id_horario)");
+            $id = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO productos_servicios(id, id_tenant, nombre, detalles, id_clasificacion_productos_servicios, id_categoria_productos_servicios, id_periodicidad_cobro, valor_sugerido, disponible, anio, id_horario_alimentacion_sugerido) 
+            VALUES (:id, :id_tenant, :nombre, :detalles, :id_clas, :id_cat, :id_period, :valor, :disponible, :anio, :id_horario)");
 
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':detalles', $detalles);
             $sentence->bindParam(':id_clas', $id_clasificacion);
@@ -128,7 +139,6 @@ class ProductosServicios
             $sentence->bindParam(':id_horario', $id_horario);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log("Error en ProductosServicios::new: " . $e->getMessage());
@@ -163,7 +173,8 @@ class ProductosServicios
                 disponible = :disponible,
                 anio = :anio,
                 id_horario_alimentacion_sugerido = :id_horario
-                WHERE id = :id");
+                WHERE id = :id
+                AND id_tenant = :id_tenant");
 
             $sentence->bindParam(':id', $id);
             $sentence->bindParam(':nombre', $nombre);
@@ -175,6 +186,7 @@ class ProductosServicios
             $sentence->bindParam(':disponible', $disponible);
             $sentence->bindParam(':anio', $anio);
             $sentence->bindParam(':id_horario', $id_horario);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
             self::getById($id);
@@ -191,8 +203,9 @@ class ProductosServicios
             $request = Flight::request();
             $id = $request->data->id;
             
-            $sentence = $db->prepare("DELETE FROM productos_servicios WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM productos_servicios WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));

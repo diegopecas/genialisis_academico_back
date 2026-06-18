@@ -9,8 +9,10 @@ class TiposNecesidadesEspeciales
                 SELECT id, nombre, icono, orden 
                 FROM tipos_necesidades_especiales 
                 WHERE activo = 1 
+                AND id_tenant = :id_tenant
                 ORDER BY orden, nombre
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -27,9 +29,10 @@ class TiposNecesidadesEspeciales
             $sentence = $db->prepare("
                 SELECT id, nombre, icono, orden 
                 FROM tipos_necesidades_especiales 
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -46,15 +49,18 @@ class TiposNecesidadesEspeciales
             $data = Flight::request()->data;
             
             $sentence = $db->prepare("
-                INSERT INTO tipos_necesidades_especiales(nombre, icono, orden) 
-                VALUES (:nombre, :icono, :orden)
+                INSERT INTO tipos_necesidades_especiales(id, id_tenant, nombre, icono, orden) 
+                VALUES (:id, :id_tenant, :nombre, :icono, :orden)
             ");
+            $idNew = Uuid::generar();
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':nombre', $data['nombre']);
             $sentence->bindParam(':icono', $data['icono']);
             $sentence->bindParam(':orden', $data['orden']);
             $sentence->execute();
             
-            $id = $db->lastInsertId();
+            $id = $idNew;
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log("Error en tipos_necesidades_especiales new: " . $e->getMessage());
@@ -71,12 +77,13 @@ class TiposNecesidadesEspeciales
             $sentence = $db->prepare("
                 UPDATE tipos_necesidades_especiales 
                 SET nombre = :nombre, icono = :icono, orden = :orden 
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':nombre', $data['nombre']);
             $sentence->bindParam(':icono', $data['icono']);
             $sentence->bindParam(':orden', $data['orden']);
             $sentence->bindParam(':id', $data['id']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             self::getById($data['id']);
@@ -92,8 +99,9 @@ class TiposNecesidadesEspeciales
             $db = Flight::db();
             $id = Flight::request()->data['id'];
             
-            $sentence = $db->prepare("DELETE FROM tipos_necesidades_especiales WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM tipos_necesidades_especiales WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             Flight::json(array('id' => $id));

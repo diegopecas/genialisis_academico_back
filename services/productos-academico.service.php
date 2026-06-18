@@ -18,8 +18,10 @@ class ProductosAcademico
             INNER JOIN productos p ON pa.id_producto = p.id
             LEFT JOIN unidades_medida um ON p.id_unidad_medida = um.id
             LEFT JOIN tipos_producto_academico tpa ON pa.id_tipo_producto_academico = tpa.id
+            WHERE pa.id_tenant = :id_tenant
             ORDER BY pa.id DESC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $productos = $sentence->fetchAll();
 
@@ -28,9 +30,10 @@ class ProductosAcademico
             SELECT g.nombre 
             FROM productos_academico_x_grados pag
             INNER JOIN grados g ON g.id = pag.id_grado
-            WHERE pag.id_producto_academico = :id_producto
+            WHERE pag.id_producto_academico = :id_producto AND pag.id_tenant = :id_tenant
             ORDER BY g.orden ASC
         ");
+        $stmtGrados->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
         foreach ($productos as &$producto) {
             $stmtGrados->bindParam(':id_producto', $producto['id']);
@@ -56,9 +59,10 @@ class ProductosAcademico
             INNER JOIN productos p ON pa.id_producto = p.id
             LEFT JOIN unidades_medida um ON p.id_unidad_medida = um.id
             LEFT JOIN tipos_producto_academico tpa ON pa.id_tipo_producto_academico = tpa.id
-            WHERE pa.id = :id
+            WHERE pa.id = :id AND pa.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -80,7 +84,10 @@ class ProductosAcademico
         $edad_minima_meses = ($edad_minima_meses !== '' && $edad_minima_meses !== null) ? $edad_minima_meses : null;
         $edad_maxima_meses = ($edad_maxima_meses !== '' && $edad_maxima_meses !== null) ? $edad_maxima_meses : null;
 
+        $idNew = Uuid::generar();
         $sentence = $db->prepare("INSERT INTO productos_academico(
+            id,
+            id_tenant,
             id_producto,
             id_tipo_producto_academico,
             es_consumible,
@@ -88,6 +95,8 @@ class ProductosAcademico
             edad_minima_meses,
             edad_maxima_meses
         ) VALUES (
+            :id,
+            :id_tenant,
             :id_producto,
             :id_tipo_producto_academico,
             :es_consumible,
@@ -96,6 +105,8 @@ class ProductosAcademico
             :edad_maxima_meses
         )");
 
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_producto', $id_producto);
         $sentence->bindParam(':id_tipo_producto_academico', $id_tipo_producto_academico);
         $sentence->bindParam(':es_consumible', $es_consumible);
@@ -104,7 +115,7 @@ class ProductosAcademico
         $sentence->bindParam(':edad_maxima_meses', $edad_maxima_meses);
         $sentence->execute();
 
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(array('id' => $id));
     }
 
@@ -131,7 +142,7 @@ class ProductosAcademico
             vida_util_estimada_dias = :vida_util_estimada_dias,
             edad_minima_meses = :edad_minima_meses,
             edad_maxima_meses = :edad_maxima_meses
-            WHERE id = :id");
+            WHERE id = :id AND id_tenant = :id_tenant");
 
         $sentence->bindParam(':id_producto', $id_producto);
         $sentence->bindParam(':id_tipo_producto_academico', $id_tipo_producto_academico);
@@ -140,6 +151,7 @@ class ProductosAcademico
         $sentence->bindParam(':edad_minima_meses', $edad_minima_meses);
         $sentence->bindParam(':edad_maxima_meses', $edad_maxima_meses);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         self::getById($id);
@@ -151,8 +163,9 @@ class ProductosAcademico
         $id = Flight::request()->data['id'];
 
         // Los grados se eliminan en cascada por la FK
-        $sentence = $db->prepare("DELETE FROM productos_academico WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM productos_academico WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json(array('id' => $id));
@@ -171,11 +184,13 @@ class ProductosAcademico
             LEFT JOIN tipos_producto tp ON p.id_tipo_producto = tp.id
             WHERE p.id_tipo_producto = 4 
             AND p.activo = 1
+            AND p.id_tenant = :id_tenant
             AND p.id NOT IN (
                 SELECT id_producto FROM productos_academico
             )
             ORDER BY p.nombre ASC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -200,10 +215,12 @@ class ProductosAcademico
                 LEFT JOIN productos_academico_x_grados pag 
                     ON pag.id_grado = g.id 
                     AND pag.id_producto_academico = :id_producto
+                WHERE g.id_tenant = :id_tenant
                 ORDER BY g.orden ASC
             ");
 
             $sentence->bindParam(':id_producto', $id_producto_academico);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
 
@@ -225,18 +242,20 @@ class ProductosAcademico
             // Eliminar grados actuales
             $deleteStmt = $db->prepare("
                 DELETE FROM productos_academico_x_grados 
-                WHERE id_producto_academico = :id_producto
+                WHERE id_producto_academico = :id_producto AND id_tenant = :id_tenant
             ");
             $deleteStmt->bindParam(':id_producto', $id_producto_academico);
+            $deleteStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $deleteStmt->execute();
 
             // Insertar nuevos grados
             if (!empty($grados)) {
                 $insertStmt = $db->prepare("
                     INSERT INTO productos_academico_x_grados 
-                    (id_producto_academico, id_grado) 
-                    VALUES (:id_producto, :id_grado)
+                    (id_tenant, id_producto_academico, id_grado) 
+                    VALUES (:id_tenant, :id_producto, :id_grado)
                 ");
+                $insertStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
                 foreach ($grados as $id_grado) {
                     $insertStmt->bindParam(':id_producto', $id_producto_academico);

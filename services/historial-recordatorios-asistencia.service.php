@@ -19,8 +19,10 @@ class HistorialRecordatoriosAsistencia
                     id_usuario, 
                     fecha_envio 
                 FROM historial_recordatorios_asistencia 
+                WHERE id_tenant = :id_tenant
                 ORDER BY fecha_envio DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -51,10 +53,11 @@ class HistorialRecordatoriosAsistencia
                 FROM historial_recordatorios_asistencia hra
                 LEFT JOIN usuarios u ON u.id = hra.id_usuario
                 LEFT JOIN personas pu ON pu.id = u.id_persona
-                WHERE hra.id_estudiante = :id_estudiante
+                WHERE hra.id_estudiante = :id_estudiante AND hra.id_tenant = :id_tenant
                 ORDER BY hra.fecha_envio DESC
             ");
             $sentence->bindParam(':id_estudiante', $idEstudiante);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -70,17 +73,20 @@ class HistorialRecordatoriosAsistencia
             $db = Flight::db();
             $data = Flight::request()->data->getData();
 
+            $idNew = Uuid::generar();
             $sentence = $db->prepare("
                 INSERT INTO historial_recordatorios_asistencia (
-                    id_estudiante, id_persona_acudiente, telefono_usado, nombre_destinatario, 
+                    id, id_tenant, id_estudiante, id_persona_acudiente, telefono_usado, nombre_destinatario, 
                     tipo_recordatorio, dias_ausencia, porcentaje_asistencia_mes, clasificacion_riesgo,
                     id_usuario, fecha_envio
                 ) VALUES (
-                    :id_estudiante, :id_persona_acudiente, :telefono_usado, :nombre_destinatario, 
+                    :id, :id_tenant, :id_estudiante, :id_persona_acudiente, :telefono_usado, :nombre_destinatario, 
                     :tipo_recordatorio, :dias_ausencia, :porcentaje_asistencia_mes, :clasificacion_riesgo,
                     :id_usuario, NOW()
                 )
             ");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_estudiante', $data['id_estudiante']);
             $sentence->bindParam(':id_persona_acudiente', $data['id_persona_acudiente']);
             $sentence->bindParam(':telefono_usado', $data['telefono_usado']);
@@ -92,7 +98,7 @@ class HistorialRecordatoriosAsistencia
             $sentence->bindParam(':id_usuario', $data['id_usuario']);
             $sentence->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idNew;
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log('Error en new historial_recordatorios_asistencia: ' . $e->getMessage());

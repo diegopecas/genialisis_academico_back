@@ -13,7 +13,8 @@ use Firebase\JWT\Key;
 class JWTService
 {
     // Clave secreta para firmar los tokens 
-    private static $secretKey = 'LuM3n_4c4d3m1c0_2024_S3cr3t_K3y_Pr0t3ct3d_G4l3r14s_X7k9Lm2Pq';
+    // La clave secreta se resuelve desde config/jwt.env.php (JWT_SECRET_KEY),
+    // fuera del codigo versionado. Ver getSecretKey().
     
     // Algoritmo de encriptación
     private static $algorithm = 'HS256';
@@ -23,13 +24,35 @@ class JWTService
     private static $expireTime = 86400;
 
     /**
+     * Obtiene la clave secreta para firmar/validar tokens desde la
+     * configuracion no versionada (config/jwt.env.php). Falla cerrado: si la
+     * constante JWT_SECRET_KEY no esta definida, corta la peticion, porque
+     * firmar o validar con una clave vacia seria inseguro.
+     *
+     * @return string
+     */
+    private static function getSecretKey()
+    {
+        if (!defined('JWT_SECRET_KEY') || JWT_SECRET_KEY === '') {
+            error_log('JWTService: JWT_SECRET_KEY no esta definida (config/jwt.env.php).');
+            Flight::halt(500, json_encode([
+                'error' => 'Configuracion de seguridad incompleta',
+                'code'  => 'JWT_SECRET_MISSING'
+            ]));
+            exit;
+        }
+
+        return JWT_SECRET_KEY;
+    }
+
+    /**
      * Genera un token JWT para el usuario
      * 
      * @param array $userData Datos del usuario (id, id_persona, usuario, etc.)
      * @param array $permisos Array de códigos de permisos del usuario (ej: ['menu.estudiantes', 'admin.productos.crear']) o ['*'] si es super_admin
      * @return string Token JWT
      */
-    public static function generarToken($userData, $permisos = [])
+    public static function generarToken($userData, $permisos = [], $tenant = null)
     {
         $issuedAt = time();
         $expire = $issuedAt + self::$expireTime;
@@ -44,11 +67,12 @@ class JWTService
                 'primer_nombre' => $userData['primer_nombre'] ?? '',
                 'primer_apellido' => $userData['primer_apellido'] ?? '',
                 'super_admin' => $userData['super_admin'] ?? 0,
+                'tenant' => $tenant,
                 'permisos' => $permisos
             ]
         ];
 
-        return JWT::encode($payload, self::$secretKey, self::$algorithm);
+        return JWT::encode($payload, self::getSecretKey(), self::$algorithm);
     }
 
     /**
@@ -64,7 +88,7 @@ class JWTService
                 return null;
             }
 
-            $decoded = JWT::decode($token, new Key(self::$secretKey, self::$algorithm));
+            $decoded = JWT::decode($token, new Key(self::getSecretKey(), self::$algorithm));
             return $decoded->data;
         } catch (\Firebase\JWT\ExpiredException $e) {
             // Token expirado
@@ -180,5 +204,36 @@ class JWTService
         }
 
         return self::validarToken($token);
+    }
+
+    /**
+     * Middleware: exige un token valido Y que el tenant firmado dentro del
+     * token coincida con el tenant del request (X-Tenant ya validado).
+     *
+     * Blinda contra el cambio de header tras autenticarse: el tenant viaja
+     * firmado dentro del JWT con una clave que solo conoce el servidor, asi
+     * que no puede falsificarse cambiando el header del lado cliente.
+     *
+     * Nota: los tokens emitidos antes de incluir el tenant no traen este dato;
+     * esos usuarios deberan volver a iniciar sesion una vez tras el despliegue.
+     *
+     * @param string|null $tenantRequest Codigo de tenant del request (ej. 'lumen').
+     * @return object Datos del usuario (incluye ->permisos, ->super_admin, ->tenant).
+     */
+    public static function requerirTenant($tenantRequest)
+    {
+        $userData = self::requerirAutenticacion();
+
+        $tenantToken = isset($userData->tenant) ? $userData->tenant : null;
+
+        if (empty($tenantToken) || empty($tenantRequest) || $tenantToken !== $tenantRequest) {
+            Flight::halt(403, json_encode([
+                'error' => 'El token no corresponde a la institucion solicitada',
+                'code'  => 'TENANT_MISMATCH'
+            ]));
+            exit;
+        }
+
+        return $userData;
     }
 }

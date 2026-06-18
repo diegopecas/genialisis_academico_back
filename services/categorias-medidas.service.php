@@ -9,8 +9,10 @@ class CategoriasMedidas
                 SELECT id, nombre, descripcion, icono, orden, activo 
                 FROM categorias_medidas 
                 WHERE activo = 1 
+                AND id_tenant = :id_tenant
                 ORDER BY orden
             ");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $response = $stmt->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -27,9 +29,10 @@ class CategoriasMedidas
             $stmt = $db->prepare("
                 SELECT id, nombre, descripcion, icono, orden, activo 
                 FROM categorias_medidas 
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $response = $stmt->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -48,8 +51,10 @@ class CategoriasMedidas
                 SELECT id, nombre, descripcion, icono, orden 
                 FROM categorias_medidas 
                 WHERE activo = 1 
+                AND id_tenant = :id_tenant
                 ORDER BY orden
             ");
+            $stmtCat->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtCat->execute();
             $categorias = $stmtCat->fetchAll(PDO::FETCH_ASSOC);
 
@@ -62,8 +67,10 @@ class CategoriasMedidas
                 FROM medidas m
                 LEFT JOIN unidades_medidas_corporales umc ON umc.id = m.id_unidad
                 LEFT JOIN tipos_valor_medida tvm ON tvm.id = m.id_tipo_valor
+                WHERE m.id_tenant = :id_tenant
                 ORDER BY m.id_categoria, m.orden
             ");
+            $stmtMed->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtMed->execute();
             $medidas = $stmtMed->fetchAll(PDO::FETCH_ASSOC);
 
@@ -71,8 +78,10 @@ class CategoriasMedidas
                 SELECT id, id_medida, valor_numerico, etiqueta, orden
                 FROM valores_medidas
                 WHERE activo = 1
+                AND id_tenant = :id_tenant
                 ORDER BY orden
             ");
+            $stmtOpciones->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtOpciones->execute();
             $opciones = $stmtOpciones->fetchAll(PDO::FETCH_ASSOC);
 
@@ -121,14 +130,17 @@ class CategoriasMedidas
             $orden = isset($request->data->orden) ? $request->data->orden : 0;
             $activo = isset($request->data->activo) ? $request->data->activo : 1;
 
-            $stmt = $db->prepare("INSERT INTO categorias_medidas (nombre, descripcion, icono, orden, activo) VALUES (:nombre, :descripcion, :icono, :orden, :activo)");
+            $idNew = Uuid::generar();
+            $stmt = $db->prepare("INSERT INTO categorias_medidas (id, id_tenant, nombre, descripcion, icono, orden, activo) VALUES (:id, :id_tenant, :nombre, :descripcion, :icono, :orden, :activo)");
+            $stmt->bindValue(':id', $idNew);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':nombre', $nombre);
             $stmt->bindParam(':descripcion', $descripcion);
             $stmt->bindParam(':icono', $icono);
             $stmt->bindParam(':orden', $orden);
             $stmt->bindParam(':activo', $activo);
             $stmt->execute();
-            $id = $db->lastInsertId();
+            $id = $idNew;
             Flight::json(['id' => $id]);
         } catch (Exception $e) {
             error_log('Error en CategoriasMedidas::new: ' . $e->getMessage());
@@ -148,13 +160,14 @@ class CategoriasMedidas
             $orden = isset($request->data->orden) ? $request->data->orden : 0;
             $activo = isset($request->data->activo) ? $request->data->activo : 1;
 
-            $stmt = $db->prepare("UPDATE categorias_medidas SET nombre = :nombre, descripcion = :descripcion, icono = :icono, orden = :orden, activo = :activo WHERE id = :id");
+            $stmt = $db->prepare("UPDATE categorias_medidas SET nombre = :nombre, descripcion = :descripcion, icono = :icono, orden = :orden, activo = :activo WHERE id = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
             $stmt->bindParam(':nombre', $nombre);
             $stmt->bindParam(':descripcion', $descripcion);
             $stmt->bindParam(':icono', $icono);
             $stmt->bindParam(':orden', $orden);
             $stmt->bindParam(':activo', $activo);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             self::getById($id);
         } catch (Exception $e) {
@@ -170,8 +183,9 @@ class CategoriasMedidas
             $request = Flight::request();
             $id = $request->data->id;
 
-            $stmt = $db->prepare("DELETE FROM categorias_medidas WHERE id = :id");
+            $stmt = $db->prepare("DELETE FROM categorias_medidas WHERE id = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             Flight::json(['id' => $id]);
         } catch (Exception $e) {

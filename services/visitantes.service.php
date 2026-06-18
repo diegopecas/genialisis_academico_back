@@ -14,8 +14,10 @@ class Visitantes
                 FROM visitantes v
                 INNER JOIN tipos_parentesco tp ON v.id_parentesco = tp.id
                 INNER JOIN visitas vis ON v.id_visita = vis.id
+                WHERE v.id_tenant = :id_tenant
                 ORDER BY vis.fecha DESC, vis.hora DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -39,8 +41,10 @@ class Visitantes
                 INNER JOIN tipos_parentesco tp ON v.id_parentesco = tp.id
                 INNER JOIN visitas vis ON v.id_visita = vis.id
                 WHERE v.id = :id
+                AND v.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -61,9 +65,11 @@ class Visitantes
                 FROM visitantes v
                 INNER JOIN tipos_parentesco tp ON v.id_parentesco = tp.id
                 WHERE v.id_visita = :id_visita
+                AND v.id_tenant = :id_tenant
                 ORDER BY v.es_contacto_principal DESC, v.id
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -94,12 +100,12 @@ class Visitantes
 
             $sentence = $db->prepare("
             INSERT INTO visitantes (
-                id_visita, primer_nombre, segundo_nombre, primer_apellido, segundo_apellido,
+                id, id_tenant, id_visita, primer_nombre, segundo_nombre, primer_apellido, segundo_apellido,
                 id_tipo_identificacion, numero_identificacion, id_genero, id_ciudad,
                 telefono, email, id_parentesco, parentesco_otro, es_contacto_principal,
                 asistio, perfil_disc_calculado
             ) VALUES (
-                :id_visita, :primer_nombre, :segundo_nombre, :primer_apellido, :segundo_apellido,
+                :id, :id_tenant, :id_visita, :primer_nombre, :segundo_nombre, :primer_apellido, :segundo_apellido,
                 :id_tipo_identificacion, :numero_identificacion, :id_genero, :id_ciudad,
                 :telefono, :email, :id_parentesco, :parentesco_otro, :es_contacto_principal,
                 :asistio, :perfil_disc_calculado
@@ -127,6 +133,9 @@ class Visitantes
                 ? $data['id_parentesco']
                 : null;
 
+            $id = Uuid::generar();
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $data['id_visita']);
             $sentence->bindParam(':primer_nombre', $data['primer_nombre']);
             $sentence->bindParam(':segundo_nombre', $data['segundo_nombre']);
@@ -145,7 +154,6 @@ class Visitantes
             $sentence->bindParam(':perfil_disc_calculado', $data['perfil_disc_calculado']);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             // ✅ Si se llamó desde otro método, retornar el ID
             if ($dataParam !== null) {
@@ -202,6 +210,7 @@ class Visitantes
                 asistio = :asistio,
                 perfil_disc_calculado = :perfil_disc_calculado
             WHERE id = :id
+            AND id_tenant = :id_tenant
         ");
 
             // ✅ Manejar conversión de booleanos
@@ -243,6 +252,7 @@ class Visitantes
             $sentence->bindParam(':email', $email);
             $sentence->bindParam(':asistio', $asistio);
             $sentence->bindParam(':perfil_disc_calculado', $perfil_disc_calculado);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
 
@@ -269,8 +279,9 @@ class Visitantes
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitantes WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitantes WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -291,10 +302,12 @@ class Visitantes
                 UPDATE visitantes SET
                     perfil_disc_calculado = :perfil_disc_calculado
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
 
             $sentence->bindParam(':id', $data['id']);
             $sentence->bindParam(':perfil_disc_calculado', $data['perfil_disc_calculado']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             self::getById($data['id']);

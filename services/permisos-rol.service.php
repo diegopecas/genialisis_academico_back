@@ -11,7 +11,8 @@ class PermisosRol
             
 
             $db = Flight::db();
-            $stmt = $db->prepare("SELECT id, nombre FROM roles ORDER BY nombre");
+            $stmt = $db->prepare("SELECT id, nombre FROM roles WHERE id_tenant = :id_tenant ORDER BY nombre");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $roles = $stmt->fetchAll();
             Flight::json($roles);
@@ -135,8 +136,10 @@ class PermisosRol
                 SELECT codigo_permiso 
                 FROM permisos_x_rol 
                 WHERE id_rol = :id_rol
+                AND id_tenant = :id_tenant
             ");
             $stmt->bindParam(':id_rol', $idRol);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $permisos = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
@@ -165,16 +168,21 @@ class PermisosRol
                 SELECT codigo_permiso 
                 FROM permisos_x_rol 
                 WHERE id_rol = :id_rol
+                AND id_tenant = :id_tenant
             ");
             $stmtActuales->bindParam(':id_rol', $idRol);
+            $stmtActuales->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtActuales->execute();
             $codigosAnteriores = $stmtActuales->fetchAll(PDO::FETCH_COLUMN);
 
             // 2. Guardar historial
             $stmtHistorial = $db->prepare("
-                INSERT INTO permisos_historial (id_rol, permisos_anteriores, permisos_nuevos, id_usuario_modifico, fecha)
-                VALUES (:id_rol, :anteriores, :nuevos, :id_usuario, NOW())
+                INSERT INTO permisos_historial (id, id_tenant, id_rol, permisos_anteriores, permisos_nuevos, id_usuario_modifico, fecha)
+                VALUES (:id, :id_tenant, :id_rol, :anteriores, :nuevos, :id_usuario, NOW())
             ");
+            $idHist = Uuid::generar();
+            $stmtHistorial->bindValue(':id', $idHist);
+            $stmtHistorial->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtHistorial->bindParam(':id_rol', $idRol);
             $anterioresJson = json_encode($codigosAnteriores, JSON_UNESCAPED_UNICODE);
             $nuevosJson = json_encode($nuevosCodigos, JSON_UNESCAPED_UNICODE);
@@ -185,14 +193,18 @@ class PermisosRol
             $stmtHistorial->execute();
 
             // 3. Borrar permisos actuales del rol
-            $stmtBorrar = $db->prepare("DELETE FROM permisos_x_rol WHERE id_rol = :id_rol");
+            $stmtBorrar = $db->prepare("DELETE FROM permisos_x_rol WHERE id_rol = :id_rol AND id_tenant = :id_tenant");
             $stmtBorrar->bindParam(':id_rol', $idRol);
+            $stmtBorrar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtBorrar->execute();
 
             // 4. Insertar nuevos permisos por código
             if (!empty($nuevosCodigos)) {
-                $stmtInsertar = $db->prepare("INSERT INTO permisos_x_rol (id_rol, codigo_permiso) VALUES (:id_rol, :codigo_permiso)");
+                $stmtInsertar = $db->prepare("INSERT INTO permisos_x_rol (id, id_tenant, id_rol, codigo_permiso) VALUES (:id, :id_tenant, :id_rol, :codigo_permiso)");
                 foreach ($nuevosCodigos as $codigo) {
+                    $idPxr = Uuid::generar();
+                    $stmtInsertar->bindValue(':id', $idPxr);
+                    $stmtInsertar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $stmtInsertar->bindParam(':id_rol', $idRol);
                     $stmtInsertar->bindParam(':codigo_permiso', $codigo);
                     $stmtInsertar->execute();

@@ -13,9 +13,11 @@ class WaConversaciones
             FROM wa_conversaciones wconv
             INNER JOIN wa_contactos wc ON wconv.id_contacto = wc.id
             LEFT JOIN wa_mensajes wm ON wconv.id = wm.id_conversacion
+            WHERE wconv.id_tenant = :id_tenant
             GROUP BY wconv.id
             ORDER BY wconv.fecha_creacion DESC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         Flight::json($sentence->fetchAll());
     }
@@ -42,7 +44,7 @@ class WaConversaciones
                     WHEN p.id IS NOT NULL THEN CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.primer_apellido, ''))
                     ELSE wc.nombre_whatsapp
                 END AS nombre_display,
-                acud_info.info_acudiente,
+                NULL AS info_acudiente,
                 ult.contenido AS ultimo_mensaje_contenido,
                 ult.tipo AS ultimo_mensaje_tipo,
                 ult.direccion AS ultimo_mensaje_direccion,
@@ -52,27 +54,6 @@ class WaConversaciones
             FROM wa_conversaciones wconv
             INNER JOIN wa_contactos wc ON wconv.id_contacto = wc.id
             LEFT JOIN personas p ON wc.id_persona = p.id
-            LEFT JOIN (
-                SELECT 
-                    a.id_persona,
-                    GROUP_CONCAT(
-                        DISTINCT CONCAT(
-                            ta.nombre, ' de ', 
-                            IFNULL(pe.primer_nombre, ''), ' ', IFNULL(pe.primer_apellido, ''),
-                            IFNULL(CONCAT(' (', g.nombre, ')'), '')
-                        )
-                        ORDER BY e.id ASC
-                        SEPARATOR ' | '
-                    ) AS info_acudiente
-                FROM acudientes a
-                INNER JOIN tipos_acudiente ta ON a.id_tipo_acudiente = ta.id
-                INNER JOIN estudiantes e ON a.id_estudiante = e.id
-                INNER JOIN personas pe ON e.id_persona = pe.id
-                LEFT JOIN estudiantes_x_grupos exg ON e.id = exg.id_estudiante AND exg.activo = 1
-                LEFT JOIN grupos g ON exg.id_grupo = g.id
-                WHERE a.activo = 1 AND e.activo = 1
-                GROUP BY a.id_persona
-            ) acud_info ON wc.id_persona = acud_info.id_persona
             LEFT JOIN (
                 SELECT wm1.id_conversacion, wm1.contenido, wm1.tipo, wm1.direccion, wm1.fecha_creacion, wm1.estado
                 FROM wa_mensajes wm1
@@ -89,8 +70,10 @@ class WaConversaciones
                 GROUP BY id_conversacion
             ) nr ON wconv.id = nr.id_conversacion
             WHERE wconv.activa = 1
+            AND wconv.id_tenant = :id_tenant
             ORDER BY ult.fecha_creacion DESC, wconv.fecha_creacion DESC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         Flight::json($sentence->fetchAll());
     }
@@ -103,8 +86,10 @@ class WaConversaciones
             FROM wa_conversaciones wconv
             INNER JOIN wa_contactos wc ON wconv.id_contacto = wc.id
             WHERE wconv.activa = 1 
+            AND wconv.id_tenant = :id_tenant
             ORDER BY wconv.fecha_creacion DESC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         Flight::json($sentence->fetchAll());
     }
@@ -125,8 +110,10 @@ class WaConversaciones
             INNER JOIN wa_contactos wc ON wconv.id_contacto = wc.id
             LEFT JOIN personas p ON wc.id_persona = p.id
             WHERE wconv.id = :id
+            AND wconv.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         Flight::json($sentence->fetch());
     }
@@ -140,19 +127,25 @@ class WaConversaciones
 
             $sentence = $db->prepare("
                 INSERT INTO wa_conversaciones(
+                    id,
+                    id_tenant,
                     id_contacto,
                     activa
                 ) VALUES (
+                    :id,
+                    :id_tenant,
                     :id_contacto,
                     1
                 )
             ");
 
+            $idConv = Uuid::generar();
+            $sentence->bindValue(':id', $idConv);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_contacto', $id_contacto);
             $sentence->execute();
 
-            $id = $db->lastInsertId();
-            Flight::json(array('id' => $id));
+            Flight::json(array('id' => $idConv));
         } catch (Exception $e) {
             error_log("Error creando conversación WA: " . $e->getMessage());
             Flight::json(array('error' => $e->getMessage()), 500);
@@ -164,8 +157,9 @@ class WaConversaciones
         $db = Flight::db();
         $id = Flight::request()->data['id'];
 
-        $sentence = $db->prepare("UPDATE wa_conversaciones SET activa = 0 WHERE id = :id");
+        $sentence = $db->prepare("UPDATE wa_conversaciones SET activa = 0 WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json(array('success' => true));
@@ -183,10 +177,12 @@ class WaConversaciones
             SELECT * FROM wa_conversaciones 
             WHERE id_contacto = :contacto 
             AND activa = 1
+            AND id_tenant = :id_tenant
             ORDER BY id DESC 
             LIMIT 1
         ");
         $sentence->bindParam(':contacto', $id_contacto);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $conversacion = $sentence->fetch();
 

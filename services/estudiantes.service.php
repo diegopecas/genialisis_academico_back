@@ -15,7 +15,9 @@ class Estudiantes
         FROM estudiantes e 
         INNER JOIN personas p ON e.id_persona = p.id
         INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
-        LEFT JOIN generos g ON p.id_genero = g.id");
+        LEFT JOIN generos g ON p.id_genero = g.id
+        WHERE e.id_tenant = :id_tenant");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -55,9 +57,10 @@ class Estudiantes
         LEFT JOIN generos g ON p.id_genero = g.id
         LEFT JOIN estudiantes_x_grupos eg ON e.id = eg.id_estudiante AND eg.activo = 1
         LEFT JOIN grupos grp ON eg.id_grupo = grp.id
-        WHERE e.id = :id
+        WHERE e.id = :id AND e.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -81,7 +84,10 @@ class Estudiantes
 
             error_log("Datos recibidos para crear estudiante: id_persona=$id_persona, fecha_ingreso=$fecha_ingreso, alimentacion=$alimentacion, permanente=$permanente, telefono_emergencia=$telefono_emergencia, eps=$eps, anno=$anno");
 
+            $idNew = Uuid::generar();
             $sentence = $db->prepare("INSERT INTO estudiantes(
+            id,
+            id_tenant,
             id_persona, 
             fecha_ingreso, 
             activo, 
@@ -91,6 +97,8 @@ class Estudiantes
             eps, 
             anno
         ) VALUES (
+            :id,
+            :id_tenant,
             :id_persona, 
             :fecha_ingreso, 
             1, 
@@ -101,6 +109,8 @@ class Estudiantes
             :anno
         )");
 
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindParam(':fecha_ingreso', $fecha_ingreso);
             $sentence->bindParam(':alimentacion', $alimentacion);
@@ -111,7 +121,7 @@ class Estudiantes
 
             $sentence->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idNew;
 
             if ($id == 0) {
                 error_log("Error: El ID insertado es 0. Verifica la ejecución del INSERT.");
@@ -153,7 +163,8 @@ class Estudiantes
                                 telefono_emergencia = :telefono_emergencia,
                                 eps = :eps,
                                 anno = :anno
-                                WHERE id = :id");
+                                WHERE id = :id AND id_tenant = :id_tenant");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_persona', $id_persona);
         $sentence->bindParam(':fecha_ingreso', $fecha_ingreso);
         $sentence->bindParam(':activo', $activo);
@@ -172,8 +183,9 @@ class Estudiantes
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("DELETE FROM estudiantes WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM estudiantes WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json(array('id' => $id));
@@ -190,9 +202,10 @@ class Estudiantes
                                  INNER JOIN estudiantes e ON exg.id_estudiante = e.id 
                                  INNER JOIN personas p ON e.id_persona = p.id 
                                  INNER JOIN grupos g ON exg.id_grupo = g.id 
-                                 WHERE exg.id_estudiante = :id AND exg.activo = 1
+                                 WHERE exg.id_estudiante = :id AND exg.activo = 1 AND exg.id_tenant = :id_tenant
                                  ORDER BY g.orden");
 
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id', $id);
         $sentence->execute();
         $response = $sentence->fetchAll();
@@ -210,8 +223,9 @@ class Estudiantes
                                  INNER JOIN estudiantes e ON exg.id_estudiante = e.id 
                                  INNER JOIN personas p ON e.id_persona = p.id 
                                  INNER JOIN grupos g ON exg.id_grupo = g.id 
-                                 WHERE e.activo = 1 AND exg.activo = 1
+                                 WHERE e.activo = 1 AND exg.activo = 1 AND exg.id_tenant = :id_tenant
                                  ORDER BY g.orden, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -223,8 +237,9 @@ class Estudiantes
         $id_persona = Flight::request()->data['id_persona'];
         error_log("Datos recibidos para crear verificarDuplicados: id_persona=$id_persona");
 
-        $sentence = $db->prepare("SELECT COUNT(*) as total FROM estudiantes WHERE id_persona = :id_persona");
+        $sentence = $db->prepare("SELECT COUNT(*) as total FROM estudiantes WHERE id_persona = :id_persona AND id_tenant = :id_tenant");
         $sentence->bindParam(':id_persona', $id_persona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetch();
 
@@ -239,7 +254,7 @@ class Estudiantes
             /* ========================================================
                Variable: año académico actual
                ======================================================== */
-            $db->exec("SET @anio_actual = (SELECT valor_texto FROM configuracion_global WHERE clave = 'anio_academico_actual' LIMIT 1)");
+            $db->exec("SET @anio_actual = (SELECT valor_texto FROM configuracion_global WHERE clave = 'anio_academico_actual' AND id_tenant = " . TenantContext::id() . " LIMIT 1)");
 
             /* ========================================================
                Tabla temporal: cobrado por persona, concepto y periodo
@@ -256,7 +271,7 @@ class Estudiantes
                     SUM(CASE WHEN YEAR(cxc.fecha) < @anio_actual THEN cxc.valor ELSE 0 END) AS cobrado_anterior
                 FROM cuentas_por_cobrar cxc
                 INNER JOIN productos_servicios ps ON cxc.id_producto_servicio = ps.id
-                WHERE cxc.anulado = 0
+                WHERE cxc.anulado = 0 AND cxc.id_tenant = " . TenantContext::id() . "
                 GROUP BY cxc.id_persona, clasif, period, categ
             ");
 
@@ -277,7 +292,7 @@ class Estudiantes
                 INNER JOIN cuentas_por_cobrar cxc ON cp.id_cuenta_por_cobrar = cxc.id
                 INNER JOIN pagos_recibidos pr ON cp.id_pago_recibido = pr.id
                 INNER JOIN productos_servicios ps ON cxc.id_producto_servicio = ps.id
-                WHERE cxc.anulado = 0 AND pr.anulado = 0
+                WHERE cxc.anulado = 0 AND pr.anulado = 0 AND cxc.id_tenant = " . TenantContext::id() . "
                 GROUP BY cxc.id_persona, clasif, period, categ
             ");
 
@@ -502,6 +517,7 @@ class Estudiantes
                         FROM tipos_personas_documentos tpd
                         INNER JOIN tipos_documentos td ON tpd.id_tipo_documento = td.id
                         WHERE tpd.id_tipo_persona = 1
+                        AND tpd.id_tenant = " . TenantContext::id() . "
                         AND tpd.obligatorio = 1
                         AND td.activo = 1
                         AND NOT EXISTS (
@@ -517,6 +533,7 @@ class Estudiantes
                         FROM tipos_personas_documentos tpd2
                         INNER JOIN tipos_documentos td2 ON tpd2.id_tipo_documento = td2.id
                         WHERE tpd2.id_tipo_persona = 1
+                        AND tpd2.id_tenant = " . TenantContext::id() . "
                         AND tpd2.obligatorio = 1
                         AND td2.activo = 1
                         AND NOT EXISTS (
@@ -534,9 +551,11 @@ class Estudiantes
                 LEFT JOIN estudiantes_x_grupos eg ON e.id = eg.id_estudiante AND eg.activo = 1
                 LEFT JOIN grupos grp ON eg.id_grupo = grp.id
                 LEFT JOIN tmp_cartera tc ON tc.id_persona = e.id_persona
+                WHERE e.id_tenant = :id_tenant
                 ORDER BY grp.orden, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido
             ");
 
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
 
@@ -601,7 +620,7 @@ class Estudiantes
             }
 
             $placeholders = implode(',', array_fill(0, count($ids), '?'));
-            $sql = "UPDATE estudiantes SET " . implode(', ', $setClauses) . " WHERE id IN ($placeholders)";
+            $sql = "UPDATE estudiantes SET " . implode(', ', $setClauses) . " WHERE id IN ($placeholders) AND id_tenant = ?";
 
             $sentence = $db->prepare($sql);
 
@@ -610,8 +629,9 @@ class Estudiantes
                 $sentence->bindValue($paramIndex++, $value);
             }
             foreach ($ids as $id) {
-                $sentence->bindValue($paramIndex++, $id, PDO::PARAM_INT);
+                $sentence->bindValue($paramIndex++, $id, PDO::PARAM_STR);
             }
+            $sentence->bindValue($paramIndex++, TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
             $actualizados = $sentence->rowCount();
@@ -668,7 +688,8 @@ class Estudiantes
             // ============================================================
             // 1. PERSONA DEL NIÑO: buscar o crear
             // ============================================================
-            $stmt = $db->prepare("SELECT id FROM personas WHERE id_tipo_identificacion = :tipo AND numero_identificacion = :numero");
+            $stmt = $db->prepare("SELECT id FROM personas WHERE id_tipo_identificacion = :tipo AND numero_identificacion = :numero AND id_tenant = :id_tenant");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':tipo', $nino_id_tipo_identificacion);
             $stmt->bindParam(':numero', $nino_numero_identificacion);
             $stmt->execute();
@@ -677,8 +698,11 @@ class Estudiantes
             if ($personaNino) {
                 $id_persona_nino = $personaNino['id'];
             } else {
-                $stmt = $db->prepare("INSERT INTO personas (primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, id_tipo_identificacion, numero_identificacion, fecha_nacimiento, nacionalidad, ocupacion) 
-                    VALUES (:primer_nombre, :segundo_nombre, :primer_apellido, :segundo_apellido, :id_tipo_identificacion, :numero_identificacion, :fecha_nacimiento, 'Colombiana', 'Estudiante')");
+                $idPersonaNino = Uuid::generar();
+                $stmt = $db->prepare("INSERT INTO personas (id, id_tenant, primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, id_tipo_identificacion, numero_identificacion, fecha_nacimiento, nacionalidad, ocupacion) 
+                    VALUES (:id, :id_tenant, :primer_nombre, :segundo_nombre, :primer_apellido, :segundo_apellido, :id_tipo_identificacion, :numero_identificacion, :fecha_nacimiento, 'Colombiana', 'Estudiante')");
+                $stmt->bindValue(':id', $idPersonaNino);
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmt->bindParam(':primer_nombre', $nino_primer_nombre);
                 $stmt->bindParam(':segundo_nombre', $nino_segundo_nombre);
                 $stmt->bindParam(':primer_apellido', $nino_primer_apellido);
@@ -687,7 +711,7 @@ class Estudiantes
                 $stmt->bindParam(':numero_identificacion', $nino_numero_identificacion);
                 $stmt->bindParam(':fecha_nacimiento', $nino_fecha_nacimiento);
                 $stmt->execute();
-                $id_persona_nino = $db->lastInsertId();
+                $id_persona_nino = $idPersonaNino;
 
                 if ($id_persona_nino == 0) {
                     $db->rollBack();
@@ -699,7 +723,8 @@ class Estudiantes
             // ============================================================
             // 2. ESTUDIANTE: verificar que no exista, crear
             // ============================================================
-            $stmt = $db->prepare("SELECT id, activo FROM estudiantes WHERE id_persona = :id_persona");
+            $stmt = $db->prepare("SELECT id, activo FROM estudiantes WHERE id_persona = :id_persona AND id_tenant = :id_tenant");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_persona', $id_persona_nino);
             $stmt->execute();
             $estudianteExistente = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -717,13 +742,16 @@ class Estudiantes
             } else {
                 $fecha_hoy = date('Y-m-d');
                 $anno_actual = date('Y');
-                $stmt = $db->prepare("INSERT INTO estudiantes (id_persona, fecha_ingreso, activo, alimentacion, permanente, telefono_emergencia, eps, anno) 
-                    VALUES (:id_persona, :fecha_ingreso, 1, 0, 0, '', '', :anno)");
+                $idEstudiante = Uuid::generar();
+                $stmt = $db->prepare("INSERT INTO estudiantes (id, id_tenant, id_persona, fecha_ingreso, activo, alimentacion, permanente, telefono_emergencia, eps, anno) 
+                    VALUES (:id, :id_tenant, :id_persona, :fecha_ingreso, 1, 0, 0, '', '', :anno)");
+                $stmt->bindValue(':id', $idEstudiante);
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmt->bindParam(':id_persona', $id_persona_nino);
                 $stmt->bindParam(':fecha_ingreso', $fecha_hoy);
                 $stmt->bindParam(':anno', $anno_actual);
                 $stmt->execute();
-                $id_estudiante = $db->lastInsertId();
+                $id_estudiante = $idEstudiante;
 
                 if ($id_estudiante == 0) {
                     $db->rollBack();
@@ -735,14 +763,16 @@ class Estudiantes
             // ============================================================
             // 3. ASIGNAR GRUPO (si no tiene uno activo)
             // ============================================================
-            $stmt = $db->prepare("SELECT id FROM estudiantes_x_grupos WHERE id_estudiante = :id_estudiante AND activo = 1");
+            $stmt = $db->prepare("SELECT id FROM estudiantes_x_grupos WHERE id_estudiante = :id_estudiante AND activo = 1 AND id_tenant = :id_tenant");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_estudiante', $id_estudiante);
             $stmt->execute();
             $grupoActual = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if (!$grupoActual) {
                 $anno_actual = date('Y');
-                $stmt = $db->prepare("INSERT INTO estudiantes_x_grupos (id_estudiante, id_grupo, anio, activo) VALUES (:id_estudiante, :id_grupo, :anio, 1)");
+                $stmt = $db->prepare("INSERT INTO estudiantes_x_grupos (id_tenant, id_estudiante, id_grupo, anio, activo) VALUES (:id_tenant, :id_estudiante, :id_grupo, :anio, 1)");
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmt->bindParam(':id_estudiante', $id_estudiante);
                 $stmt->bindParam(':id_grupo', $id_grupo);
                 $stmt->bindParam(':anio', $anno_actual);
@@ -752,7 +782,8 @@ class Estudiantes
             // ============================================================
             // 4. PERSONA DEL ACUDIENTE: buscar o crear
             // ============================================================
-            $stmt = $db->prepare("SELECT id FROM personas WHERE id_tipo_identificacion = :tipo AND numero_identificacion = :numero");
+            $stmt = $db->prepare("SELECT id FROM personas WHERE id_tipo_identificacion = :tipo AND numero_identificacion = :numero AND id_tenant = :id_tenant");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':tipo', $acud_id_tipo_identificacion);
             $stmt->bindParam(':numero', $acud_numero_identificacion);
             $stmt->execute();
@@ -761,14 +792,18 @@ class Estudiantes
             if ($personaAcud) {
                 $id_persona_acudiente = $personaAcud['id'];
                 if ($acud_telefono) {
-                    $stmtTel = $db->prepare("UPDATE personas SET telefono = :telefono WHERE id = :id AND (telefono IS NULL OR telefono = '')");
+                    $stmtTel = $db->prepare("UPDATE personas SET telefono = :telefono WHERE id = :id AND id_tenant = :id_tenant AND (telefono IS NULL OR telefono = '')");
+                    $stmtTel->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $stmtTel->bindParam(':telefono', $acud_telefono);
                     $stmtTel->bindParam(':id', $id_persona_acudiente);
                     $stmtTel->execute();
                 }
             } else {
-                $stmt = $db->prepare("INSERT INTO personas (primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, id_tipo_identificacion, numero_identificacion, telefono, nacionalidad) 
-                    VALUES (:primer_nombre, :segundo_nombre, :primer_apellido, :segundo_apellido, :id_tipo_identificacion, :numero_identificacion, :telefono, 'Colombiana')");
+                $idPersonaAcud = Uuid::generar();
+                $stmt = $db->prepare("INSERT INTO personas (id, id_tenant, primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, id_tipo_identificacion, numero_identificacion, telefono, nacionalidad) 
+                    VALUES (:id, :id_tenant, :primer_nombre, :segundo_nombre, :primer_apellido, :segundo_apellido, :id_tipo_identificacion, :numero_identificacion, :telefono, 'Colombiana')");
+                $stmt->bindValue(':id', $idPersonaAcud);
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmt->bindParam(':primer_nombre', $acud_primer_nombre);
                 $stmt->bindParam(':segundo_nombre', $acud_segundo_nombre);
                 $stmt->bindParam(':primer_apellido', $acud_primer_apellido);
@@ -777,7 +812,7 @@ class Estudiantes
                 $stmt->bindParam(':numero_identificacion', $acud_numero_identificacion);
                 $stmt->bindParam(':telefono', $acud_telefono);
                 $stmt->execute();
-                $id_persona_acudiente = $db->lastInsertId();
+                $id_persona_acudiente = $idPersonaAcud;
 
                 if ($id_persona_acudiente == 0) {
                     $db->rollBack();
@@ -789,7 +824,8 @@ class Estudiantes
             // ============================================================
             // 5. ACUDIENTE: verificar duplicado y crear
             // ============================================================
-            $stmt = $db->prepare("SELECT id FROM acudientes WHERE id_estudiante = :id_estudiante AND id_persona = :id_persona AND id_tipo_acudiente = :id_tipo_acudiente");
+            $stmt = $db->prepare("SELECT id FROM acudientes WHERE id_estudiante = :id_estudiante AND id_persona = :id_persona AND id_tipo_acudiente = :id_tipo_acudiente AND id_tenant = :id_tenant");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_estudiante', $id_estudiante);
             $stmt->bindParam(':id_persona', $id_persona_acudiente);
             $stmt->bindParam(':id_tipo_acudiente', $id_tipo_acudiente);
@@ -800,13 +836,16 @@ class Estudiantes
             if ($acudienteExistente) {
                 $id_acudiente = $acudienteExistente['id'];
             } else {
-                $stmt = $db->prepare("INSERT INTO acudientes (id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo) 
-                    VALUES (:id_estudiante, :id_persona, :id_tipo_acudiente, 1, 1, 1, 1)");
+                $idAcudiente = Uuid::generar();
+                $stmt = $db->prepare("INSERT INTO acudientes (id, id_tenant, id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo) 
+                    VALUES (:id, :id_tenant, :id_estudiante, :id_persona, :id_tipo_acudiente, 1, 1, 1, 1)");
+                $stmt->bindValue(':id', $idAcudiente);
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmt->bindParam(':id_estudiante', $id_estudiante);
                 $stmt->bindParam(':id_persona', $id_persona_acudiente);
                 $stmt->bindParam(':id_tipo_acudiente', $id_tipo_acudiente);
                 $stmt->execute();
-                $id_acudiente = $db->lastInsertId();
+                $id_acudiente = $idAcudiente;
             }
 
             $db->commit();
@@ -840,7 +879,7 @@ class Estudiantes
             $db = Flight::db();
 
             /* Variable: año académico actual */
-            $db->exec("SET @anio_actual = (SELECT valor_texto FROM configuracion_global WHERE clave = 'anio_academico_actual' LIMIT 1)");
+            $db->exec("SET @anio_actual = (SELECT valor_texto FROM configuracion_global WHERE clave = 'anio_academico_actual' AND id_tenant = " . TenantContext::id() . " LIMIT 1)");
 
             /* Tabla temporal: cobrado */
             $db->exec("DROP TEMPORARY TABLE IF EXISTS tmp_cobrado");
@@ -855,7 +894,7 @@ class Estudiantes
                     SUM(CASE WHEN YEAR(cxc.fecha) < @anio_actual THEN cxc.valor ELSE 0 END) AS cobrado_anterior
                 FROM cuentas_por_cobrar cxc
                 INNER JOIN productos_servicios ps ON cxc.id_producto_servicio = ps.id
-                WHERE cxc.anulado = 0
+                WHERE cxc.anulado = 0 AND cxc.id_tenant = " . TenantContext::id() . "
                 GROUP BY cxc.id_persona, clasif, period, categ
             ");
 
@@ -874,7 +913,7 @@ class Estudiantes
                 INNER JOIN cuentas_por_cobrar cxc ON cp.id_cuenta_por_cobrar = cxc.id
                 INNER JOIN pagos_recibidos pr ON cp.id_pago_recibido = pr.id
                 INNER JOIN productos_servicios ps ON cxc.id_producto_servicio = ps.id
-                WHERE cxc.anulado = 0 AND pr.anulado = 0
+                WHERE cxc.anulado = 0 AND pr.anulado = 0 AND cxc.id_tenant = " . TenantContext::id() . "
                 GROUP BY cxc.id_persona, clasif, period, categ
             ");
 
@@ -897,7 +936,7 @@ class Estudiantes
                     ) AS saldo_vencido
                 FROM cuentas_por_cobrar cxc
                 INNER JOIN productos_servicios ps ON cxc.id_producto_servicio = ps.id
-                WHERE cxc.anulado = 0
+                WHERE cxc.anulado = 0 AND cxc.id_tenant = " . TenantContext::id() . "
                 AND cxc.fecha < CURDATE()
                 AND (cxc.valor - COALESCE((
                     SELECT SUM(cpx2.valor_aplicado) 
@@ -1124,6 +1163,7 @@ class Estudiantes
                         FROM tipos_personas_documentos tpd
                         INNER JOIN tipos_documentos td ON tpd.id_tipo_documento = td.id
                         WHERE tpd.id_tipo_persona = 1
+                        AND tpd.id_tenant = " . TenantContext::id() . "
                         AND tpd.obligatorio = 1
                         AND td.activo = 1
                         AND NOT EXISTS (
@@ -1139,6 +1179,7 @@ class Estudiantes
                         FROM tipos_personas_documentos tpd2
                         INNER JOIN tipos_documentos td2 ON tpd2.id_tipo_documento = td2.id
                         WHERE tpd2.id_tipo_persona = 1
+                        AND tpd2.id_tenant = " . TenantContext::id() . "
                         AND tpd2.obligatorio = 1
                         AND td2.activo = 1
                         AND NOT EXISTS (
@@ -1161,9 +1202,11 @@ class Estudiantes
                 LEFT JOIN estudiantes_x_grupos eg ON e.id = eg.id_estudiante AND eg.activo = 1
                 LEFT JOIN grupos grp ON eg.id_grupo = grp.id
                 LEFT JOIN tmp_cartera tc ON tc.id_persona = e.id_persona
+                WHERE e.id_tenant = :id_tenant
                 ORDER BY grp.orden, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido
             ");
 
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $estudiantes = $sentence->fetchAll(PDO::FETCH_ASSOC);
 
@@ -1208,9 +1251,11 @@ class Estudiantes
                 INNER JOIN personas pa ON a.id_persona = pa.id
                 INNER JOIN tipos_acudiente ta ON a.id_tipo_acudiente = ta.id
                 WHERE a.activo = 1
+                AND a.id_tenant = :id_tenant
                 ORDER BY e.id, ta.nombre
             ");
 
+            $stmtAcud->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtAcud->execute();
             $acudientes = $stmtAcud->fetchAll(PDO::FETCH_ASSOC);
 

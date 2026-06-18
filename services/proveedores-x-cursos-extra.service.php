@@ -15,7 +15,9 @@ class ProveedoresXCursosExtra
         INNER JOIN proveedores pr ON pxce.id_proveedor = pr.id
         INNER JOIN personas p ON pr.id_persona = p.id
         INNER JOIN cursos_extra ce ON pxce.id_curso_extra = ce.id
+        WHERE pxce.id_tenant = :id_tenant
         ORDER BY nombre_completo");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -32,8 +34,9 @@ class ProveedoresXCursosExtra
         FROM proveedores_x_cursos_extra pxce
         INNER JOIN proveedores pr ON pxce.id_proveedor = pr.id
         INNER JOIN personas p ON pr.id_persona = p.id
-        WHERE pxce.id = :id");
+        WHERE pxce.id = :id AND pxce.id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -50,9 +53,10 @@ class ProveedoresXCursosExtra
         FROM proveedores_x_cursos_extra pxce
         INNER JOIN proveedores pr ON pxce.id_proveedor = pr.id
         INNER JOIN personas p ON pr.id_persona = p.id
-        WHERE pxce.id_curso_extra = :id_curso_extra
+        WHERE pxce.id_curso_extra = :id_curso_extra AND pxce.id_tenant = :id_tenant
         ORDER BY nombre_completo");
         $sentence->bindParam(':id_curso_extra', $id_curso_extra);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -64,12 +68,15 @@ class ProveedoresXCursosExtra
         $id_proveedor = Flight::request()->data['id_proveedor'];
         $id_curso_extra = Flight::request()->data['id_curso_extra'];
 
-        $sentence = $db->prepare("INSERT INTO proveedores_x_cursos_extra(id_proveedor, id_curso_extra, activo, fecha_registro) 
-        VALUES (:id_proveedor, :id_curso_extra, 1, NOW())");
+        $idNew = Uuid::generar();
+        $sentence = $db->prepare("INSERT INTO proveedores_x_cursos_extra(id, id_tenant, id_proveedor, id_curso_extra, activo, fecha_registro) 
+        VALUES (:id, :id_tenant, :id_proveedor, :id_curso_extra, 1, NOW())");
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_proveedor', $id_proveedor);
         $sentence->bindParam(':id_curso_extra', $id_curso_extra);
         $sentence->execute();
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(array('id' => $id));
     }
 
@@ -79,9 +86,10 @@ class ProveedoresXCursosExtra
         $id = Flight::request()->data['id'];
         $activo = Flight::request()->data['activo'];
 
-        $sentence = $db->prepare("UPDATE proveedores_x_cursos_extra SET activo = :activo WHERE id = :id");
+        $sentence = $db->prepare("UPDATE proveedores_x_cursos_extra SET activo = :activo WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':activo', $activo);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }
@@ -90,8 +98,9 @@ class ProveedoresXCursosExtra
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("DELETE FROM proveedores_x_cursos_extra WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM proveedores_x_cursos_extra WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }

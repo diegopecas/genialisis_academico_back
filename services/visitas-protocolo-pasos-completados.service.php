@@ -14,8 +14,10 @@ class VisitasProtocoloPasosCompletados
                 FROM visitas_protocolo_pasos_completados vppc
                 INNER JOIN protocolo_pasos pp ON vppc.id_protocolo_paso = pp.id
                 INNER JOIN visitas v ON vppc.id_visita = v.id
+                WHERE vppc.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC, vppc.fecha_hora DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -39,8 +41,10 @@ class VisitasProtocoloPasosCompletados
                 FROM visitas_protocolo_pasos_completados vppc
                 INNER JOIN protocolo_pasos pp ON vppc.id_protocolo_paso = pp.id
                 WHERE vppc.id = :id
+                AND vppc.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -64,9 +68,11 @@ class VisitasProtocoloPasosCompletados
                 FROM visitas_protocolo_pasos_completados vppc
                 INNER JOIN protocolo_pasos pp ON vppc.id_protocolo_paso = pp.id
                 WHERE vppc.id_visita = :id_visita
+                AND vppc.id_tenant = :id_tenant
                 ORDER BY pp.numero_paso ASC
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -86,12 +92,15 @@ class VisitasProtocoloPasosCompletados
 
             $sentence = $db->prepare("
             INSERT INTO visitas_protocolo_pasos_completados (
-                id_visita, id_protocolo_paso, completado, perfil_usado, notas
+                id, id_tenant, id_visita, id_protocolo_paso, completado, perfil_usado, notas
             ) VALUES (
-                :id_visita, :id_protocolo_paso, :completado, :perfil_usado, :notas
+                :id, :id_tenant, :id_visita, :id_protocolo_paso, :completado, :perfil_usado, :notas
             )
         ");
 
+            $id = Uuid::generar();
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $data['id_visita']);
             $sentence->bindParam(':id_protocolo_paso', $data['id_protocolo_paso']);
             $sentence->bindParam(':completado', $data['completado']);
@@ -99,7 +108,6 @@ class VisitasProtocoloPasosCompletados
             $sentence->bindParam(':notas', $data['notas']);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             // ✅ Si se llamó con parámetro, retornar el ID, sino usar Flight::json
             if ($dataParam !== null) {
@@ -131,12 +139,14 @@ class VisitasProtocoloPasosCompletados
                     perfil_usado = :perfil_usado,
                     notas = :notas
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
 
             $sentence->bindParam(':id', $data['id']);
             $sentence->bindParam(':completado', $data['completado']);
             $sentence->bindParam(':perfil_usado', $data['perfil_usado']);
             $sentence->bindParam(':notas', $data['notas']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
             self::getById($data['id']);
@@ -152,8 +162,9 @@ class VisitasProtocoloPasosCompletados
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_protocolo_pasos_completados WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_protocolo_pasos_completados WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -176,10 +187,12 @@ class VisitasProtocoloPasosCompletados
             $stmt = $db->prepare("
                 SELECT id FROM visitas_protocolo_pasos_completados 
                 WHERE id_visita = :id_visita AND id_protocolo_paso = :id_protocolo_paso
+                AND id_tenant = :id_tenant
             ");
             $stmt->execute([
                 'id_visita' => $id_visita,
-                'id_protocolo_paso' => $id_protocolo_paso
+                'id_protocolo_paso' => $id_protocolo_paso,
+                'id_tenant' => TenantContext::id()
             ]);
             $existe = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -192,29 +205,34 @@ class VisitasProtocoloPasosCompletados
                         notas = :notas,
                         fecha_hora = CURRENT_TIMESTAMP
                     WHERE id = :id
+                    AND id_tenant = :id_tenant
                 ");
                 $stmt->execute([
                     'completado' => $data['completado'],
                     'perfil_usado' => isset($data['perfil_usado']) ? $data['perfil_usado'] : null,
                     'notas' => isset($data['notas']) ? $data['notas'] : null,
-                    'id' => $existe['id']
+                    'id' => $existe['id'],
+                    'id_tenant' => TenantContext::id()
                 ]);
                 Flight::json(array('success' => true, 'id' => $existe['id'], 'action' => 'updated'));
             } else {
                 // Insertar
                 $stmt = $db->prepare("
                     INSERT INTO visitas_protocolo_pasos_completados 
-                    (id_visita, id_protocolo_paso, completado, perfil_usado, notas)
-                    VALUES (:id_visita, :id_protocolo_paso, :completado, :perfil_usado, :notas)
+                    (id, id_tenant, id_visita, id_protocolo_paso, completado, perfil_usado, notas)
+                    VALUES (:id, :id_tenant, :id_visita, :id_protocolo_paso, :completado, :perfil_usado, :notas)
                 ");
+                $idPpc = Uuid::generar();
                 $stmt->execute([
+                    'id' => $idPpc,
+                    'id_tenant' => TenantContext::id(),
                     'id_visita' => $id_visita,
                     'id_protocolo_paso' => $id_protocolo_paso,
                     'completado' => $data['completado'],
                     'perfil_usado' => isset($data['perfil_usado']) ? $data['perfil_usado'] : null,
                     'notas' => isset($data['notas']) ? $data['notas'] : null
                 ]);
-                $id = $db->lastInsertId();
+                $id = $idPpc;
                 Flight::json(array('success' => true, 'id' => $id, 'action' => 'created'));
             }
         } catch (Exception $e) {
@@ -230,7 +248,8 @@ class VisitasProtocoloPasosCompletados
             $db = Flight::db();
 
             // Total de pasos del protocolo
-            $stmt = $db->prepare("SELECT COUNT(*) as total FROM protocolo_pasos WHERE activo = 1");
+            $stmt = $db->prepare("SELECT COUNT(*) as total FROM protocolo_pasos WHERE activo = 1 AND id_tenant = :id_tenant");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $total = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
 
@@ -239,8 +258,9 @@ class VisitasProtocoloPasosCompletados
                 SELECT COUNT(*) as completados 
                 FROM visitas_protocolo_pasos_completados 
                 WHERE id_visita = :id_visita AND completado = 1
+                AND id_tenant = :id_tenant
             ");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
             $completados = $stmt->fetch(PDO::FETCH_ASSOC)['completados'];
 
             $porcentaje = $total > 0 ? round(($completados / $total) * 100, 2) : 0;
@@ -270,8 +290,8 @@ class VisitasProtocoloPasosCompletados
             error_log("📋 Pasos recibidos: " . json_encode($pasos));
 
             // ✅ Eliminar pasos existentes de esta visita
-            $stmt = $db->prepare("DELETE FROM visitas_protocolo_pasos_completados WHERE id_visita = :id_visita");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt = $db->prepare("DELETE FROM visitas_protocolo_pasos_completados WHERE id_visita = :id_visita AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
 
             $totalInsertados = 0;
 

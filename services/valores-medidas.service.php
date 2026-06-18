@@ -10,8 +10,10 @@ class ValoresMedidas
                        m.nombre AS nombre_medida
                 FROM valores_medidas vm
                 INNER JOIN medidas m ON m.id = vm.id_medida
+                WHERE vm.id_tenant = :id_tenant
                 ORDER BY vm.id_medida, vm.orden
             ");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $response = $stmt->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -25,8 +27,9 @@ class ValoresMedidas
     {
         try {
             $db = Flight::db();
-            $stmt = $db->prepare("SELECT id, id_medida, valor_numerico, etiqueta, orden, activo FROM valores_medidas WHERE id = :id");
+            $stmt = $db->prepare("SELECT id, id_medida, valor_numerico, etiqueta, orden, activo FROM valores_medidas WHERE id = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $response = $stmt->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -40,8 +43,9 @@ class ValoresMedidas
     {
         try {
             $db = Flight::db();
-            $stmt = $db->prepare("SELECT id, id_medida, valor_numerico, etiqueta, orden, activo FROM valores_medidas WHERE id_medida = :id_medida ORDER BY orden");
+            $stmt = $db->prepare("SELECT id, id_medida, valor_numerico, etiqueta, orden, activo FROM valores_medidas WHERE id_medida = :id_medida AND id_tenant = :id_tenant ORDER BY orden");
             $stmt->bindParam(':id_medida', $id_medida);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $response = $stmt->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -62,14 +66,17 @@ class ValoresMedidas
             $orden = isset($request->data->orden) ? $request->data->orden : 0;
             $activo = isset($request->data->activo) ? $request->data->activo : 1;
 
-            $stmt = $db->prepare("INSERT INTO valores_medidas (id_medida, valor_numerico, etiqueta, orden, activo) VALUES (:id_medida, :valor_numerico, :etiqueta, :orden, :activo)");
+            $idNew = Uuid::generar();
+            $stmt = $db->prepare("INSERT INTO valores_medidas (id, id_tenant, id_medida, valor_numerico, etiqueta, orden, activo) VALUES (:id, :id_tenant, :id_medida, :valor_numerico, :etiqueta, :orden, :activo)");
+            $stmt->bindValue(':id', $idNew);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_medida', $id_medida);
             $stmt->bindParam(':valor_numerico', $valor_numerico);
             $stmt->bindParam(':etiqueta', $etiqueta);
             $stmt->bindParam(':orden', $orden);
             $stmt->bindParam(':activo', $activo);
             $stmt->execute();
-            $id = $db->lastInsertId();
+            $id = $idNew;
             Flight::json(['id' => $id]);
         } catch (Exception $e) {
             error_log('Error en ValoresMedidas::new: ' . $e->getMessage());
@@ -89,13 +96,14 @@ class ValoresMedidas
             $orden = isset($request->data->orden) ? $request->data->orden : 0;
             $activo = isset($request->data->activo) ? $request->data->activo : 1;
 
-            $stmt = $db->prepare("UPDATE valores_medidas SET id_medida = :id_medida, valor_numerico = :valor_numerico, etiqueta = :etiqueta, orden = :orden, activo = :activo WHERE id = :id");
+            $stmt = $db->prepare("UPDATE valores_medidas SET id_medida = :id_medida, valor_numerico = :valor_numerico, etiqueta = :etiqueta, orden = :orden, activo = :activo WHERE id = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
             $stmt->bindParam(':id_medida', $id_medida);
             $stmt->bindParam(':valor_numerico', $valor_numerico);
             $stmt->bindParam(':etiqueta', $etiqueta);
             $stmt->bindParam(':orden', $orden);
             $stmt->bindParam(':activo', $activo);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             self::getById($id);
         } catch (Exception $e) {
@@ -111,8 +119,9 @@ class ValoresMedidas
             $request = Flight::request();
             $id = $request->data->id;
 
-            $stmt = $db->prepare("DELETE FROM valores_medidas WHERE id = :id");
+            $stmt = $db->prepare("DELETE FROM valores_medidas WHERE id = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             Flight::json(['id' => $id]);
         } catch (Exception $e) {

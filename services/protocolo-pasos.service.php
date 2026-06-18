@@ -4,7 +4,8 @@ class ProtocoloPasos
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM protocolo_pasos WHERE activo = 1 ORDER BY orden");
+        $sentence = $db->prepare("SELECT * FROM protocolo_pasos WHERE activo = 1 AND id_tenant = :id_tenant ORDER BY orden");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -13,8 +14,9 @@ class ProtocoloPasos
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM protocolo_pasos WHERE id = :id");
+        $sentence = $db->prepare("SELECT * FROM protocolo_pasos WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -34,7 +36,10 @@ class ProtocoloPasos
             $orden = isset(Flight::request()->data['orden']) ? Flight::request()->data['orden'] : 0;
             $activo = isset(Flight::request()->data['activo']) ? Flight::request()->data['activo'] : 1;
 
-            $sentence = $db->prepare("INSERT INTO protocolo_pasos (numero_paso, nombre, descripcion, objetivo, script_sugerido, checklist_items, consejos, orden, activo) VALUES (:numero_paso, :nombre, :descripcion, :objetivo, :script_sugerido, :checklist_items, :consejos, :orden, :activo)");
+            $id = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO protocolo_pasos (id, id_tenant, numero_paso, nombre, descripcion, objetivo, script_sugerido, checklist_items, consejos, orden, activo) VALUES (:id, :id_tenant, :numero_paso, :nombre, :descripcion, :objetivo, :script_sugerido, :checklist_items, :consejos, :orden, :activo)");
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':numero_paso', $numero_paso);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':descripcion', $descripcion);
@@ -46,7 +51,6 @@ class ProtocoloPasos
             $sentence->bindParam(':activo', $activo);
             $sentence->execute();
 
-            $id = $db->lastInsertId();
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log("Error en protocolo_pasos new: " . $e->getMessage());
@@ -69,7 +73,7 @@ class ProtocoloPasos
             $orden = isset(Flight::request()->data['orden']) ? Flight::request()->data['orden'] : 0;
             $activo = isset(Flight::request()->data['activo']) ? Flight::request()->data['activo'] : 1;
 
-            $sentence = $db->prepare("UPDATE protocolo_pasos SET numero_paso = :numero_paso, nombre = :nombre, descripcion = :descripcion, objetivo = :objetivo, script_sugerido = :script_sugerido, checklist_items = :checklist_items, consejos = :consejos, orden = :orden, activo = :activo WHERE id = :id");
+            $sentence = $db->prepare("UPDATE protocolo_pasos SET numero_paso = :numero_paso, nombre = :nombre, descripcion = :descripcion, objetivo = :objetivo, script_sugerido = :script_sugerido, checklist_items = :checklist_items, consejos = :consejos, orden = :orden, activo = :activo WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':numero_paso', $numero_paso);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':descripcion', $descripcion);
@@ -80,6 +84,7 @@ class ProtocoloPasos
             $sentence->bindParam(':orden', $orden);
             $sentence->bindParam(':activo', $activo);
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             self::getById($id);
@@ -95,8 +100,9 @@ class ProtocoloPasos
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM protocolo_pasos WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM protocolo_pasos WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));

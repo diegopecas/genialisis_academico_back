@@ -13,8 +13,10 @@ class VisitasPerfilCalculado
                 FROM visitas_perfil_calculado vpc
                 INNER JOIN visitantes v ON vpc.id_visitante = v.id
                 INNER JOIN visitas vis ON v.id_visita = vis.id
+                WHERE vpc.id_tenant = :id_tenant
                 ORDER BY vpc.fecha_calculo DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -37,8 +39,10 @@ class VisitasPerfilCalculado
                 INNER JOIN visitantes v ON vpc.id_visitante = v.id
                 INNER JOIN visitas vis ON v.id_visita = vis.id
                 WHERE vpc.id = :id
+                AND vpc.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -55,10 +59,12 @@ class VisitasPerfilCalculado
             $sentence = $db->prepare("
                 SELECT * FROM visitas_perfil_calculado 
                 WHERE id_visitante = :id_visitante
+                AND id_tenant = :id_tenant
                 ORDER BY fecha_calculo DESC
                 LIMIT 1
             ");
             $sentence->bindParam(':id_visitante', $id_visitante);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -78,12 +84,15 @@ class VisitasPerfilCalculado
 
             $sentence = $db->prepare("
                 INSERT INTO visitas_perfil_calculado (
-                    id_visitante, perfil_sugerido, puntaje_D, puntaje_I, puntaje_S, puntaje_C
+                    id, id_tenant, id_visitante, perfil_sugerido, puntaje_D, puntaje_I, puntaje_S, puntaje_C
                 ) VALUES (
-                    :id_visitante, :perfil_sugerido, :puntaje_D, :puntaje_I, :puntaje_S, :puntaje_C
+                    :id, :id_tenant, :id_visitante, :perfil_sugerido, :puntaje_D, :puntaje_I, :puntaje_S, :puntaje_C
                 )
             ");
 
+            $id = Uuid::generar();
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visitante', $data['id_visitante']);
             $sentence->bindParam(':perfil_sugerido', $data['perfil_sugerido']);
             $sentence->bindParam(':puntaje_D', $data['puntaje_D']);
@@ -92,7 +101,6 @@ class VisitasPerfilCalculado
             $sentence->bindParam(':puntaje_C', $data['puntaje_C']);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             // ✅ Si se llamó desde otro método, retornar el ID
             if ($dataParam !== null) {
@@ -128,6 +136,7 @@ class VisitasPerfilCalculado
                     puntaje_S = :puntaje_S,
                     puntaje_C = :puntaje_C
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
 
             $sentence->bindParam(':id', $data['id']);
@@ -136,6 +145,7 @@ class VisitasPerfilCalculado
             $sentence->bindParam(':puntaje_I', $data['puntaje_I']);
             $sentence->bindParam(':puntaje_S', $data['puntaje_S']);
             $sentence->bindParam(':puntaje_C', $data['puntaje_C']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
 
@@ -163,8 +173,9 @@ class VisitasPerfilCalculado
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_perfil_calculado WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_perfil_calculado WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -205,8 +216,9 @@ public static function calcularPerfil($dataParam = null)
             FROM visitas_observaciones_disc vod
             INNER JOIN parametros_disc pd ON vod.id_parametro_disc = pd.id
             WHERE vod.id_visitante = :id_visitante AND vod.marcado = 1
+            AND vod.id_tenant = :id_tenant
         ");
-        $stmt->execute(['id_visitante' => $id_visitante]);
+        $stmt->execute(['id_visitante' => $id_visitante, 'id_tenant' => TenantContext::id()]);
         $observaciones = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
         error_log("📋 Observaciones encontradas: " . count($observaciones));
@@ -216,12 +228,12 @@ public static function calcularPerfil($dataParam = null)
             error_log("🧹 No hay observaciones, limpiando perfil...");
             
             // Eliminar registro de perfil calculado
-            $stmt = $db->prepare("DELETE FROM visitas_perfil_calculado WHERE id_visitante = :id_visitante");
-            $stmt->execute(['id_visitante' => $id_visitante]);
+            $stmt = $db->prepare("DELETE FROM visitas_perfil_calculado WHERE id_visitante = :id_visitante AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visitante' => $id_visitante, 'id_tenant' => TenantContext::id()]);
             
             // Actualizar visitante para limpiar perfil_disc_calculado
-            $stmt = $db->prepare("UPDATE visitantes SET perfil_disc_calculado = NULL WHERE id = :id");
-            $stmt->execute(['id' => $id_visitante]);
+            $stmt = $db->prepare("UPDATE visitantes SET perfil_disc_calculado = NULL WHERE id = :id AND id_tenant = :id_tenant");
+            $stmt->execute(['id' => $id_visitante, 'id_tenant' => TenantContext::id()]);
             
             error_log("✅ Perfil DISC limpiado para visitante $id_visitante");
             
@@ -259,8 +271,8 @@ public static function calcularPerfil($dataParam = null)
         error_log("🎯 Perfil sugerido: $perfil_sugerido");
 
         // Verificar si ya existe un perfil calculado
-        $stmt = $db->prepare("SELECT id FROM visitas_perfil_calculado WHERE id_visitante = :id_visitante");
-        $stmt->execute(['id_visitante' => $id_visitante]);
+        $stmt = $db->prepare("SELECT id FROM visitas_perfil_calculado WHERE id_visitante = :id_visitante AND id_tenant = :id_tenant");
+        $stmt->execute(['id_visitante' => $id_visitante, 'id_tenant' => TenantContext::id()]);
         $existe = $stmt->fetch(PDO::FETCH_ASSOC);
 
         $dataPerfil = [
@@ -285,8 +297,8 @@ public static function calcularPerfil($dataParam = null)
         }
 
         // Actualizar el perfil en la tabla visitantes
-        $stmt = $db->prepare("UPDATE visitantes SET perfil_disc_calculado = :perfil WHERE id = :id");
-        $stmt->execute(['perfil' => $perfil_sugerido, 'id' => $id_visitante]);
+        $stmt = $db->prepare("UPDATE visitantes SET perfil_disc_calculado = :perfil WHERE id = :id AND id_tenant = :id_tenant");
+        $stmt->execute(['perfil' => $perfil_sugerido, 'id' => $id_visitante, 'id_tenant' => TenantContext::id()]);
 
         $resultado = [
             'success' => true,

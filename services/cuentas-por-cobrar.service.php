@@ -26,10 +26,12 @@ class CuentasPorCobrar
                     cuentas_por_cobrar c
                 LEFT JOIN 
                     cuenta_pagada cp ON c.id = cp.id_cuenta_por_cobrar
+                WHERE c.id_tenant = :id_tenant
                 GROUP BY 
                     c.id, c.id_producto_servicio, c.id_persona, c.fecha, c.valor, c.detalle, c.id_usuario,
                     c.anulado, c.fecha_anulacion, c.id_usuario_anulacion, c.id_horario_alimentacion
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -82,12 +84,13 @@ class CuentasPorCobrar
             LEFT JOIN 
                 pagos_recibidos pr ON cp.id_pago_recibido = pr.id
             WHERE 
-                c.id = :id
+                c.id = :id AND c.id_tenant = :id_tenant
             GROUP BY 
                 c.id, c.id_producto_servicio, c.id_persona, c.fecha, c.valor, c.detalle, c.id_usuario,
                 c.anulado, c.fecha_anulacion, c.id_usuario_anulacion, c.id_horario_alimentacion
         ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -155,6 +158,7 @@ class CuentasPorCobrar
         WHERE 
             cpc.id_persona = :id
             AND (cpc.anulado = 0 OR cpc.anulado IS NULL)
+            AND cpc.id_tenant = :id_tenant
         GROUP BY 
             cpc.id, cpc.fecha, cpc.valor, cpc.detalle, ps.nombre, cps.nombre, 
             p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido,
@@ -164,6 +168,7 @@ class CuentasPorCobrar
             cpc.fecha, cps.nombre, ps.nombre 
     ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -188,14 +193,17 @@ class CuentasPorCobrar
             $data = $request->data->getData();
 
             $sql = "INSERT INTO cuentas_por_cobrar (
-                id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, 
+                id, id_tenant, id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, 
                 anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion
             ) VALUES (
-                :id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario,
+                :id, :id_tenant, :id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario,
                 0, NULL, NULL, :id_horario_alimentacion
             )";
 
             $stmt = $db->prepare($sql);
+            $idCxcNew = Uuid::generar();
+            $stmt->bindValue(':id', $idCxcNew);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_producto_servicio', $data['id_producto_servicio']);
             $stmt->bindParam(':id_persona', $data['id_persona']);
             $stmt->bindParam(':fecha', $data['fecha']);
@@ -205,7 +213,7 @@ class CuentasPorCobrar
             $stmt->bindParam(':id_horario_alimentacion', $data['id_horario_alimentacion']);
             $stmt->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idCxcNew;
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log('Error en cuentas_por_cobrar->new(): ' . $e->getMessage());
@@ -241,7 +249,7 @@ class CuentasPorCobrar
                 $sql .= ", id_usuario_anulacion = :id_usuario_anulacion";
             }
 
-            $sql .= " WHERE id = :id";
+            $sql .= " WHERE id = :id AND id_tenant = :id_tenant";
 
             $stmt = $db->prepare($sql);
             $stmt->bindParam(':id', $data['id']);
@@ -263,6 +271,7 @@ class CuentasPorCobrar
                 $stmt->bindParam(':id_usuario_anulacion', $data['id_usuario_anulacion']);
             }
 
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             if ($stmt->rowCount() == 0) {
@@ -298,12 +307,13 @@ class CuentasPorCobrar
                 anulado = 1,
                 fecha_anulacion = :fecha_anulacion,
                 id_usuario_anulacion = :id_usuario_anulacion
-                WHERE id = :id";
+                WHERE id = :id AND id_tenant = :id_tenant";
 
             $stmt = $db->prepare($sql);
             $stmt->bindParam(':id', $data['id']);
             $stmt->bindParam(':fecha_anulacion', $fechaActual);
             $stmt->bindParam(':id_usuario_anulacion', $data['id_usuario_anulacion']);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             if ($stmt->rowCount() == 0) {
@@ -330,8 +340,9 @@ class CuentasPorCobrar
         try {
             $db = Flight::db();
             $id = Flight::request()->data['id'];
-            $stmt = $db->prepare("DELETE FROM cuentas_por_cobrar WHERE id = :id");
+            $stmt = $db->prepare("DELETE FROM cuentas_por_cobrar WHERE id = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
@@ -367,6 +378,7 @@ class CuentasPorCobrar
                     AND c.valor = :valor
                     AND c.id_horario_alimentacion = :id_horario_alimentacion
                     AND (c.anulado = 0 OR c.anulado IS NULL)
+                    AND c.id_tenant = :id_tenant
                 GROUP BY 
                     c.id, c.fecha, c.valor, c.id_horario_alimentacion";
 
@@ -376,6 +388,7 @@ class CuentasPorCobrar
             $stmt->bindParam(':fecha', $data['fecha']);
             $stmt->bindParam(':valor', $data['valor']);
             $stmt->bindParam(':id_horario_alimentacion', $data['id_horario_alimentacion']);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             $registrosDuplicados = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -464,6 +477,7 @@ class CuentasPorCobrar
                     personas pu ON pu.id = u.id_persona
                 WHERE
                     (c.anulado = 0 OR c.anulado IS NULL)
+                    AND c.id_tenant = :id_tenant
                 GROUP BY 
                     c.id, c.id_producto_servicio, c.id_persona, c.fecha, c.valor, 
                     c.detalle, c.id_usuario, c.anulado, c.fecha_anulacion, 
@@ -475,6 +489,7 @@ class CuentasPorCobrar
                 ORDER BY 
                     c.fecha DESC, p.primer_apellido, p.primer_nombre
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -532,8 +547,10 @@ class CuentasPorCobrar
                 ) cp_sum ON c.id = cp_sum.id_cuenta_por_cobrar
                 WHERE 
                     (c.anulado = 0 OR c.anulado IS NULL)
+                    AND c.id_tenant = :id_tenant
             ");
 
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $resumen = $sentence->fetch();
 
@@ -567,8 +584,9 @@ class CuentasPorCobrar
                 return;
             }
 
-            $stmt = $db->prepare("CALL sp_reporte_anual_cuentas_por_cobrar(:anio)");
+            $stmt = $db->prepare("CALL sp_reporte_anual_cuentas_por_cobrar(:anio, :id_tenant)");
             $stmt->bindParam(':anio', $anio, PDO::PARAM_INT);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             $reporteEstudiantes = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -685,6 +703,7 @@ class CuentasPorCobrar
             WHERE
                 YEAR(c.fecha) = :anio
                 AND (c.anulado = 0 OR c.anulado IS NULL)
+                AND c.id_tenant = :id_tenant
             GROUP BY 
                 c.id, c.id_producto_servicio, c.id_persona, c.fecha, c.valor, 
                 c.detalle, c.id_usuario, c.anulado, c.fecha_anulacion, 
@@ -698,6 +717,7 @@ class CuentasPorCobrar
         ");
 
             $sentence->bindParam(':anio', $anio);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -756,9 +776,11 @@ class CuentasPorCobrar
             WHERE 
                 YEAR(c.fecha) = :anio
                 AND (c.anulado = 0 OR c.anulado IS NULL)
+                AND c.id_tenant = :id_tenant
         ");
 
             $sentence->bindParam(':anio', $anio);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $resumen = $sentence->fetch();
 
@@ -829,13 +851,13 @@ class CuentasPorCobrar
             LEFT JOIN 
                 personas p ON cpc.id_persona = p.id
             WHERE 
-                cpc.id IN ($placeholders)
+                cpc.id IN ($placeholders) AND cpc.id_tenant = ?
             ORDER BY 
                 cpc.fecha ASC
         ";
 
             $sentence = $db->prepare($query);
-            $sentence->execute($ids);
+            $sentence->execute(array_merge($ids, [TenantContext::id()]));
             $response = $sentence->fetchAll();
 
             Flight::json($response);
@@ -866,9 +888,10 @@ class CuentasPorCobrar
                 SELECT cm.id, cm.id_estudiante, cm.anio, e.id_persona
                 FROM contratos_matricula cm
                 INNER JOIN estudiantes e ON cm.id_estudiante = e.id
-                WHERE cm.id = :id_contrato
+                WHERE cm.id = :id_contrato AND cm.id_tenant = :id_tenant
             ");
             $stmtContrato->bindParam(':id_contrato', $id_contrato);
+            $stmtContrato->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtContrato->execute();
             $contrato = $stmtContrato->fetch(PDO::FETCH_ASSOC);
 
@@ -885,10 +908,11 @@ class CuentasPorCobrar
                        ps.id_periodicidad_cobro
                 FROM contratos_matricula_valores cmv
                 INNER JOIN productos_servicios ps ON cmv.id_producto_servicio = ps.id
-                WHERE cmv.id_contrato_matricula = :id_contrato
+                WHERE cmv.id_contrato_matricula = :id_contrato AND cmv.id_tenant = :id_tenant
                 ORDER BY cmv.fecha, ps.id_periodicidad_cobro
             ");
             $stmtValores->bindParam(':id_contrato', $id_contrato);
+            $stmtValores->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtValores->execute();
             $valores = $stmtValores->fetchAll(PDO::FETCH_ASSOC);
 
@@ -904,6 +928,7 @@ class CuentasPorCobrar
                   AND id_producto_servicio = :id_producto_servicio
                   AND fecha = :fecha
                   AND (anulado = 0 OR anulado IS NULL)
+                  AND id_tenant = :id_tenant
             ");
 
             $duplicados = [];
@@ -911,6 +936,7 @@ class CuentasPorCobrar
                 $stmtVerificar->bindParam(':id_persona', $id_persona);
                 $stmtVerificar->bindParam(':id_producto_servicio', $valor['id_producto_servicio']);
                 $stmtVerificar->bindParam(':fecha', $valor['fecha']);
+                $stmtVerificar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtVerificar->execute();
                 $resultado = $stmtVerificar->fetch(PDO::FETCH_ASSOC);
 
@@ -934,10 +960,10 @@ class CuentasPorCobrar
 
             $stmtInsert = $db->prepare("
                 INSERT INTO cuentas_por_cobrar 
-                (id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, 
+                (id, id_tenant, id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, 
                  anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion)
                 VALUES 
-                (:id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario,
+                (:id, :id_tenant, :id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario,
                  0, NULL, NULL, NULL)
             ");
 
@@ -959,6 +985,9 @@ class CuentasPorCobrar
                 $tipoConcepto = ($valor['id_periodicidad_cobro'] == 1) ? 'Matrícula' : 'Pensión';
                 $detalle = "Generado automáticamente - Contrato #{$id_contrato} - {$tipoConcepto} {$nombreMes} {$anioFecha}";
 
+                $idCxc = Uuid::generar();
+                $stmtInsert->bindValue(':id', $idCxc);
+                $stmtInsert->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtInsert->bindParam(':id_producto_servicio', $valor['id_producto_servicio']);
                 $stmtInsert->bindParam(':id_persona', $id_persona);
                 $stmtInsert->bindParam(':fecha', $valor['fecha']);
@@ -1012,11 +1041,12 @@ class CuentasPorCobrar
                 return;
             }
 
-            $idEst = ($idEstudiante !== null && $idEstudiante !== 'null') ? intval($idEstudiante) : null;
+            $idEst = ($idEstudiante !== null && $idEstudiante !== 'null') ? $idEstudiante : null;
 
-            $stmt = $db->prepare("CALL sp_reporte_cartera_estudiantes(:anio, :id_estudiante)");
+            $stmt = $db->prepare("CALL sp_reporte_cartera_estudiantes(:anio, :id_estudiante, :id_tenant)");
             $stmt->bindParam(':anio', $anio, PDO::PARAM_INT);
-            $stmt->bindParam(':id_estudiante', $idEst, PDO::PARAM_INT);
+            $stmt->bindParam(':id_estudiante', $idEst, PDO::PARAM_STR);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             $reporteEstudiantes = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -1132,6 +1162,7 @@ class CuentasPorCobrar
                 WHERE
                     YEAR(c.fecha) = :anio
                     AND (c.anulado = 0 OR c.anulado IS NULL)
+                    AND c.id_tenant = :id_tenant
                 GROUP BY 
                     c.id, c.id_producto_servicio, c.id_persona, c.fecha, c.valor, 
                     c.detalle, c.id_usuario, c.anulado,
@@ -1144,6 +1175,7 @@ class CuentasPorCobrar
             ");
 
             $sentence->bindParam(':anio', $anio, PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -1189,25 +1221,26 @@ class CuentasPorCobrar
                   AND id_producto_servicio = :id_producto_servicio
                   AND fecha = :fecha
                   AND (anulado = 0 OR anulado IS NULL)
+                  AND id_tenant = :id_tenant
             ");
 
             $stmtInsertCuenta = $db->prepare("
                 INSERT INTO cuentas_por_cobrar 
-                (id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, 
+                (id, id_tenant, id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, 
                  anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion)
                 VALUES 
-                (:id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario,
+                (:id, :id_tenant, :id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario,
                  0, NULL, NULL, NULL)
             ");
 
             $stmtInsertRelacion = $db->prepare("
                 INSERT INTO cuentas_cobrar_x_curso_extra 
-                (id_estudiante_x_curso_extra, id_cuenta_por_cobrar, fecha_registro)
-                VALUES (:id_inscripcion, :id_cuenta, NOW())
+                (id, id_tenant, id_estudiante_x_curso_extra, id_cuenta_por_cobrar, fecha_registro)
+                VALUES (:id, :id_tenant, :id_inscripcion, :id_cuenta, NOW())
             ");
 
             $stmtPersona = $db->prepare("
-                SELECT e.id_persona FROM estudiantes e WHERE e.id = :id_estudiante
+                SELECT e.id_persona FROM estudiantes e WHERE e.id = :id_estudiante AND e.id_tenant = :id_tenant
             ");
 
             $cuentasCreadas = 0;
@@ -1236,6 +1269,7 @@ class CuentasPorCobrar
 
                 if (!$idPersonaEst && isset($inscripcion['id_estudiante'])) {
                     $stmtPersona->bindParam(':id_estudiante', $inscripcion['id_estudiante']);
+                    $stmtPersona->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $stmtPersona->execute();
                     $personaResult = $stmtPersona->fetch(PDO::FETCH_ASSOC);
                     $idPersonaEst = $personaResult ? $personaResult['id_persona'] : null;
@@ -1248,6 +1282,7 @@ class CuentasPorCobrar
                     $stmtVerificar->bindParam(':id_persona', $idPersonaEst);
                     $stmtVerificar->bindParam(':id_producto_servicio', $valor['id_producto_servicio']);
                     $stmtVerificar->bindParam(':fecha', $valor['fecha']);
+                    $stmtVerificar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $stmtVerificar->execute();
                     $resultado = $stmtVerificar->fetch(PDO::FETCH_ASSOC);
 
@@ -1267,6 +1302,9 @@ class CuentasPorCobrar
                 foreach ($valores as $valor) {
                     $detalle = $valor['detalle'] ?? "Curso Extra #{$id_curso_extra}";
 
+                    $idCxc2 = Uuid::generar();
+                    $stmtInsertCuenta->bindValue(':id', $idCxc2);
+                    $stmtInsertCuenta->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $stmtInsertCuenta->bindParam(':id_producto_servicio', $valor['id_producto_servicio']);
                     $stmtInsertCuenta->bindParam(':id_persona', $idPersonaEst);
                     $stmtInsertCuenta->bindParam(':fecha', $valor['fecha']);
@@ -1275,8 +1313,11 @@ class CuentasPorCobrar
                     $stmtInsertCuenta->bindParam(':id_usuario', $id_usuario);
                     $stmtInsertCuenta->execute();
 
-                    $idCuenta = $db->lastInsertId();
+                    $idCuenta = $idCxc2;
 
+                    $idRel = Uuid::generar();
+                    $stmtInsertRelacion->bindValue(':id', $idRel);
+                    $stmtInsertRelacion->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $stmtInsertRelacion->bindParam(':id_inscripcion', $idInscripcion);
                     $stmtInsertRelacion->bindParam(':id_cuenta', $idCuenta);
                     $stmtInsertRelacion->execute();

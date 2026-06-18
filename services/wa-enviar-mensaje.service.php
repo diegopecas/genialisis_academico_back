@@ -121,33 +121,35 @@ class WaEnviarMensaje
      */
     private static function resolverConversacion($db, $numeroDestino)
     {
-        $stmt = $db->prepare("SELECT id FROM wa_contactos WHERE numero_telefono = :numero LIMIT 1");
-        $stmt->execute(['numero' => $numeroDestino]);
+        $stmt = $db->prepare("SELECT id FROM wa_contactos WHERE numero_telefono = :numero AND id_tenant = :id_tenant LIMIT 1");
+        $stmt->execute(['numero' => $numeroDestino, 'id_tenant' => TenantContext::id()]);
         $contacto = $stmt->fetch();
         
         if (!$contacto) {
-            $stmt = $db->prepare("INSERT INTO wa_contactos (numero_telefono, fecha_primera_interaccion) VALUES (:numero, NOW())");
-            $stmt->execute(['numero' => $numeroDestino]);
-            $idContacto = $db->lastInsertId();
+            $stmt = $db->prepare("INSERT INTO wa_contactos (id, id_tenant, numero_telefono, fecha_primera_interaccion) VALUES (:id, :id_tenant, :numero, NOW())");
+            $idContactoNew = Uuid::generar();
+            $stmt->execute(['id' => $idContactoNew, 'id_tenant' => TenantContext::id(), 'numero' => $numeroDestino]);
+            $idContacto = $idContactoNew;
         } else {
             $idContacto = $contacto['id'];
         }
         
         $stmt = $db->prepare("
             SELECT id FROM wa_conversaciones 
-            WHERE id_contacto = :contacto AND activa = 1
+            WHERE id_contacto = :contacto AND activa = 1 AND id_tenant = :id_tenant
             ORDER BY id DESC LIMIT 1
         ");
-        $stmt->execute(['contacto' => $idContacto]);
+        $stmt->execute(['contacto' => $idContacto, 'id_tenant' => TenantContext::id()]);
         $conv = $stmt->fetch();
         
         if (!$conv) {
             $stmt = $db->prepare("
-                INSERT INTO wa_conversaciones (id_contacto, activa, fecha_creacion) 
-                VALUES (:contacto, 1, NOW())
+                INSERT INTO wa_conversaciones (id, id_tenant, id_contacto, activa, fecha_creacion) 
+                VALUES (:id, :id_tenant, :contacto, 1, NOW())
             ");
-            $stmt->execute(['contacto' => $idContacto]);
-            $idConversacion = $db->lastInsertId();
+            $idConvNew = Uuid::generar();
+            $stmt->execute(['id' => $idConvNew, 'id_tenant' => TenantContext::id(), 'contacto' => $idContacto]);
+            $idConversacion = $idConvNew;
         } else {
             $idConversacion = $conv['id'];
         }
@@ -164,9 +166,9 @@ class WaEnviarMensaje
         $stmt = $db->prepare("
             SELECT ventana_wa_fin 
             FROM wa_conversaciones 
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
-        $stmt->execute(['id' => $idConversacion]);
+        $stmt->execute(['id' => $idConversacion, 'id_tenant' => TenantContext::id()]);
         $conv = $stmt->fetch();
 
         if (!$conv || !$conv['ventana_wa_fin']) {
@@ -185,8 +187,8 @@ class WaEnviarMensaje
      */
     private static function getWaConfigTenant($db, $clave)
     {
-        $stmt = $db->prepare("SELECT valor FROM wa_config WHERE clave = :clave LIMIT 1");
-        $stmt->execute(['clave' => $clave]);
+        $stmt = $db->prepare("SELECT valor FROM wa_config WHERE clave = :clave AND id_tenant = :id_tenant LIMIT 1");
+        $stmt->execute(['clave' => $clave, 'id_tenant' => TenantContext::id()]);
         $row = $stmt->fetch();
         return $row ? $row['valor'] : null;
     }
@@ -198,16 +200,21 @@ class WaEnviarMensaje
     {
         $stmt = $db->prepare("
             INSERT INTO wa_mensajes (
+                id, id_tenant,
                 id_conversacion, id_mensaje_wa, direccion, tipo,
                 contenido, url_multimedia, nombre_archivo, tipo_mime_multimedia,
                 id_persona_remitente, timestamp_wa, estado, respondido
             ) VALUES (
+                :id, :id_tenant,
                 :id_conversacion, :id_mensaje_wa, 'salida', :tipo,
                 :contenido, :url_multimedia, :nombre_archivo, :tipo_mime,
                 :id_persona_remitente, :timestamp, 'enviado', 0
             )
         ");
+        $idMsg = Uuid::generar();
         $stmt->execute([
+            'id' => $idMsg,
+            'id_tenant' => TenantContext::id(),
             'id_conversacion' => $idConversacion,
             'id_mensaje_wa' => $idMensajeWa,
             'tipo' => $tipo,
@@ -221,10 +228,10 @@ class WaEnviarMensaje
         
         $db->prepare("
             UPDATE wa_mensajes SET respondido = 1 
-            WHERE id_conversacion = :id_conv AND direccion = 'entrada' AND respondido = 0
-        ")->execute(['id_conv' => $idConversacion]);
+            WHERE id_conversacion = :id_conv AND direccion = 'entrada' AND respondido = 0 AND id_tenant = :id_tenant
+        ")->execute(['id_conv' => $idConversacion, 'id_tenant' => TenantContext::id()]);
         
-        return $db->lastInsertId();
+        return $idMsg;
     }
     
     // =============================================

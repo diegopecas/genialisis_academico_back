@@ -42,18 +42,19 @@ class IaCoberturaCurricular
             // Consultar qué áreas ya tienen análisis en BD
             $areasConAnalisis = [];
             if ($id_grupo && $id_corte) {
-                $stmtExistentes = $db->prepare("SELECT id_area, analisis_json, proveedor, tiempo_ms, fecha_actualizacion FROM ia_analisis_cobertura_curricular WHERE id_grupo = :g AND id_corte = :c AND id_area IS NOT NULL");
+                $stmtExistentes = $db->prepare("SELECT id_area, analisis_json, proveedor, tiempo_ms, fecha_actualizacion FROM ia_analisis_cobertura_curricular WHERE id_grupo = :g AND id_corte = :c AND id_area IS NOT NULL AND id_tenant = :id_tenant");
+                $stmtExistentes->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtExistentes->bindValue(':g', $id_grupo);
                 $stmtExistentes->bindValue(':c', $id_corte);
                 $stmtExistentes->execute();
                 $existentes = $stmtExistentes->fetchAll(PDO::FETCH_ASSOC);
                 foreach ($existentes as $e) {
-                    $areasConAnalisis[(int)$e['id_area']] = $e;
+                    $areasConAnalisis[$e['id_area']] = $e;
                 }
             }
 
             foreach ($porArea as $area) {
-                $idAreaActual = (int)$area['id_area'];
+                $idAreaActual = $area['id_area'];
                 $nombreArea = $area['nombre'];
 
                 // Si ya tiene análisis en BD, usarlo
@@ -74,7 +75,7 @@ class IaCoberturaCurricular
 
                 // Filtrar logros de esta área
                 $logrosArea = array_filter($logros, function($l) use ($idAreaActual) {
-                    return (int)$l['id_area'] === $idAreaActual;
+                    return $l['id_area'] === $idAreaActual;
                 });
                 $logrosArea = array_values($logrosArea);
 
@@ -268,29 +269,32 @@ PROMPT;
     private static function guardarEnBD($db, $id_grupo, $id_corte, $id_area, $id_esfera, $analisis_json, $proveedor, $tiempo_ms)
     {
         try {
-            $sql = "SELECT id FROM ia_analisis_cobertura_curricular WHERE id_grupo = :g AND id_corte = :c";
+            $sql = "SELECT id FROM ia_analisis_cobertura_curricular WHERE id_grupo = :g AND id_corte = :c AND id_tenant = :id_tenant";
             $p = [':g' => $id_grupo, ':c' => $id_corte];
             if ($id_area) { $sql .= " AND id_area = :a"; $p[':a'] = $id_area; } else { $sql .= " AND id_area IS NULL"; }
             if ($id_esfera) { $sql .= " AND id_esfera = :e"; $p[':e'] = $id_esfera; } else { $sql .= " AND id_esfera IS NULL"; }
 
             $stmt = $db->prepare($sql);
             foreach ($p as $k => $v) { $stmt->bindValue($k, $v); }
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $existente = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($existente) {
-                $u = $db->prepare("UPDATE ia_analisis_cobertura_curricular SET analisis_json = :j, proveedor = :p, tiempo_ms = :t WHERE id = :id");
+                $u = $db->prepare("UPDATE ia_analisis_cobertura_curricular SET analisis_json = :j, proveedor = :p, tiempo_ms = :t WHERE id = :id AND id_tenant = :id_tenant");
                 $u->bindValue(':j', $analisis_json);
                 $u->bindValue(':p', $proveedor);
                 $u->bindValue(':t', $tiempo_ms);
                 $u->bindValue(':id', $existente['id']);
+                $u->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $u->execute();
             } else {
-                $i = $db->prepare("INSERT INTO ia_analisis_cobertura_curricular (id_grupo, id_corte, id_area, id_esfera, analisis_json, proveedor, tiempo_ms) VALUES (:g, :c, :a, :e, :j, :p, :t)");
+                $i = $db->prepare("INSERT INTO ia_analisis_cobertura_curricular (id_tenant, id_grupo, id_corte, id_area, id_esfera, analisis_json, proveedor, tiempo_ms) VALUES (:id_tenant, :g, :c, :a, :e, :j, :p, :t)");
+                $i->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $i->bindValue(':g', $id_grupo);
                 $i->bindValue(':c', $id_corte);
-                $i->bindValue(':a', $id_area, $id_area ? PDO::PARAM_INT : PDO::PARAM_NULL);
-                $i->bindValue(':e', $id_esfera, $id_esfera ? PDO::PARAM_INT : PDO::PARAM_NULL);
+                $i->bindValue(':a', $id_area, $id_area ? PDO::PARAM_STR : PDO::PARAM_NULL);
+                $i->bindValue(':e', $id_esfera, $id_esfera ? PDO::PARAM_STR : PDO::PARAM_NULL);
                 $i->bindValue(':j', $analisis_json);
                 $i->bindValue(':p', $proveedor);
                 $i->bindValue(':t', $tiempo_ms);
@@ -316,18 +320,19 @@ PROMPT;
 
             // Si viene área, devolver solo esa
             if ($id_area) {
-                $sql = "SELECT id, id_area, analisis_json, proveedor, tiempo_ms, fecha_actualizacion FROM ia_analisis_cobertura_curricular WHERE id_grupo = :g AND id_corte = :c AND id_area = :a LIMIT 1";
+                $sql = "SELECT id, id_area, analisis_json, proveedor, tiempo_ms, fecha_actualizacion FROM ia_analisis_cobertura_curricular WHERE id_grupo = :g AND id_corte = :c AND id_area = :a AND id_tenant = :id_tenant LIMIT 1";
                 $stmt = $db->prepare($sql);
                 $stmt->bindValue(':g', $id_grupo);
                 $stmt->bindValue(':c', $id_corte);
                 $stmt->bindValue(':a', $id_area);
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmt->execute();
                 $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
                 if ($row) {
                     $analisis = json_decode($row['analisis_json'], true);
                     Flight::json(["success" => true, "existe" => true, "resultados" => [[
-                        "id_area" => (int)$row['id_area'],
+                        "id_area" => $row['id_area'],
                         "analisis" => $analisis,
                         "proveedor" => $row['proveedor'],
                         "tiempo_ms" => (int)$row['tiempo_ms'],
@@ -341,10 +346,11 @@ PROMPT;
             }
 
             // Sin área: devolver todos los análisis por área
-            $sql = "SELECT id, id_area, analisis_json, proveedor, tiempo_ms, fecha_actualizacion FROM ia_analisis_cobertura_curricular WHERE id_grupo = :g AND id_corte = :c AND id_area IS NOT NULL ORDER BY id_area";
+            $sql = "SELECT id, id_area, analisis_json, proveedor, tiempo_ms, fecha_actualizacion FROM ia_analisis_cobertura_curricular WHERE id_grupo = :g AND id_corte = :c AND id_area IS NOT NULL AND id_tenant = :id_tenant ORDER BY id_area";
             $stmt = $db->prepare($sql);
             $stmt->bindValue(':g', $id_grupo);
             $stmt->bindValue(':c', $id_corte);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -352,7 +358,7 @@ PROMPT;
             foreach ($rows as $row) {
                 $analisis = json_decode($row['analisis_json'], true);
                 $resultados[] = [
-                    "id_area" => (int)$row['id_area'],
+                    "id_area" => $row['id_area'],
                     "analisis" => $analisis,
                     "proveedor" => $row['proveedor'],
                     "tiempo_ms" => (int)$row['tiempo_ms'],
@@ -391,7 +397,8 @@ PROMPT;
 
     private static function obtenerConfiguracion($db)
     {
-        $sentence = $db->prepare("SELECT clave, valor FROM ia_configuracion");
+        $sentence = $db->prepare("SELECT clave, valor FROM ia_configuracion WHERE id_tenant = :id_tenant");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $rows = $sentence->fetchAll(PDO::FETCH_ASSOC);
         $config = [];

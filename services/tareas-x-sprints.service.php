@@ -27,7 +27,9 @@ class TareasXSprints
         LEFT JOIN estados_tareas et ON txs.id_estado_tarea = et.id
         LEFT JOIN grupos g ON txs.id_grupo = g.id
         LEFT JOIN areas_academicas ar ON txs.id_area_academica = ar.id
+        WHERE txs.id_tenant = :id_tenant
         ORDER BY txs.id DESC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -39,8 +41,9 @@ class TareasXSprints
         $sentence = $db->prepare("SELECT id, id_sprint, id_actividad_academica, id_grupo, id_area_academica,
             id_estado_tarea, observaciones, id_docente, fecha_ejecucion, fecha_registro, id_docente_inicia, fecha_ejecucion_inicia,
             id_horario, dia_semana_horario, hora_inicial_horario, hora_final_horario
-            FROM tareas_x_sprints WHERE id = :id");
+            FROM tareas_x_sprints WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -75,10 +78,11 @@ class TareasXSprints
             LEFT JOIN areas_academicas ar ON txs.id_area_academica = ar.id
             LEFT JOIN docentes d ON txs.id_docente = d.id
             LEFT JOIN personas p ON d.id_persona = p.id
-            WHERE txs.id_sprint = :id_sprint
+            WHERE txs.id_sprint = :id_sprint AND txs.id_tenant = :id_tenant
             ORDER BY txs.id
         ");
         $sentence->bindParam(':id_sprint', $id_sprint);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -128,11 +132,12 @@ class TareasXSprints
             LEFT JOIN indicadores_logros il ON aaxil.id_indicador_logro = il.id
             LEFT JOIN logros l ON il.id_logro = l.id
             LEFT JOIN esferas_desarrollo ed ON l.id_esfera_desarrollo = ed.id
-            WHERE txs.id_sprint = :id_sprint
+            WHERE txs.id_sprint = :id_sprint AND txs.id_tenant = :id_tenant
             GROUP BY txs.id
             ORDER BY txs.id
         ");
         $sentence->bindParam(':id_sprint', $id_sprint);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -152,9 +157,10 @@ class TareasXSprints
         LEFT JOIN estados_tareas et ON txs.id_estado_tarea = et.id
         LEFT JOIN grupos g ON txs.id_grupo = g.id
         LEFT JOIN areas_academicas ar ON txs.id_area_academica = ar.id
-        WHERE txs.id_actividad_academica = :id_actividad
+        WHERE txs.id_actividad_academica = :id_actividad AND txs.id_tenant = :id_tenant
         ORDER BY txs.id");
         $sentence->bindParam(':id_actividad', $id_actividad);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -176,14 +182,19 @@ class TareasXSprints
 
             error_log("Creando tarea: sprint=$id_sprint, actividad=$id_actividad_academica, grupo=$id_grupo, area=$id_area_academica");
 
+            $idNew = Uuid::generar();
             $sentence = $db->prepare("INSERT INTO tareas_x_sprints (
+                id, id_tenant,
                 id_sprint, id_actividad_academica, id_grupo, id_area_academica,
                 id_estado_tarea, id_docente, fecha_ejecucion, fecha_registro, orden_ejecucion
             ) VALUES (
+                :id, :id_tenant,
                 :id_sprint, :id_actividad_academica, :id_grupo, :id_area_academica,
                 :id_estado_tarea, :id_docente, :fecha_ejecucion, :fecha_registro, :orden_ejecucion
             )");
 
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_sprint', $id_sprint);
             $sentence->bindParam(':id_actividad_academica', $id_actividad_academica);
             $sentence->bindParam(':id_grupo', $id_grupo);
@@ -195,7 +206,7 @@ class TareasXSprints
             $sentence->bindParam(':orden_ejecucion', $orden_ejecucion);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
+            $id = $idNew;
 
             error_log("Tarea creada con ID: $id");
             Flight::json(array('id' => $id));
@@ -212,8 +223,9 @@ class TareasXSprints
         $id_docente = Flight::request()->data['id_docente'];
 
         // Obtener grupo de la tarea para calcular estudiantes
-        $stmtTarea = $db->prepare("SELECT id_grupo FROM tareas_x_sprints WHERE id = :id");
+        $stmtTarea = $db->prepare("SELECT id_grupo FROM tareas_x_sprints WHERE id = :id AND id_tenant = :id_tenant");
         $stmtTarea->bindParam(':id', $id);
+        $stmtTarea->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmtTarea->execute();
         $tarea = $stmtTarea->fetch(PDO::FETCH_ASSOC);
 
@@ -229,8 +241,10 @@ class TareasXSprints
                 WHERE exg.id_grupo = :id_grupo 
                 AND exg.activo = 1 
                 AND e.activo = 1
+                AND exg.id_tenant = :id_tenant
             ");
             $stmtGrupo->bindParam(':id_grupo', $tarea['id_grupo']);
+            $stmtGrupo->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtGrupo->execute();
             $resGrupo = $stmtGrupo->fetch(PDO::FETCH_ASSOC);
             $totalGrupo = $resGrupo['total'] ?? 0;
@@ -239,9 +253,10 @@ class TareasXSprints
             $stmtCal = $db->prepare("
                 SELECT COUNT(DISTINCT id_estudiante) as total 
                 FROM calificaciones 
-                WHERE id_tarea_x_sprint = :id
+                WHERE id_tarea_x_sprint = :id AND id_tenant = :id_tenant
             ");
             $stmtCal->bindParam(':id', $id);
+            $stmtCal->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtCal->execute();
             $resCal = $stmtCal->fetch(PDO::FETCH_ASSOC);
             $totalCalificados = $resCal['total'] ?? 0;
@@ -254,12 +269,13 @@ class TareasXSprints
             id_estado_tarea = 2,
             total_estudiantes_grupo = :total_grupo,
             total_estudiantes_calificados = :total_calificados
-            WHERE id = :id");
+            WHERE id = :id AND id_tenant = :id_tenant");
 
         $sentence->bindParam(':id_docente', $id_docente);
         $sentence->bindParam(':total_grupo', $totalGrupo);
         $sentence->bindParam(':total_calificados', $totalCalificados);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }
@@ -285,7 +301,7 @@ class TareasXSprints
             hora_final_horario = :hora_final_horario,
             user_agent = :user_agent,
             huella_dispositivo = :huella_dispositivo
-            WHERE id = :id");
+            WHERE id = :id AND id_tenant = :id_tenant");
 
         $sentence->bindParam(':id_docente', $id_docente);
         $sentence->bindParam(':id_horario', $id_horario);
@@ -295,6 +311,7 @@ class TareasXSprints
         $sentence->bindParam(':user_agent', $user_agent);
         $sentence->bindParam(':huella_dispositivo', $huella_dispositivo);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }
@@ -308,8 +325,9 @@ class TareasXSprints
             error_log("Eliminando tarea ID: $id");
 
             // Verificar si tiene calificaciones asociadas
-            $checkSentence = $db->prepare("SELECT COUNT(*) as total FROM calificaciones WHERE id_tarea_x_sprint = :id");
+            $checkSentence = $db->prepare("SELECT COUNT(*) as total FROM calificaciones WHERE id_tarea_x_sprint = :id AND id_tenant = :id_tenant");
             $checkSentence->bindParam(':id', $id);
+            $checkSentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkSentence->execute();
             $result = $checkSentence->fetch();
 
@@ -318,8 +336,9 @@ class TareasXSprints
                 return;
             }
 
-            $sentence = $db->prepare("DELETE FROM tareas_x_sprints WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM tareas_x_sprints WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             if ($sentence->rowCount() == 0) {
@@ -343,9 +362,10 @@ class TareasXSprints
             SUM(CASE WHEN id_estado_tarea = 1 THEN 1 ELSE 0 END) as tareas_pendientes,
             SUM(CASE WHEN id_estado_tarea = 3 THEN 1 ELSE 0 END) as tareas_canceladas
         FROM tareas_x_sprints
-        WHERE id_sprint = :id_sprint");
+        WHERE id_sprint = :id_sprint AND id_tenant = :id_tenant");
 
         $sentence->bindParam(':id_sprint', $id_sprint);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetch();
 
@@ -364,7 +384,8 @@ class TareasXSprints
             $db = Flight::db();
             $id_sprint = $_GET['id_sprint'] ?? null;
             if (!$id_sprint) {
-                $sprintQuery = $db->prepare("SELECT id FROM sprints WHERE actual = 1 LIMIT 1");
+                $sprintQuery = $db->prepare("SELECT id FROM sprints WHERE actual = 1 AND id_tenant = :id_tenant LIMIT 1");
+                $sprintQuery->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sprintQuery->execute();
                 $sprintActual = $sprintQuery->fetch();
                 $id_sprint = $sprintActual ? $sprintActual['id'] : null;
@@ -379,9 +400,10 @@ class TareasXSprints
             COUNT(DISTINCT txs.id_docente) as cantidad_docentes
             FROM grupos g
             INNER JOIN tareas_x_sprints txs ON g.id = txs.id_grupo
-            WHERE g.id = :id_grupo AND txs.id_sprint = :id_sprint
+            WHERE g.id = :id_grupo AND txs.id_sprint = :id_sprint AND g.id_tenant = :id_tenant
             GROUP BY g.id, g.nombre";
             $stmt = $db->prepare($sql);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_grupo', $id_grupo);
             $stmt->bindParam(':id_sprint', $id_sprint);
             $stmt->execute();
@@ -406,7 +428,8 @@ class TareasXSprints
             $db = Flight::db();
             $id_sprint = $_GET['id_sprint'] ?? null;
             if (!$id_sprint) {
-                $sprintQuery = $db->prepare("SELECT id FROM sprints WHERE actual = 1 LIMIT 1");
+                $sprintQuery = $db->prepare("SELECT id FROM sprints WHERE actual = 1 AND id_tenant = :id_tenant LIMIT 1");
+                $sprintQuery->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sprintQuery->execute();
                 $sprintActual = $sprintQuery->fetch();
                 $id_sprint = $sprintActual ? $sprintActual['id'] : null;
@@ -418,10 +441,11 @@ class TareasXSprints
             AVG(CASE WHEN txs.fecha_ejecucion_inicia IS NOT NULL AND txs.fecha_ejecucion IS NOT NULL THEN TIMESTAMPDIFF(MINUTE, txs.fecha_ejecucion_inicia, txs.fecha_ejecucion) END) as promedio_duracion_minutos
             FROM grupos g
             LEFT JOIN tareas_x_sprints txs ON g.id = txs.id_grupo AND txs.id_sprint = :id_sprint
-            WHERE g.calificable = 1
+            WHERE g.calificable = 1 AND g.id_tenant = :id_tenant
             GROUP BY g.id, g.nombre, g.icono, g.color
             ORDER BY g.orden";
             $stmt = $db->prepare($sql);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_sprint', $id_sprint);
             $stmt->execute();
             $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -446,12 +470,13 @@ class TareasXSprints
             observaciones = :observaciones,
             id_usuario_cambio_estado = :id_usuario_cambio_estado,
             fecha_cambio_estado = NOW()
-            WHERE id = :id");
+            WHERE id = :id AND id_tenant = :id_tenant");
 
             $sentence->bindParam(':id_estado_tarea', $id_estado_tarea);
             $sentence->bindParam(':observaciones', $observaciones);
             $sentence->bindParam(':id_usuario_cambio_estado', $id_usuario_cambio_estado);
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             if ($sentence->rowCount() == 0) {
@@ -505,9 +530,9 @@ class TareasXSprints
             INNER JOIN grupos g ON txs.id_grupo = g.id
             INNER JOIN areas_academicas ar ON txs.id_area_academica = ar.id
             INNER JOIN sprints s ON txs.id_sprint = s.id
-            WHERE txs.id_sprint = :id_sprint";
+            WHERE txs.id_sprint = :id_sprint AND txs.id_tenant = :id_tenant";
 
-            $params = [':id_sprint' => $id_sprint];
+            $params = [':id_sprint' => $id_sprint, ':id_tenant' => TenantContext::id()];
 
             if ($id_grupo) {
                 $sql .= " AND txs.id_grupo = :id_grupo";
@@ -556,12 +581,13 @@ class TareasXSprints
             $db->beginTransaction();
 
             $sentence = $db->prepare("INSERT INTO tareas_x_sprints (
-                id_sprint, id_actividad_academica, id_grupo, id_area_academica,
+                id_tenant, id_sprint, id_actividad_academica, id_grupo, id_area_academica,
                 id_estado_tarea, fecha_registro
             ) VALUES (
-                :id_sprint, :id_actividad_academica, :id_grupo, :id_area_academica,
+                :id_tenant, :id_sprint, :id_actividad_academica, :id_grupo, :id_area_academica,
                 1, NOW()
             )");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $importadas = 0;
             $errores = [];
@@ -635,10 +661,12 @@ class TareasXSprints
                 WHERE txs.id_sprint = :id_sprint
                 AND txs.id_grupo = :id_grupo
                 AND txs.id_area_academica = :id_area
+                AND txs.id_tenant = :id_tenant
                 ORDER BY txs.orden_ejecucion ASC, txs.id ASC
             ");
 
             $sentence->bindParam(':id_sprint', $id_sprint);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_grupo', $id_grupo);
             $sentence->bindParam(':id_area', $id_area);
             $sentence->execute();
@@ -667,7 +695,8 @@ class TareasXSprints
 
             $db->beginTransaction();
 
-            $sentence = $db->prepare("UPDATE tareas_x_sprints SET orden_ejecucion = :orden WHERE id = :id");
+            $sentence = $db->prepare("UPDATE tareas_x_sprints SET orden_ejecucion = :orden WHERE id = :id AND id_tenant = :id_tenant");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $actualizadas = 0;
             foreach ($ordenes as $item) {
@@ -709,8 +738,10 @@ class TareasXSprints
 
             $db->beginTransaction();
 
-            $stmtOrden = $db->prepare("UPDATE tareas_x_sprints SET orden_ejecucion = :orden WHERE id = :id");
-            $stmtDuracion = $db->prepare("UPDATE actividades_academicas SET minutos_duracion = :minutos WHERE id = :id");
+            $stmtOrden = $db->prepare("UPDATE tareas_x_sprints SET orden_ejecucion = :orden WHERE id = :id AND id_tenant = :id_tenant");
+            $stmtDuracion = $db->prepare("UPDATE actividades_academicas SET minutos_duracion = :minutos WHERE id = :id AND id_tenant = :id_tenant");
+            $stmtOrden->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtDuracion->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $ordenesActualizados = 0;
             $duracionesActualizadas = 0;
@@ -755,9 +786,10 @@ class TareasXSprints
             $id = Flight::request()->data['id'];
             $observaciones = Flight::request()->data['observaciones'];
 
-            $sentence = $db->prepare("UPDATE tareas_x_sprints SET observaciones = :observaciones WHERE id = :id");
+            $sentence = $db->prepare("UPDATE tareas_x_sprints SET observaciones = :observaciones WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':observaciones', $observaciones);
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id, 'mensaje' => 'Observación actualizada'));
@@ -795,9 +827,10 @@ class TareasXSprints
             $stmtActuales = $db->prepare("
                 SELECT id, id_actividad_academica, orden_ejecucion, id_estado_tarea
                 FROM tareas_x_sprints
-                WHERE id_sprint = :id_sprint AND id_grupo = :id_grupo AND id_area_academica = :id_area
+                WHERE id_sprint = :id_sprint AND id_grupo = :id_grupo AND id_area_academica = :id_area AND id_tenant = :id_tenant
                 ORDER BY orden_ejecucion ASC, id ASC
             ");
+            $stmtActuales->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtActuales->bindParam(':id_sprint', $id_sprint);
             $stmtActuales->bindParam(':id_grupo', $id_grupo);
             $stmtActuales->bindParam(':id_area', $id_area_academica);
@@ -816,8 +849,10 @@ class TareasXSprints
             }
 
             // 3. Verificar calificaciones antes de eliminar
-            $stmtCheck = $db->prepare("SELECT COUNT(*) as total FROM calificaciones WHERE id_tarea_x_sprint = :id");
-            $stmtEliminar = $db->prepare("DELETE FROM tareas_x_sprints WHERE id = :id");
+            $stmtCheck = $db->prepare("SELECT COUNT(*) as total FROM calificaciones WHERE id_tarea_x_sprint = :id AND id_tenant = :id_tenant");
+            $stmtEliminar = $db->prepare("DELETE FROM tareas_x_sprints WHERE id = :id AND id_tenant = :id_tenant");
+            $stmtCheck->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtEliminar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $eliminadas = 0;
             foreach ($noEjecutadas as $tarea) {
@@ -842,14 +877,16 @@ class TareasXSprints
             }
 
             $stmtCrear = $db->prepare("INSERT INTO tareas_x_sprints (
-                id_sprint, id_actividad_academica, id_grupo, id_area_academica,
+                id_tenant, id_sprint, id_actividad_academica, id_grupo, id_area_academica,
                 id_estado_tarea, fecha_registro, orden_ejecucion
             ) VALUES (
-                :id_sprint, :id_actividad, :id_grupo, :id_area,
+                :id_tenant, :id_sprint, :id_actividad, :id_grupo, :id_area,
                 1, NOW(), :orden
             )");
+            $stmtCrear->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
-            $stmtOrden = $db->prepare("UPDATE tareas_x_sprints SET orden_ejecucion = :orden WHERE id = :id");
+            $stmtOrden = $db->prepare("UPDATE tareas_x_sprints SET orden_ejecucion = :orden WHERE id = :id AND id_tenant = :id_tenant");
+            $stmtOrden->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $creadas = 0;
             $ordenesActualizados = 0;
@@ -975,10 +1012,10 @@ class TareasXSprints
                 LEFT JOIN personas pd ON d.id_persona = pd.id
                 LEFT JOIN docentes d2 ON txs.id_docente = d2.id
                 LEFT JOIN personas pd2 ON d2.id_persona = pd2.id
-                WHERE 1=1
+                WHERE txs.id_tenant = :id_tenant
             ";
 
-            $params = [];
+            $params = [':id_tenant' => TenantContext::id()];
 
             if ($id_sprint) {
                 $sql .= " AND txs.id_sprint = :id_sprint";
@@ -1053,11 +1090,13 @@ class TareasXSprints
                     FROM calificaciones c
                     INNER JOIN valores_parametros_calificaciones vpc ON c.id_valor_parametro_calificacion = vpc.id
                     WHERE c.id_tarea_x_sprint IN ($placeholders)
+                    AND c.id_tenant = ?
                 ";
                 $stmtCal = $db->prepare($sqlCal);
                 foreach ($idsTareas as $idx => $idT) {
                     $stmtCal->bindValue($idx + 1, $idT);
                 }
+                $stmtCal->bindValue(count($idsTareas) + 1, TenantContext::id(), PDO::PARAM_INT);
                 $stmtCal->execute();
                 $calRows = $stmtCal->fetchAll(PDO::FETCH_ASSOC);
 
@@ -1075,8 +1114,10 @@ class TareasXSprints
                 SELECT pc.id, pc.nombre, vpc.id as id_valor, vpc.valor_cuantitativo, vpc.valor_cualitativo, vpc.icono
                 FROM parametros_calificaciones pc
                 INNER JOIN valores_parametros_calificaciones vpc ON pc.id = vpc.id_parametros_calificaciones
+                WHERE pc.id_tenant = :id_tenant
                 ORDER BY pc.id, vpc.valor_cuantitativo
             ");
+            $stmtParams->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtParams->execute();
             $paramRows = $stmtParams->fetchAll(PDO::FETCH_ASSOC);
 
@@ -1085,13 +1126,13 @@ class TareasXSprints
                 $pid = $pr['id'];
                 if (!isset($parametros[$pid])) {
                     $parametros[$pid] = [
-                        'id' => (int)$pid,
+                        'id' => $pid,
                         'nombre' => $pr['nombre'],
                         'valores' => []
                     ];
                 }
                 $parametros[$pid]['valores'][] = [
-                    'id' => (int)$pr['id_valor'],
+                    'id' => $pr['id_valor'],
                     'valor_cuantitativo' => (int)$pr['valor_cuantitativo'],
                     'valor_cualitativo' => $pr['valor_cualitativo'],
                     'icono' => $pr['icono']

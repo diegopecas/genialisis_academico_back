@@ -67,6 +67,7 @@ class Alimentacion
                         AND DATE(ae.fecha_ingreso) = :fecha_ingreso
                     WHERE ps.id_clasificacion_productos_servicios = 3 
                     AND cpc.anulado = 0
+                    AND cpc.id_tenant = :id_tenant
                     AND (
                         (pc.id = 3 AND cpc.fecha = :fecha_cpc) 
                         OR (pc.id = 2 AND YEAR(cpc.fecha) = :anio AND MONTH(cpc.fecha) = :mes)
@@ -78,6 +79,7 @@ class Alimentacion
             $stmtPresentes->bindValue(':fecha_cpc', $fecha);
             $stmtPresentes->bindValue(':anio', $anio);
             $stmtPresentes->bindValue(':mes', $mes);
+            $stmtPresentes->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtPresentes->execute();
             $presentes = $stmtPresentes->fetchAll(PDO::FETCH_ASSOC);
 
@@ -124,6 +126,7 @@ class Alimentacion
                     INNER JOIN personas pu ON u.id_persona = pu.id
                     WHERE ps.id_clasificacion_productos_servicios = 3 
                     AND cpc.anulado = 0
+                    AND cpc.id_tenant = :id_tenant
                     AND pc.id = 2
                     AND YEAR(cpc.fecha) = :anio 
                     AND MONTH(cpc.fecha) = :mes
@@ -138,6 +141,7 @@ class Alimentacion
             $stmtAusentes->bindValue(':fecha_ingreso', $fecha);
             $stmtAusentes->bindValue(':anio', $anio);
             $stmtAusentes->bindValue(':mes', $mes);
+            $stmtAusentes->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtAusentes->execute();
             $ausentes = $stmtAusentes->fetchAll(PDO::FETCH_ASSOC);
 

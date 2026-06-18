@@ -11,9 +11,12 @@ class ClasificacionProductosAlimentacion
                     nombre
                 FROM 
                     clasificacion_productos_alimentacion
+                WHERE 
+                    id_tenant = :id_tenant
                 ORDER BY 
                     nombre
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -39,8 +42,10 @@ class ClasificacionProductosAlimentacion
                     clasificacion_productos_alimentacion
                 WHERE 
                     id = :id
+                    AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -61,17 +66,23 @@ class ClasificacionProductosAlimentacion
             $request = Flight::request();
             $data = $request->data->getData();
 
+            $id = Uuid::generar();
             $sql = "INSERT INTO clasificacion_productos_alimentacion (
+                id,
+                id_tenant,
                 nombre
             ) VALUES (
+                :id,
+                :id_tenant,
                 :nombre
             )";
 
             $stmt = $db->prepare($sql);
+            $stmt->bindValue(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':nombre', $data['nombre']);
             $stmt->execute();
 
-            $id = $db->lastInsertId();
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log('Error en clasificacion_productos_alimentacion->new(): ' . $e->getMessage());
@@ -88,10 +99,11 @@ class ClasificacionProductosAlimentacion
 
             $sql = "UPDATE clasificacion_productos_alimentacion SET
                 nombre = :nombre
-                WHERE id = :id";
+                WHERE id = :id AND id_tenant = :id_tenant";
 
             $stmt = $db->prepare($sql);
             $stmt->bindParam(':id', $data['id']);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':nombre', $data['nombre']);
             $stmt->execute();
 
@@ -118,8 +130,10 @@ class ClasificacionProductosAlimentacion
                 SELECT COUNT(*) as count 
                 FROM productos_alimentacion 
                 WHERE id_clasificacion_productos_alimentacion = :id
+                AND id_tenant = :id_tenant
             ");
             $checkStmt->bindParam(':id', $id);
+            $checkStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkStmt->execute();
             
             $result = $checkStmt->fetch(PDO::FETCH_ASSOC);
@@ -134,8 +148,9 @@ class ClasificacionProductosAlimentacion
             }
             
             // Si no tiene productos asociados, procedemos con la eliminación
-            $stmt = $db->prepare("DELETE FROM clasificacion_productos_alimentacion WHERE id = :id");
+            $stmt = $db->prepare("DELETE FROM clasificacion_productos_alimentacion WHERE id = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             
             Flight::json(array('id' => $id));

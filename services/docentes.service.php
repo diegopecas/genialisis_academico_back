@@ -15,7 +15,9 @@ class Docentes
         INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
         INNER JOIN generos g ON p.id_genero = g.id
         LEFT OUTER JOIN casas_docentes cd ON d.id_casa_docente = cd.id
+        WHERE d.id_tenant = :id_tenant
         ORDER BY p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         foreach ($response as &$row) {
@@ -41,8 +43,9 @@ class Docentes
         INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
         INNER JOIN generos g ON p.id_genero = g.id
         LEFT OUTER JOIN casas_docentes cd ON d.id_casa_docente = cd.id
-        WHERE d.id = :id");
+        WHERE d.id = :id AND d.id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         if (!empty($response)) {
@@ -68,8 +71,9 @@ class Docentes
         INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
         INNER JOIN generos g ON p.id_genero = g.id
         LEFT OUTER JOIN casas_docentes cd ON d.id_casa_docente = cd.id
-        WHERE d.id_persona = :id_persona");
+        WHERE d.id_persona = :id_persona AND d.id_tenant = :id_tenant");
         $sentence->bindParam(':id_persona', $id_persona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -91,8 +95,9 @@ class Docentes
                                 INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
                                 INNER JOIN generos g ON p.id_genero = g.id
                                 LEFT OUTER JOIN casas_docentes cd ON d.id_casa_docente = cd.id
-                                WHERE d.id_colaborador = :id_colaborador");
+                                WHERE d.id_colaborador = :id_colaborador AND d.id_tenant = :id_tenant");
         $sentence->bindParam(':id_colaborador', $id_colaborador);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -109,8 +114,9 @@ class Docentes
 
             error_log("Datos recibidos para crear docente: id_persona=$id_persona, id_casa_docente=$id_casa_docente, id_colaborador=$id_colaborador, activo=$activo");
 
-            $checkSentence = $db->prepare("SELECT id FROM docentes WHERE id_persona = :id_persona");
+            $checkSentence = $db->prepare("SELECT id FROM docentes WHERE id_persona = :id_persona AND id_tenant = :id_tenant");
             $checkSentence->bindParam(':id_persona', $id_persona);
+            $checkSentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkSentence->execute();
             if ($checkSentence->fetch()) {
                 Flight::json(array('error' => 'Ya existe un docente registrado con esta persona'), 400);
@@ -118,8 +124,9 @@ class Docentes
             }
 
             if ($id_colaborador !== null) {
-                $checkColaborador = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador");
+                $checkColaborador = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador AND id_tenant = :id_tenant");
                 $checkColaborador->bindParam(':id_colaborador', $id_colaborador);
+                $checkColaborador->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $checkColaborador->execute();
                 if ($checkColaborador->fetch()) {
                     Flight::json(array('error' => 'Ya existe un docente registrado con este colaborador'), 400);
@@ -127,15 +134,18 @@ class Docentes
                 }
             }
 
-            $sentence = $db->prepare("INSERT INTO docentes(id_persona, id_colaborador, activo, id_casa_docente) 
-                VALUES (:id_persona, :id_colaborador, :activo, :id_casa_docente)");
+            $idNew = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO docentes(id, id_tenant, id_persona, id_colaborador, activo, id_casa_docente) 
+                VALUES (:id, :id_tenant, :id_persona, :id_colaborador, :activo, :id_casa_docente)");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindParam(':id_colaborador', $id_colaborador);
             $sentence->bindParam(':id_casa_docente', $id_casa_docente);
             $sentence->bindParam(':activo', $activo);
             $sentence->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idNew;
             if ($id == 0) {
                 error_log("Error: El ID insertado es 0.");
                 Flight::json(array('error' => 'No se pudo crear el docente. Intente de nuevo.'), 500);
@@ -162,9 +172,10 @@ class Docentes
 
             error_log("Datos recibidos para actualizar docente: id=$id, id_persona=$id_persona, id_casa_docente=$id_casa_docente, id_colaborador=$id_colaborador, activo=$activo");
 
-            $checkSentence = $db->prepare("SELECT id FROM docentes WHERE id_persona = :id_persona AND id != :id");
+            $checkSentence = $db->prepare("SELECT id FROM docentes WHERE id_persona = :id_persona AND id != :id AND id_tenant = :id_tenant");
             $checkSentence->bindParam(':id_persona', $id_persona);
             $checkSentence->bindParam(':id', $id);
+            $checkSentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkSentence->execute();
             if ($checkSentence->fetch()) {
                 Flight::json(array('error' => 'Ya existe otro docente registrado con esta persona'), 400);
@@ -172,9 +183,10 @@ class Docentes
             }
 
             if ($id_colaborador !== null) {
-                $checkColaborador = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador AND id != :id");
+                $checkColaborador = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador AND id != :id AND id_tenant = :id_tenant");
                 $checkColaborador->bindParam(':id_colaborador', $id_colaborador);
                 $checkColaborador->bindParam(':id', $id);
+                $checkColaborador->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $checkColaborador->execute();
                 if ($checkColaborador->fetch()) {
                     Flight::json(array('error' => 'Ya existe otro docente registrado con este colaborador'), 400);
@@ -187,7 +199,8 @@ class Docentes
                 id_colaborador = :id_colaborador,
                 activo = :activo, 
                 id_casa_docente = :id_casa_docente 
-                WHERE id = :id");
+                WHERE id = :id AND id_tenant = :id_tenant");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindParam(':id_colaborador', $id_colaborador);
             $sentence->bindParam(':id_casa_docente', $id_casa_docente);
@@ -209,8 +222,9 @@ class Docentes
             $id = Flight::request()->data['id'];
             error_log("Eliminando docente con id: $id");
 
-            $checkGrupos = $db->prepare("SELECT COUNT(*) as total FROM docentes_x_grupos WHERE id_docente = :id AND activo = 1");
+            $checkGrupos = $db->prepare("SELECT COUNT(*) as total FROM docentes_x_grupos WHERE id_docente = :id AND activo = 1 AND id_tenant = :id_tenant");
             $checkGrupos->bindParam(':id', $id);
+            $checkGrupos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkGrupos->execute();
             $grupos = $checkGrupos->fetch();
             if ($grupos['total'] > 0) {
@@ -218,8 +232,9 @@ class Docentes
                 return;
             }
 
-            $checkAreas = $db->prepare("SELECT COUNT(*) as total FROM area_academica_x_grupo WHERE id_docente = :id");
+            $checkAreas = $db->prepare("SELECT COUNT(*) as total FROM area_academica_x_grupo WHERE id_docente = :id AND id_tenant = :id_tenant");
             $checkAreas->bindParam(':id', $id);
+            $checkAreas->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkAreas->execute();
             $areas = $checkAreas->fetch();
             if ($areas['total'] > 0) {
@@ -227,8 +242,9 @@ class Docentes
                 return;
             }
 
-            $sentence = $db->prepare("DELETE FROM docentes WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM docentes WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             if ($sentence->rowCount() == 0) {
                 Flight::json(array('error' => 'No se encontró el docente con el ID especificado'), 404);
@@ -247,8 +263,9 @@ class Docentes
         $db = Flight::db();
         $id_persona = Flight::request()->data['id_persona'];
         error_log("Verificando duplicados de docente para id_persona: $id_persona");
-        $sentence = $db->prepare("SELECT COUNT(*) as total FROM docentes WHERE id_persona = :id_persona");
+        $sentence = $db->prepare("SELECT COUNT(*) as total FROM docentes WHERE id_persona = :id_persona AND id_tenant = :id_tenant");
         $sentence->bindParam(':id_persona', $id_persona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetch();
         Flight::json(array('existe' => $response['total'] > 0));

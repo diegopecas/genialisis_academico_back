@@ -15,7 +15,8 @@ class Auditoria
             $id_sprint = $_GET['id_sprint'] ?? null;
 
             // Obtener grupos calificables
-            $gruposQuery = $db->prepare("SELECT id, nombre, icono, color FROM grupos WHERE calificable = 1 ORDER BY orden");
+            $gruposQuery = $db->prepare("SELECT id, nombre, icono, color FROM grupos WHERE calificable = 1 AND id_tenant = :id_tenant ORDER BY orden");
+            $gruposQuery->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $gruposQuery->execute();
             $grupos = $gruposQuery->fetchAll(PDO::FETCH_ASSOC);
 
@@ -65,7 +66,7 @@ class Auditoria
             INNER JOIN estudiantes e ON eg.id_estudiante = e.id AND e.activo = 1
             LEFT JOIN medidas_x_estudiantes mxe ON eg.id_estudiante = mxe.id_estudiante 
                 AND mxe.fecha BETWEEN :fecha_inicio2 AND :fecha_fin2
-            WHERE eg.id_grupo = :id_grupo AND eg.activo = 1";
+            WHERE eg.id_grupo = :id_grupo AND eg.activo = 1 AND eg.id_tenant = :id_tenant";
 
         $stmt = $db->prepare($sql);
         $stmt->bindParam(':id_grupo', $id_grupo);
@@ -73,6 +74,7 @@ class Auditoria
         $stmt->bindParam(':fecha_fin1', $fecha_fin);
         $stmt->bindParam(':fecha_inicio2', $fecha_inicio);
         $stmt->bindParam(':fecha_fin2', $fecha_fin);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->execute();
 
         $resultado = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -130,12 +132,14 @@ class Auditoria
                 AND DATE(ae.fecha_ingreso) BETWEEN :fecha_inicio AND :fecha_fin
             WHERE eg.id_grupo = :id_grupo
             AND eg.activo = 1
+            AND eg.id_tenant = :id_tenant
             GROUP BY eg.id_grupo";
 
         $stmt = $db->prepare($sql);
         $stmt->bindParam(':id_grupo', $id_grupo);
         $stmt->bindParam(':fecha_inicio', $fecha_inicio);
         $stmt->bindParam(':fecha_fin', $fecha_fin);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->execute();
 
         $resultado = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -167,7 +171,8 @@ class Auditoria
     private static function obtenerResumenClases($db, $id_grupo, $id_sprint)
     {
         if (!$id_sprint) {
-            $sprintQuery = $db->prepare("SELECT id FROM sprints WHERE actual = 1 LIMIT 1");
+            $sprintQuery = $db->prepare("SELECT id FROM sprints WHERE actual = 1 AND id_tenant = :id_tenant LIMIT 1");
+            $sprintQuery->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sprintQuery->execute();
             $sprintActual = $sprintQuery->fetch();
             $id_sprint = $sprintActual ? $sprintActual['id'] : null;
@@ -226,11 +231,13 @@ class Auditoria
         INNER JOIN actividades_academicas aa ON aaxil.id_actividad_academica = aa.id
         INNER JOIN tareas_x_sprints txs ON aa.id = txs.id_actividad_academica
         WHERE gxg.id_grupo = :id_grupo
-        AND txs.id_sprint = :id_sprint";
+        AND txs.id_sprint = :id_sprint
+        AND txs.id_tenant = :id_tenant";
 
         $stmt = $db->prepare($sql);
         $stmt->bindParam(':id_grupo', $id_grupo);
         $stmt->bindParam(':id_sprint', $id_sprint);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->execute();
 
         $resultado = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -293,12 +300,14 @@ class Auditoria
         AND eg.activo = 1
         AND e.activo = 1
         AND mxe.fecha BETWEEN :fecha_inicio AND :fecha_fin
+        AND mxe.id_tenant = :id_tenant
         ORDER BY mxe.fecha DESC, p.primer_apellido, p.primer_nombre";
 
             $stmt = $db->prepare($sql);
             $stmt->bindParam(':id_grupo', $id_grupo);
             $stmt->bindParam(':fecha_inicio', $fecha_inicio);
             $stmt->bindParam(':fecha_fin', $fecha_fin);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -360,12 +369,14 @@ class Auditoria
         WHERE eg.id_grupo = :id_grupo
         AND eg.activo = 1
         AND DATE(ae.fecha_ingreso) BETWEEN :fecha_inicio AND :fecha_fin
+        AND ae.id_tenant = :id_tenant
         ORDER BY ae.fecha_ingreso DESC";
 
             $stmt = $db->prepare($sql);
             $stmt->bindParam(':id_grupo', $id_grupo);
             $stmt->bindParam(':fecha_inicio', $fecha_inicio);
             $stmt->bindParam(':fecha_fin', $fecha_fin);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -394,7 +405,8 @@ class Auditoria
             }
 
             if (!$id_sprint) {
-                $sprintQuery = $db->prepare("SELECT id FROM sprints WHERE actual = 1 LIMIT 1");
+                $sprintQuery = $db->prepare("SELECT id FROM sprints WHERE actual = 1 AND id_tenant = :id_tenant LIMIT 1");
+                $sprintQuery->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sprintQuery->execute();
                 $sprintActual = $sprintQuery->fetch();
                 $id_sprint = $sprintActual ? $sprintActual['id'] : null;
@@ -437,11 +449,13 @@ class Auditoria
         LEFT JOIN personas pd2 ON d2.id_persona = pd2.id
         WHERE gxg.id_grupo = :id_grupo
         AND txs.id_sprint = :id_sprint
+        AND txs.id_tenant = :id_tenant
         ORDER BY txs.fecha_ejecucion_inicia DESC";
 
             $stmt = $db->prepare($sql);
             $stmt->bindParam(':id_grupo', $id_grupo);
             $stmt->bindParam(':id_sprint', $id_sprint);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);

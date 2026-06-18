@@ -51,10 +51,12 @@ class AsignacionOnces
                         GROUP BY id_estudiante
                     ) ae ON ae.id_estudiante = e.id
                     WHERE e.activo = 1
+                    AND e.id_tenant = :id_tenant
                     ORDER BY g.orden, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido";
 
             $stmt = $db->prepare($sql);
             $stmt->bindValue(':fecha', $fecha);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $todos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -105,7 +107,7 @@ class AsignacionOnces
             }
 
             $fecha      = isset($data['fecha'])      ? $data['fecha']           : date('Y-m-d');
-            $id_horario = isset($data['id_horario']) ? (int)$data['id_horario'] : null;
+            $id_horario = isset($data['id_horario']) ? $data['id_horario'] : null;
 
             if (!$id_horario) {
                 Flight::json(['error' => 'Falta id_horario'], 400);
@@ -121,11 +123,13 @@ class AsignacionOnces
                     FROM cuentas_por_cobrar
                     WHERE fecha = :fecha
                       AND id_horario_alimentacion = :id_horario
-                      AND anulado = 0";
+                      AND anulado = 0
+                      AND id_tenant = :id_tenant";
 
             $stmt = $db->prepare($sql);
             $stmt->bindValue(':fecha',      $fecha);
             $stmt->bindValue(':id_horario', $id_horario);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $asignaciones = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -161,10 +165,10 @@ class AsignacionOnces
             }
 
             $fecha                = isset($data['fecha'])                ? $data['fecha']                     : null;
-            $id_horario           = isset($data['id_horario'])           ? (int)$data['id_horario']           : null;
-            $id_producto_servicio = isset($data['id_producto_servicio']) ? (int)$data['id_producto_servicio'] : null;
+            $id_horario           = isset($data['id_horario'])           ? $data['id_horario']                : null;
+            $id_producto_servicio = isset($data['id_producto_servicio']) ? $data['id_producto_servicio']      : null;
             $valor                = isset($data['valor'])                ? (float)$data['valor']              : 0;
-            $id_usuario           = isset($data['id_usuario'])           ? (int)$data['id_usuario']           : null;
+            $id_usuario           = isset($data['id_usuario'])           ? $data['id_usuario']                : null;
             $detalle              = isset($data['detalle'])              ? $data['detalle']                   : '';
             $estudiantes          = isset($data['estudiantes'])          ? $data['estudiantes']               : [];
 
@@ -176,16 +180,17 @@ class AsignacionOnces
             $db = Flight::db();
 
             $sql = "INSERT INTO cuentas_por_cobrar 
-                        (id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion)
+                        (id_tenant, id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion)
                     VALUES 
-                        (:id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario, 0, NULL, NULL, :id_horario_alimentacion)";
+                        (:id_tenant, :id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario, 0, NULL, NULL, :id_horario_alimentacion)";
 
             $stmt    = $db->prepare($sql);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $creados = 0;
 
             foreach ($estudiantes as $id_persona) {
                 $stmt->bindValue(':id_producto_servicio',    $id_producto_servicio);
-                $stmt->bindValue(':id_persona',              (int)$id_persona);
+                $stmt->bindValue(':id_persona',              $id_persona);
                 $stmt->bindValue(':fecha',                   $fecha);
                 $stmt->bindValue(':valor',                   $valor);
                 $stmt->bindValue(':detalle',                 $detalle);
@@ -200,10 +205,12 @@ class AsignacionOnces
                           FROM cuentas_por_cobrar
                           WHERE fecha = :fecha
                             AND id_horario_alimentacion = :id_horario
-                            AND anulado = 0";
+                            AND anulado = 0
+                            AND id_tenant = :id_tenant";
             $stmtN = $db->prepare($sqlNuevas);
             $stmtN->bindValue(':fecha',      $fecha);
             $stmtN->bindValue(':id_horario', $id_horario);
+            $stmtN->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtN->execute();
             $asignaciones = $stmtN->fetchAll(PDO::FETCH_ASSOC);
 

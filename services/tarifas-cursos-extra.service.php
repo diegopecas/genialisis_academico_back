@@ -19,7 +19,9 @@ class TarifasCursosExtra
         LEFT JOIN productos_servicios pm ON tce.id_producto_matricula = pm.id
         LEFT JOIN productos_servicios pp ON tce.id_producto_pension = pp.id
         LEFT JOIN productos_servicios pu ON tce.id_producto_unico = pu.id
+        WHERE tce.id_tenant = :id_tenant
         ORDER BY tce.anio DESC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -40,8 +42,9 @@ class TarifasCursosExtra
         LEFT JOIN productos_servicios pm ON tce.id_producto_matricula = pm.id
         LEFT JOIN productos_servicios pp ON tce.id_producto_pension = pp.id
         LEFT JOIN productos_servicios pu ON tce.id_producto_unico = pu.id
-        WHERE tce.id = :id");
+        WHERE tce.id = :id AND tce.id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -62,9 +65,10 @@ class TarifasCursosExtra
         LEFT JOIN productos_servicios pm ON tce.id_producto_matricula = pm.id
         LEFT JOIN productos_servicios pp ON tce.id_producto_pension = pp.id
         LEFT JOIN productos_servicios pu ON tce.id_producto_unico = pu.id
-        WHERE tce.id_curso_extra = :id_curso_extra
+        WHERE tce.id_curso_extra = :id_curso_extra AND tce.id_tenant = :id_tenant
         ORDER BY tce.anio DESC");
         $sentence->bindParam(':id_curso_extra', $id_curso_extra);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -84,10 +88,13 @@ class TarifasCursosExtra
         $cuotas_unico = Flight::request()->data['cuotas_unico'];
         $anio = Flight::request()->data['anio'];
 
-        $sentence = $db->prepare("INSERT INTO tarifas_cursos_extra(id_curso_extra, id_producto_matricula, valor_matricula, cuotas_matricula, 
+        $idNew = Uuid::generar();
+        $sentence = $db->prepare("INSERT INTO tarifas_cursos_extra(id, id_tenant, id_curso_extra, id_producto_matricula, valor_matricula, cuotas_matricula, 
         id_producto_pension, valor_pension, id_producto_unico, valor_unico, cuotas_unico, anio) 
-        VALUES (:id_curso_extra, :id_producto_matricula, :valor_matricula, :cuotas_matricula, 
+        VALUES (:id, :id_tenant, :id_curso_extra, :id_producto_matricula, :valor_matricula, :cuotas_matricula, 
         :id_producto_pension, :valor_pension, :id_producto_unico, :valor_unico, :cuotas_unico, :anio)");
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_curso_extra', $id_curso_extra);
         $sentence->bindParam(':id_producto_matricula', $id_producto_matricula);
         $sentence->bindParam(':valor_matricula', $valor_matricula);
@@ -99,7 +106,7 @@ class TarifasCursosExtra
         $sentence->bindParam(':cuotas_unico', $cuotas_unico, PDO::PARAM_INT);
         $sentence->bindParam(':anio', $anio, PDO::PARAM_INT);
         $sentence->execute();
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(array('id' => $id));
     }
 
@@ -121,7 +128,8 @@ class TarifasCursosExtra
         valor_matricula = :valor_matricula, cuotas_matricula = :cuotas_matricula,
         id_producto_pension = :id_producto_pension, valor_pension = :valor_pension, 
         id_producto_unico = :id_producto_unico, valor_unico = :valor_unico, cuotas_unico = :cuotas_unico,
-        anio = :anio WHERE id = :id");
+        anio = :anio WHERE id = :id AND id_tenant = :id_tenant");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_producto_matricula', $id_producto_matricula);
         $sentence->bindParam(':valor_matricula', $valor_matricula);
         $sentence->bindParam(':cuotas_matricula', $cuotas_matricula, PDO::PARAM_INT);
@@ -140,8 +148,9 @@ class TarifasCursosExtra
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("DELETE FROM tarifas_cursos_extra WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM tarifas_cursos_extra WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }

@@ -22,8 +22,8 @@ class WaPushSubscriptions
 
             // Upsert: si el endpoint ya existe, actualizar; si no, insertar
             $stmt = $db->prepare("
-                INSERT INTO wa_push_subscriptions (id_usuario, endpoint, p256dh, auth, activo)
-                VALUES (:id_usuario, :endpoint, :p256dh, :auth, 1)
+                INSERT INTO wa_push_subscriptions (id, id_tenant, id_usuario, endpoint, p256dh, auth, activo)
+                VALUES (:id, :id_tenant, :id_usuario, :endpoint, :p256dh, :auth, 1)
                 ON DUPLICATE KEY UPDATE
                     id_usuario = VALUES(id_usuario),
                     p256dh = VALUES(p256dh),
@@ -32,6 +32,8 @@ class WaPushSubscriptions
                     fecha_actualizacion = NOW()
             ");
             $stmt->execute([
+                'id'         => Uuid::generar(),
+                'id_tenant'  => TenantContext::id(),
                 'id_usuario' => $idUsuario,
                 'endpoint'   => $endpoint,
                 'p256dh'     => $p256dh,
@@ -61,8 +63,8 @@ class WaPushSubscriptions
                 return;
             }
 
-            $stmt = $db->prepare("DELETE FROM wa_push_subscriptions WHERE endpoint = :endpoint");
-            $stmt->execute(['endpoint' => $endpoint]);
+            $stmt = $db->prepare("DELETE FROM wa_push_subscriptions WHERE endpoint = :endpoint AND id_tenant = :id_tenant");
+            $stmt->execute(['endpoint' => $endpoint, 'id_tenant' => TenantContext::id()]);
 
             Flight::json(['success' => true]);
 

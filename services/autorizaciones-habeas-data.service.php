@@ -7,7 +7,8 @@ class AutorizacionesHabeasData
     private static function getVersionActual()
     {
         $db = Flight::db();
-        $stmt = $db->prepare("SELECT valor_texto FROM configuracion_global WHERE clave = 'habeas_data_version_actual' LIMIT 1");
+        $stmt = $db->prepare("SELECT valor_texto FROM configuracion_global WHERE clave = 'habeas_data_version_actual' AND id_tenant = :id_tenant LIMIT 1");
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->execute();
         $row = $stmt->fetch();
         return $row ? $row['valor_texto'] : '1.0';
@@ -19,9 +20,11 @@ class AutorizacionesHabeasData
             $db = Flight::db();
             $sentence = $db->prepare("SELECT * FROM autorizaciones_habeas_data 
                                       WHERE id_usuario = :id_usuario 
+                                      AND id_tenant = :id_tenant
                                       ORDER BY fecha_aceptacion DESC 
                                       LIMIT 1");
             $sentence->bindParam(':id_usuario', $id_usuario);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetch();
 
@@ -44,8 +47,9 @@ class AutorizacionesHabeasData
             // Leer versión desde configuracion_global
             $version_actual = self::getVersionActual();
             // Consultar todos los registros del usuario para debug
-            $stmtDebug = $db->prepare("SELECT id, id_usuario, version_politica FROM autorizaciones_habeas_data WHERE id_usuario = :id_usuario");
+            $stmtDebug = $db->prepare("SELECT id, id_usuario, version_politica FROM autorizaciones_habeas_data WHERE id_usuario = :id_usuario AND id_tenant = :id_tenant");
             $stmtDebug->bindParam(':id_usuario', $id_usuario);
+            $stmtDebug->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtDebug->execute();
             $registros = $stmtDebug->fetchAll();
             
@@ -54,9 +58,11 @@ class AutorizacionesHabeasData
             $sentence = $db->prepare("SELECT id FROM autorizaciones_habeas_data 
                                   WHERE id_usuario = :id_usuario 
                                   AND version_politica = :version
+                                  AND id_tenant = :id_tenant
                                   LIMIT 1");
             $sentence->bindParam(':id_usuario', $id_usuario);
             $sentence->bindParam(':version', $version_actual);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetch();
             Flight::json(array(
@@ -85,7 +91,8 @@ class AutorizacionesHabeasData
             $version_actual = self::getVersionActual();
 
             // Buscar todas las plantillas de habeas data
-            $sentence = $db->prepare("SELECT contenido FROM plantillas WHERE clave = 'politica_habeas_data'");
+            $sentence = $db->prepare("SELECT contenido FROM plantillas WHERE clave = 'politica_habeas_data' AND id_tenant = :id_tenant");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $plantillas = $sentence->fetchAll();
 
@@ -114,7 +121,9 @@ class AutorizacionesHabeasData
                                             WHERE clave IN (
                                                 'institucion_nombre', 'institucion_nit', 'institucion_direccion',
                                                 'institucion_telefono', 'institucion_email', 'institucion_web'
-                                            )");
+                                            )
+                                            AND id_tenant = :id_tenant");
+                $stmtConfig->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtConfig->execute();
                 $configs = $stmtConfig->fetchAll();
 
@@ -157,10 +166,13 @@ class AutorizacionesHabeasData
                 return;
             }
 
+            $id = Uuid::generar();
             $sentence = $db->prepare("INSERT INTO autorizaciones_habeas_data 
-                (id_usuario, id_persona, version_politica, ip_address, user_agent)
-                VALUES (:id_usuario, :id_persona, :version_politica, :ip_address, :user_agent)");
+                (id, id_tenant, id_usuario, id_persona, version_politica, ip_address, user_agent)
+                VALUES (:id, :id_tenant, :id_usuario, :id_persona, :version_politica, :ip_address, :user_agent)");
 
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_usuario', $id_usuario);
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindParam(':version_politica', $version_politica);
@@ -168,7 +180,6 @@ class AutorizacionesHabeasData
             $sentence->bindParam(':user_agent', $user_agent);
             $sentence->execute();
 
-            $id = $db->lastInsertId();
             Flight::json(array(
                 'id' => $id,
                 'mensaje' => 'Autorización registrada correctamente'

@@ -21,8 +21,10 @@ class HistorialRecordatoriosGenerales
                     hrg.id_usuario,
                     hrg.fecha_envio
                 FROM historial_recordatorios_generales hrg
+                WHERE hrg.id_tenant = :id_tenant
                 ORDER BY hrg.fecha_envio DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -52,10 +54,11 @@ class HistorialRecordatoriosGenerales
                     hrg.id_usuario,
                     hrg.fecha_envio
                 FROM historial_recordatorios_generales hrg
-                WHERE hrg.id_estudiante = :id_estudiante
+                WHERE hrg.id_estudiante = :id_estudiante AND hrg.id_tenant = :id_tenant
                 ORDER BY hrg.fecha_envio DESC
             ");
-            $sentence->bindParam(':id_estudiante', $id, PDO::PARAM_INT);
+            $sentence->bindParam(':id_estudiante', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -83,29 +86,32 @@ class HistorialRecordatoriosGenerales
             $fecha_compromiso = isset($request->data['fecha_compromiso']) ? $request->data['fecha_compromiso'] : null;
             $id_usuario = isset($request->data['id_usuario']) ? $request->data['id_usuario'] : null;
 
+            $idNew = Uuid::generar();
             $sentence = $db->prepare("
                 INSERT INTO historial_recordatorios_generales (
-                    id_estudiante, id_persona_acudiente, telefono_usado, nombre_destinatario,
+                    id, id_tenant, id_estudiante, id_persona_acudiente, telefono_usado, nombre_destinatario,
                     tipo_recordatorio, medio_envio, compromiso, fecha_compromiso, id_usuario
                 ) VALUES (
-                    :id_estudiante, :id_persona_acudiente, :telefono_usado, :nombre_destinatario,
+                    :id, :id_tenant, :id_estudiante, :id_persona_acudiente, :telefono_usado, :nombre_destinatario,
                     :tipo_recordatorio, :medio_envio, :compromiso, :fecha_compromiso, :id_usuario
                 )
             ");
 
-            $sentence->bindParam(':id_estudiante', $id_estudiante, PDO::PARAM_INT);
-            $sentence->bindParam(':id_persona_acudiente', $id_persona_acudiente, PDO::PARAM_INT);
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindParam(':id_estudiante', $id_estudiante);
+            $sentence->bindParam(':id_persona_acudiente', $id_persona_acudiente);
             $sentence->bindParam(':telefono_usado', $telefono_usado);
             $sentence->bindParam(':nombre_destinatario', $nombre_destinatario);
             $sentence->bindParam(':tipo_recordatorio', $tipo_recordatorio);
             $sentence->bindParam(':medio_envio', $medio_envio);
             $sentence->bindParam(':compromiso', $compromiso);
             $sentence->bindParam(':fecha_compromiso', $fecha_compromiso);
-            $sentence->bindParam(':id_usuario', $id_usuario, PDO::PARAM_INT);
+            $sentence->bindParam(':id_usuario', $id_usuario);
 
             $sentence->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idNew;
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log('Error en HistorialRecordatoriosGenerales::new: ' . $e->getMessage());
@@ -129,10 +135,11 @@ class HistorialRecordatoriosGenerales
                 UPDATE historial_recordatorios_generales SET
                     compromiso = :compromiso,
                     fecha_compromiso = :fecha_compromiso
-                WHERE id = :id
+                WHERE id = :id AND id_tenant = :id_tenant
             ");
 
-            $sentence->bindParam(':id', $id, PDO::PARAM_INT);
+            $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':compromiso', $compromiso);
             $sentence->bindParam(':fecha_compromiso', $fecha_compromiso);
 

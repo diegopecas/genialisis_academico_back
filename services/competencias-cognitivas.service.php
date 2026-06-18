@@ -4,7 +4,8 @@ class CompetenciasCognitivas
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM competencias_cognitivas ORDER BY nombre ASC");
+        $sentence = $db->prepare("SELECT * FROM competencias_cognitivas WHERE id_tenant = :id_tenant ORDER BY nombre ASC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -13,8 +14,9 @@ class CompetenciasCognitivas
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM competencias_cognitivas WHERE id = :id");
+        $sentence = $db->prepare("SELECT * FROM competencias_cognitivas WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -29,12 +31,15 @@ class CompetenciasCognitivas
             
             error_log("Creando competencia cognitiva: nombre=$nombre");
             
-            $sentence = $db->prepare("INSERT INTO competencias_cognitivas (nombre, descripcion) VALUES (:nombre, :descripcion)");
+            $idNew = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO competencias_cognitivas (id, id_tenant, nombre, descripcion) VALUES (:id, :id_tenant, :nombre, :descripcion)");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':descripcion', $descripcion);
             $sentence->execute();
             
-            $id = $db->lastInsertId();
+            $id = $idNew;
             error_log("Competencia cognitiva creada con ID: $id");
             
             Flight::json(array('id' => $id));
@@ -59,10 +64,11 @@ class CompetenciasCognitivas
                 return;
             }
             
-            $sentence = $db->prepare("UPDATE competencias_cognitivas SET nombre = :nombre, descripcion = :descripcion WHERE id = :id");
+            $sentence = $db->prepare("UPDATE competencias_cognitivas SET nombre = :nombre, descripcion = :descripcion WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':descripcion', $descripcion);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             if ($sentence->rowCount() == 0) {
@@ -86,8 +92,9 @@ class CompetenciasCognitivas
             
             error_log("Eliminando competencia cognitiva ID: $id");
             
-            $sentence = $db->prepare("DELETE FROM competencias_cognitivas WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM competencias_cognitivas WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             Flight::json(array('id' => $id));

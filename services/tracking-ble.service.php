@@ -21,9 +21,11 @@ class TrackingBle
             INNER JOIN areas_fisicas af ON t.id_area_fisica = af.id
             INNER JOIN dispositivos_ble d ON t.id_dispositivo = d.id
             INNER JOIN beacons_ble b ON t.id_beacon = b.id
+            WHERE t.id_tenant = :id_tenant
             ORDER BY t.fecha_evento DESC
             LIMIT 200
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -46,8 +48,10 @@ class TrackingBle
             INNER JOIN dispositivos_ble d ON t.id_dispositivo = d.id
             INNER JOIN beacons_ble b ON t.id_beacon = b.id
             WHERE t.id = :id
+            AND t.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -71,7 +75,7 @@ class TrackingBle
 
         // Validar dispositivo por API Key
         $stmt = $db->prepare("
-            SELECT d.id, d.id_area_fisica, d.nombre, af.nombre as nombre_area
+            SELECT d.id, d.id_tenant, d.id_area_fisica, d.nombre, af.nombre as nombre_area
             FROM dispositivos_ble d
             INNER JOIN areas_fisicas af ON d.id_area_fisica = af.id
             WHERE d.api_key = :api_key AND d.activo = 1
@@ -87,6 +91,7 @@ class TrackingBle
 
         $id_dispositivo = $dispositivo['id'];
         $id_area = $dispositivo['id_area_fisica'];
+        $id_tenant = $dispositivo['id_tenant'];
 
         // Obtener IDs de tipos de evento
         $tiposStmt = $db->prepare("SELECT id, nombre FROM tipos_eventos_tracking WHERE activo = 1");
@@ -111,8 +116,9 @@ class TrackingBle
             $id_tipo_evento = $tiposEvento[$evento];
 
             // Buscar beacon registrado
-            $beaconStmt = $db->prepare("SELECT id FROM beacons_ble WHERE mac_address = :mac AND activo = 1");
+            $beaconStmt = $db->prepare("SELECT id FROM beacons_ble WHERE mac_address = :mac AND activo = 1 AND id_tenant = :id_tenant");
             $beaconStmt->bindParam(':mac', $mac);
+            $beaconStmt->bindValue(':id_tenant', $id_tenant, PDO::PARAM_INT);
             $beaconStmt->execute();
             $beacon = $beaconStmt->fetch();
 
@@ -124,10 +130,13 @@ class TrackingBle
             $id_beacon = $beacon['id'];
 
             // Registrar evento
+            $idTrk = Uuid::generar();
             $logStmt = $db->prepare("
-                INSERT INTO tracking_ble(id_beacon, id_dispositivo, id_area_fisica, id_tipo_evento, rssi, fecha_evento)
-                VALUES (:id_beacon, :id_dispositivo, :id_area, :id_tipo_evento, :rssi, NOW())
+                INSERT INTO tracking_ble(id, id_tenant, id_beacon, id_dispositivo, id_area_fisica, id_tipo_evento, rssi, fecha_evento)
+                VALUES (:id, :id_tenant, :id_beacon, :id_dispositivo, :id_area, :id_tipo_evento, :rssi, NOW())
             ");
+            $logStmt->bindValue(':id', $idTrk);
+            $logStmt->bindValue(':id_tenant', $id_tenant, PDO::PARAM_INT);
             $logStmt->bindParam(':id_beacon', $id_beacon);
             $logStmt->bindParam(':id_dispositivo', $id_dispositivo);
             $logStmt->bindParam(':id_area', $id_area);
@@ -181,8 +190,10 @@ class TrackingBle
             LEFT JOIN areas_fisicas af ON ultimo.id_area_fisica = af.id
             LEFT JOIN tipos_eventos_tracking tet ON ultimo.id_tipo_evento = tet.id
             WHERE b.activo = 1
+            AND b.id_tenant = :id_tenant
             ORDER BY af.nombre ASC, p.primer_nombre ASC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -217,10 +228,12 @@ class TrackingBle
             LEFT JOIN tipos_eventos_tracking tet ON ultimo.id_tipo_evento = tet.id
             WHERE ultimo.id_area_fisica = :id_area 
             AND b.activo = 1
+            AND b.id_tenant = :id_tenant
             AND tet.nombre != 'SALIDA'
             ORDER BY p.primer_nombre ASC
         ");
         $sentence->bindParam(':id_area', $id_area);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -246,10 +259,12 @@ class TrackingBle
             INNER JOIN areas_fisicas af ON t.id_area_fisica = af.id
             INNER JOIN dispositivos_ble d ON t.id_dispositivo = d.id
             WHERE t.id_beacon = :id_beacon
+            AND t.id_tenant = :id_tenant
             AND DATE(t.fecha_evento) BETWEEN :fecha_inicio AND :fecha_fin
             ORDER BY t.fecha_evento DESC
             LIMIT 500
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_beacon', $id_beacon);
         $sentence->bindParam(':fecha_inicio', $fecha_inicio);
         $sentence->bindParam(':fecha_fin', $fecha_fin);
@@ -281,9 +296,11 @@ class TrackingBle
                 WHERE tet.nombre != 'SALIDA'
             ) presentes ON af.id = presentes.id_area_fisica
             WHERE af.activo = 1
+            AND af.id_tenant = :id_tenant
             GROUP BY af.id, af.nombre, af.capacidad
             ORDER BY af.nombre ASC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);

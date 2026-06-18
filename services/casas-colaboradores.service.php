@@ -6,7 +6,9 @@ class CasasColaboradores
         $db = Flight::db();
         $sentence = $db->prepare("SELECT id, nombre, imagen, color, puntos_entregar, puntos_quitar 
         FROM casas_colaboradores 
+        WHERE id_tenant = :id_tenant
         ORDER BY nombre");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         
@@ -18,8 +20,9 @@ class CasasColaboradores
         $db = Flight::db();
         $sentence = $db->prepare("SELECT id, nombre, imagen, color, puntos_entregar, puntos_quitar 
         FROM casas_colaboradores 
-        WHERE id = :id");
+        WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         
@@ -37,9 +40,10 @@ class CasasColaboradores
             
             $sentence = $db->prepare("UPDATE casas_colaboradores SET 
                 puntos_entregar = puntos_entregar + :puntos
-                WHERE id = :id");
+                WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':puntos', $puntos);
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             self::getById($id);
@@ -61,9 +65,10 @@ class CasasColaboradores
             
             $sentence = $db->prepare("UPDATE casas_colaboradores SET 
                 puntos_quitar = puntos_quitar + :puntos
-                WHERE id = :id");
+                WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':puntos', $puntos);
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             self::getById($id);

@@ -5,7 +5,8 @@ class AreasAcademicas
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("select id, nombre, icono, color from areas_academicas order by nombre");
+        $sentence = $db->prepare("select id, nombre, icono, color from areas_academicas where id_tenant = :id_tenant order by nombre");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -14,7 +15,8 @@ class AreasAcademicas
     public static function getAllList()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("select id, nombre, icono from areas_academicas order by nombre");
+        $sentence = $db->prepare("select id, nombre, icono from areas_academicas where id_tenant = :id_tenant order by nombre");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -23,8 +25,9 @@ class AreasAcademicas
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("select id, nombre, icono, color from areas_academicas where id = :id");
+        $sentence = $db->prepare("select id, nombre, icono, color from areas_academicas where id = :id and id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -37,12 +40,15 @@ class AreasAcademicas
         $icono = Flight::request()->data['icono'];
         $color = Flight::request()->data['color'] ?? '#FFFFFF';
         
-        $sentence = $db->prepare("insert into areas_academicas(nombre, icono, color) values (:nombre, :icono, :color)");
+        $sentence = $db->prepare("insert into areas_academicas(id, id_tenant, nombre, icono, color) values (:id, :id_tenant, :nombre, :icono, :color)");
+        $idNew = Uuid::generar();
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':icono', $icono);
         $sentence->bindParam(':color', $color);
         $sentence->execute();
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(array('id' => $id));
     }
 
@@ -54,11 +60,12 @@ class AreasAcademicas
         $icono = Flight::request()->data['icono'];
         $color = Flight::request()->data['color'] ?? '#FFFFFF';
         
-        $sentence = $db->prepare("update areas_academicas set nombre = :nombre, icono = :icono, color = :color where id = :id");
+        $sentence = $db->prepare("update areas_academicas set nombre = :nombre, icono = :icono, color = :color where id = :id and id_tenant = :id_tenant");
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':icono', $icono);
         $sentence->bindParam(':color', $color);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }
@@ -67,8 +74,9 @@ class AreasAcademicas
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("delete from areas_academicas where id = :id");
+        $sentence = $db->prepare("delete from areas_academicas where id = :id and id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }
@@ -82,8 +90,10 @@ class AreasAcademicas
             inner join areas_academicas a on axg.id_area_academica = a.id
             inner join grupos g on axg.id_grupo = g.id 
             where g.id = :id
+            and axg.id_tenant = :id_tenant
             ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -100,9 +110,11 @@ class AreasAcademicas
                 FROM area_academica_x_grupo 
                 WHERE id_grupo = :id_grupo
             )
+            AND id_tenant = :id_tenant
             ORDER BY nombre
         ");
         $sentence->bindParam(':id_grupo', $id_grupo);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);

@@ -5,7 +5,8 @@ class ClasificacionMenus
     {
         try {
             $db = Flight::db();
-            $sentence = $db->prepare("SELECT id, nombre FROM clasificacion_menus ORDER BY id");
+            $sentence = $db->prepare("SELECT id, nombre FROM clasificacion_menus WHERE id_tenant = :id_tenant ORDER BY id");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -23,8 +24,9 @@ class ClasificacionMenus
     {
         try {
             $db = Flight::db();
-            $sentence = $db->prepare("SELECT id, nombre FROM clasificacion_menus WHERE id = :id");
+            $sentence = $db->prepare("SELECT id, nombre FROM clasificacion_menus WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetch();
             Flight::json($response);

@@ -4,7 +4,8 @@ class CortesAcademicos
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, nombre, orden, fecha_inicio, fecha_fin FROM cortes_academicos ORDER BY orden ASC");
+        $sentence = $db->prepare("SELECT id, nombre, orden, fecha_inicio, fecha_fin FROM cortes_academicos WHERE id_tenant = :id_tenant ORDER BY orden ASC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -13,8 +14,9 @@ class CortesAcademicos
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, nombre, orden, fecha_inicio, fecha_fin FROM cortes_academicos WHERE id = :id");
+        $sentence = $db->prepare("SELECT id, nombre, orden, fecha_inicio, fecha_fin FROM cortes_academicos WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -29,14 +31,17 @@ class CortesAcademicos
             $fecha_inicio = Flight::request()->data['fecha_inicio'] ?? null;
             $fecha_fin = Flight::request()->data['fecha_fin'] ?? null;
             
-            $sentence = $db->prepare("INSERT INTO cortes_academicos (nombre, orden, fecha_inicio, fecha_fin) VALUES (:nombre, :orden, :fecha_inicio, :fecha_fin)");
+            $idNew = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO cortes_academicos (id, id_tenant, nombre, orden, fecha_inicio, fecha_fin) VALUES (:id, :id_tenant, :nombre, :orden, :fecha_inicio, :fecha_fin)");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':orden', $orden, PDO::PARAM_INT);
             $sentence->bindParam(':fecha_inicio', $fecha_inicio);
             $sentence->bindParam(':fecha_fin', $fecha_fin);
             $sentence->execute();
             
-            $id = $db->lastInsertId();
+            $id = $idNew;
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log("Error al crear corte académico: " . $e->getMessage());
@@ -60,20 +65,22 @@ class CortesAcademicos
             }
 
             // Verificar que el registro exista antes de actualizar
-            $check = $db->prepare("SELECT id FROM cortes_academicos WHERE id = :id");
+            $check = $db->prepare("SELECT id FROM cortes_academicos WHERE id = :id AND id_tenant = :id_tenant");
             $check->bindParam(':id', $id);
+            $check->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $check->execute();
             if ($check->rowCount() == 0) {
                 Flight::json(array('error' => 'No se encontró el corte académico con el ID especificado'), 404);
                 return;
             }
             
-            $sentence = $db->prepare("UPDATE cortes_academicos SET nombre = :nombre, orden = :orden, fecha_inicio = :fecha_inicio, fecha_fin = :fecha_fin WHERE id = :id");
+            $sentence = $db->prepare("UPDATE cortes_academicos SET nombre = :nombre, orden = :orden, fecha_inicio = :fecha_inicio, fecha_fin = :fecha_fin WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':orden', $orden, PDO::PARAM_INT);
             $sentence->bindParam(':fecha_inicio', $fecha_inicio);
             $sentence->bindParam(':fecha_fin', $fecha_fin);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             Flight::json(array('id' => $id));
@@ -89,8 +96,9 @@ class CortesAcademicos
             $db = Flight::db();
             $id = Flight::request()->data['id'];
             
-            $sentence = $db->prepare("DELETE FROM cortes_academicos WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM cortes_academicos WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             Flight::json(array('id' => $id));

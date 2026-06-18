@@ -14,8 +14,10 @@ class VisitasProtocoloChecklist
                 FROM visitas_protocolo_checklist vpc
                 INNER JOIN protocolo_pasos pp ON vpc.id_protocolo_paso = pp.id
                 INNER JOIN visitas v ON vpc.id_visita = v.id
+                WHERE vpc.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC, vpc.fecha_hora DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -37,8 +39,10 @@ class VisitasProtocoloChecklist
                 FROM visitas_protocolo_checklist vpc
                 INNER JOIN protocolo_pasos pp ON vpc.id_protocolo_paso = pp.id
                 WHERE vpc.id = :id
+                AND vpc.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -60,9 +64,11 @@ class VisitasProtocoloChecklist
                 FROM visitas_protocolo_checklist vpc
                 INNER JOIN protocolo_pasos pp ON vpc.id_protocolo_paso = pp.id
                 WHERE vpc.id_visita = :id_visita
+                AND vpc.id_tenant = :id_tenant
                 ORDER BY pp.numero_paso ASC, vpc.fecha_hora ASC
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -83,10 +89,12 @@ class VisitasProtocoloChecklist
                 FROM visitas_protocolo_checklist vpc
                 INNER JOIN protocolo_pasos pp ON vpc.id_protocolo_paso = pp.id
                 WHERE vpc.id_visita = :id_visita AND vpc.id_protocolo_paso = :id_protocolo_paso
+                AND vpc.id_tenant = :id_tenant
                 ORDER BY vpc.fecha_hora ASC
             ");
             $sentence->bindParam(':id_visita', $id_visita);
             $sentence->bindParam(':id_protocolo_paso', $id_protocolo_paso);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -105,19 +113,21 @@ class VisitasProtocoloChecklist
 
             $sentence = $db->prepare("
             INSERT INTO visitas_protocolo_checklist (
-                id_visita, id_protocolo_paso, item_checklist, completado
+                id, id_tenant, id_visita, id_protocolo_paso, item_checklist, completado
             ) VALUES (
-                :id_visita, :id_protocolo_paso, :item_checklist, :completado
+                :id, :id_tenant, :id_visita, :id_protocolo_paso, :item_checklist, :completado
             )
         ");
 
+            $id = Uuid::generar();
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $data['id_visita']);
             $sentence->bindParam(':id_protocolo_paso', $data['id_protocolo_paso']);
             $sentence->bindParam(':item_checklist', $data['item_checklist']);
             $sentence->bindParam(':completado', $data['completado']);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             // ✅ Si se llamó con parámetro, retornar el ID, sino usar Flight::json
             if ($dataParam !== null) {
@@ -148,11 +158,13 @@ class VisitasProtocoloChecklist
                     item_checklist = :item_checklist,
                     completado = :completado
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
 
             $sentence->bindParam(':id', $data['id']);
             $sentence->bindParam(':item_checklist', $data['item_checklist']);
             $sentence->bindParam(':completado', $data['completado']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
             self::getById($data['id']);
@@ -168,8 +180,9 @@ class VisitasProtocoloChecklist
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_protocolo_checklist WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_protocolo_checklist WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -193,13 +206,14 @@ class VisitasProtocoloChecklist
             error_log("📋 Items recibidos: " . json_encode($items));
 
             // ✅ Primero eliminar todos los checklist existentes de esta visita
-            $stmt = $db->prepare("DELETE FROM visitas_protocolo_checklist WHERE id_visita = :id_visita");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt = $db->prepare("DELETE FROM visitas_protocolo_checklist WHERE id_visita = :id_visita AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
 
             $totalInsertados = 0;
 
             // ✅ Cargar todos los pasos del protocolo con sus checklist_items
-            $stmt = $db->prepare("SELECT id, checklist_items FROM protocolo_pasos WHERE activo = 1");
+            $stmt = $db->prepare("SELECT id, checklist_items FROM protocolo_pasos WHERE activo = 1 AND id_tenant = :id_tenant");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $pasos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -292,10 +306,12 @@ class VisitasProtocoloChecklist
                     completado = :completado,
                     fecha_hora = CURRENT_TIMESTAMP
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
 
             $sentence->bindParam(':id', $id);
             $sentence->bindParam(':completado', $completado);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('success' => true, 'id' => $id, 'completado' => $completado));

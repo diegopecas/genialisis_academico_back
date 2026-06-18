@@ -17,8 +17,10 @@ class VisitasTemperatura
                 LEFT JOIN tipos_nivel_interes tni ON vt.id_nivel_interes = tni.id
                 LEFT JOIN tipos_urgencia tu ON vt.id_urgencia = tu.id
                 INNER JOIN visitas v ON vt.id_visita = v.id
+                WHERE vt.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -45,8 +47,10 @@ class VisitasTemperatura
                 LEFT JOIN tipos_urgencia tu ON vt.id_urgencia = tu.id
                 INNER JOIN visitas v ON vt.id_visita = v.id
                 WHERE vt.id = :id
+                AND vt.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -71,8 +75,10 @@ class VisitasTemperatura
                 LEFT JOIN tipos_nivel_interes tni ON vt.id_nivel_interes = tni.id
                 LEFT JOIN tipos_urgencia tu ON vt.id_urgencia = tu.id
                 WHERE vt.id_visita = :id_visita
+                AND vt.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -96,10 +102,10 @@ class VisitasTemperatura
 
             $sentence = $db->prepare("
                 INSERT INTO visitas_temperatura (
-                    id_visita, id_nivel_interes, id_urgencia, 
+                    id, id_tenant, id_visita, id_nivel_interes, id_urgencia, 
                     pidio_descuento, visito_instalaciones_completas, pregunto_por_matricula
                 ) VALUES (
-                    :id_visita, :id_nivel_interes, :id_urgencia,
+                    :id, :id_tenant, :id_visita, :id_nivel_interes, :id_urgencia,
                     :pidio_descuento, :visito_instalaciones_completas, :pregunto_por_matricula
                 )
             ");
@@ -114,6 +120,9 @@ class VisitasTemperatura
             $visito_instalaciones_completas = isset($data['visito_instalaciones_completas']) ? ($data['visito_instalaciones_completas'] ? 1 : 0) : 0;
             $pregunto_por_matricula = isset($data['pregunto_por_matricula']) ? ($data['pregunto_por_matricula'] ? 1 : 0) : 0;
 
+            $id = Uuid::generar();
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $id_visita);
             $sentence->bindParam(':id_nivel_interes', $id_nivel_interes);
             $sentence->bindParam(':id_urgencia', $id_urgencia);
@@ -122,7 +131,6 @@ class VisitasTemperatura
             $sentence->bindParam(':pregunto_por_matricula', $pregunto_por_matricula);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             // ✅ Si se llamó con parámetro, retornar el ID
             if ($dataParam !== null) {
@@ -162,6 +170,7 @@ class VisitasTemperatura
                     visito_instalaciones_completas = :visito_instalaciones_completas,
                     pregunto_por_matricula = :pregunto_por_matricula
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
 
             $id = $data['id'];
@@ -179,6 +188,7 @@ class VisitasTemperatura
             $sentence->bindParam(':pidio_descuento', $pidio_descuento);
             $sentence->bindParam(':visito_instalaciones_completas', $visito_instalaciones_completas);
             $sentence->bindParam(':pregunto_por_matricula', $pregunto_por_matricula);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
 
@@ -206,8 +216,9 @@ class VisitasTemperatura
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_temperatura WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_temperatura WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -233,8 +244,8 @@ class VisitasTemperatura
             $id_visita = $data['id_visita'];
 
             // Verificar si ya existe
-            $stmt = $db->prepare("SELECT id FROM visitas_temperatura WHERE id_visita = :id_visita");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt = $db->prepare("SELECT id FROM visitas_temperatura WHERE id_visita = :id_visita AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
             $existe = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($existe) {

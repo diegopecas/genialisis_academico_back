@@ -8,7 +8,9 @@ class CursosExtra
         $sentence = $db->prepare("SELECT id, nombre, descripcion, icono, color, cupo_maximo, 
         fecha_inicio, fecha_fin, anio, activo, fecha_registro
         FROM cursos_extra
+        WHERE id_tenant = :id_tenant
         ORDER BY nombre ASC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -21,7 +23,9 @@ class CursosExtra
         fecha_inicio, fecha_fin, anio, activo, fecha_registro
         FROM cursos_extra
         WHERE activo = 1
+        AND id_tenant = :id_tenant
         ORDER BY nombre ASC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -33,8 +37,9 @@ class CursosExtra
         $sentence = $db->prepare("SELECT id, nombre, descripcion, icono, color, cupo_maximo, 
         fecha_inicio, fecha_fin, anio, activo, fecha_registro
         FROM cursos_extra
-        WHERE id = :id");
+        WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -46,9 +51,10 @@ class CursosExtra
         $sentence = $db->prepare("SELECT id, nombre, descripcion, icono, color, cupo_maximo, 
         fecha_inicio, fecha_fin, anio, activo, fecha_registro
         FROM cursos_extra
-        WHERE anio = :anio
+        WHERE anio = :anio AND id_tenant = :id_tenant
         ORDER BY nombre ASC");
         $sentence->bindParam(':anio', $anio);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -66,8 +72,11 @@ class CursosExtra
         $fecha_fin = Flight::request()->data['fecha_fin'];
         $anio = Flight::request()->data['anio'];
 
-        $sentence = $db->prepare("INSERT INTO cursos_extra(nombre, descripcion, icono, color, cupo_maximo, fecha_inicio, fecha_fin, anio, activo, fecha_registro) 
-        VALUES (:nombre, :descripcion, :icono, :color, :cupo_maximo, :fecha_inicio, :fecha_fin, :anio, 1, NOW())");
+        $idNew = Uuid::generar();
+        $sentence = $db->prepare("INSERT INTO cursos_extra(id, id_tenant, nombre, descripcion, icono, color, cupo_maximo, fecha_inicio, fecha_fin, anio, activo, fecha_registro) 
+        VALUES (:id, :id_tenant, :nombre, :descripcion, :icono, :color, :cupo_maximo, :fecha_inicio, :fecha_fin, :anio, 1, NOW())");
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':descripcion', $descripcion);
         $sentence->bindParam(':icono', $icono);
@@ -77,7 +86,7 @@ class CursosExtra
         $sentence->bindParam(':fecha_fin', $fecha_fin);
         $sentence->bindParam(':anio', $anio, PDO::PARAM_INT);
         $sentence->execute();
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(array('id' => $id));
     }
 
@@ -97,7 +106,8 @@ class CursosExtra
 
         $sentence = $db->prepare("UPDATE cursos_extra SET nombre = :nombre, descripcion = :descripcion, icono = :icono, color = :color, 
         cupo_maximo = :cupo_maximo, fecha_inicio = :fecha_inicio, fecha_fin = :fecha_fin, 
-        anio = :anio, activo = :activo WHERE id = :id");
+        anio = :anio, activo = :activo WHERE id = :id AND id_tenant = :id_tenant");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':descripcion', $descripcion);
         $sentence->bindParam(':icono', $icono);
@@ -116,8 +126,9 @@ class CursosExtra
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("DELETE FROM cursos_extra WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM cursos_extra WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }
@@ -131,9 +142,10 @@ class CursosExtra
         FROM estudiantes_x_cursos_extra exce
         INNER JOIN estudiantes e ON exce.id_estudiante = e.id
         INNER JOIN personas p ON e.id_persona = p.id
-        WHERE exce.id_curso_extra = :id
+        WHERE exce.id_curso_extra = :id AND exce.id_tenant = :id_tenant
         ORDER BY p.primer_apellido, p.primer_nombre");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -148,8 +160,10 @@ class CursosExtra
         INNER JOIN personas p ON e.id_persona = p.id
         WHERE e.activo = 1
         AND e.id NOT IN (SELECT id_estudiante FROM estudiantes_x_cursos_extra WHERE id_curso_extra = :id AND activo = 1)
+        AND e.id_tenant = :id_tenant
         ORDER BY p.primer_apellido, p.primer_nombre");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);

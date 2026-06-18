@@ -10,8 +10,10 @@ class BeaconsBle
             FROM beacons_ble b
             LEFT JOIN estudiantes e ON b.id_estudiante = e.id
             LEFT JOIN personas p ON e.id_persona = p.id
+            WHERE b.id_tenant = :id_tenant
             ORDER BY b.nombre ASC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -27,8 +29,10 @@ class BeaconsBle
             LEFT JOIN estudiantes e ON b.id_estudiante = e.id
             LEFT JOIN personas p ON e.id_persona = p.id
             WHERE b.activo = 1
+            AND b.id_tenant = :id_tenant
             ORDER BY b.nombre ASC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -44,8 +48,10 @@ class BeaconsBle
             LEFT JOIN estudiantes e ON b.id_estudiante = e.id
             LEFT JOIN personas p ON e.id_persona = p.id
             WHERE b.id = :id
+            AND b.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -60,8 +66,9 @@ class BeaconsBle
         $id_estudiante = Flight::request()->data['id_estudiante'] ?? null;
         $uuid_ibeacon = Flight::request()->data['uuid_ibeacon'] ?? null;
 
-        $check = $db->prepare("SELECT id FROM beacons_ble WHERE mac_address = :mac");
+        $check = $db->prepare("SELECT id FROM beacons_ble WHERE mac_address = :mac AND id_tenant = :id_tenant");
         $check->bindParam(':mac', $mac_address);
+        $check->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $check->execute();
         if ($check->fetch()) {
             Flight::json(array('error' => 'Ya existe un beacon con esa dirección MAC'), 400);
@@ -70,20 +77,22 @@ class BeaconsBle
 
         $sentence = $db->prepare("
             INSERT INTO beacons_ble(
-                mac_address, nombre, id_estudiante, uuid_ibeacon, activo, fecha_registro
+                id, id_tenant, mac_address, nombre, id_estudiante, uuid_ibeacon, activo, fecha_registro
             ) VALUES (
-                :mac_address, :nombre, :id_estudiante, :uuid_ibeacon, 1, NOW()
+                :id, :id_tenant, :mac_address, :nombre, :id_estudiante, :uuid_ibeacon, 1, NOW()
             )
         ");
 
+        $idBeacon = Uuid::generar();
+        $sentence->bindValue(':id', $idBeacon);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':mac_address', $mac_address);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
         $sentence->bindParam(':uuid_ibeacon', $uuid_ibeacon);
         $sentence->execute();
 
-        $id = $db->lastInsertId();
-        Flight::json(array('id' => $id));
+        Flight::json(array('id' => $idBeacon));
     }
 
     public static function update()
@@ -97,9 +106,10 @@ class BeaconsBle
         $uuid_ibeacon = Flight::request()->data['uuid_ibeacon'] ?? null;
         $activo = Flight::request()->data['activo'] ?? 1;
 
-        $check = $db->prepare("SELECT id FROM beacons_ble WHERE mac_address = :mac AND id != :id");
+        $check = $db->prepare("SELECT id FROM beacons_ble WHERE mac_address = :mac AND id != :id AND id_tenant = :id_tenant");
         $check->bindParam(':mac', $mac_address);
         $check->bindParam(':id', $id);
+        $check->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $check->execute();
         if ($check->fetch()) {
             Flight::json(array('error' => 'Ya existe otro beacon con esa dirección MAC'), 400);
@@ -113,9 +123,10 @@ class BeaconsBle
                 id_estudiante = :id_estudiante,
                 uuid_ibeacon = :uuid_ibeacon,
                 activo = :activo
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
 
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':mac_address', $mac_address);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
@@ -132,8 +143,9 @@ class BeaconsBle
         $db = Flight::db();
         $id = Flight::request()->data['id'];
 
-        $sentence = $db->prepare("UPDATE beacons_ble SET activo = 0 WHERE id = :id");
+        $sentence = $db->prepare("UPDATE beacons_ble SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json(array('id' => $id));

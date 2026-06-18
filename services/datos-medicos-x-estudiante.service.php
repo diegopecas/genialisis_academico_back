@@ -11,9 +11,10 @@ class DatosMedicosXEstudiante
             FROM datos_medicos_x_estudiante dme
             INNER JOIN datos_medicos dm ON dme.id_dato_medico = dm.id
             INNER JOIN tipos_datos_medicos tdm ON dm.id_tipo_dato_medico = tdm.id
-            WHERE dme.id_estudiante = :id_estudiante
+            WHERE dme.id_estudiante = :id_estudiante AND dme.id_tenant = :id_tenant
             ORDER BY tdm.orden, dm.orden");
         $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -30,8 +31,9 @@ class DatosMedicosXEstudiante
             $datos = Flight::request()->data['datos'];
 
             // Eliminar datos anteriores del estudiante
-            $sentence = $db->prepare("DELETE FROM datos_medicos_x_estudiante WHERE id_estudiante = :id_estudiante");
+            $sentence = $db->prepare("DELETE FROM datos_medicos_x_estudiante WHERE id_estudiante = :id_estudiante AND id_tenant = :id_tenant");
             $sentence->bindParam(':id_estudiante', $id_estudiante);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             // Insertar nuevos datos
@@ -47,8 +49,9 @@ class DatosMedicosXEstudiante
                 // Solo insertar si tiene algún valor
                 if ($valor_numero !== null || $valor_texto !== null || $valor_parrafo !== null || $valor_fecha !== null || $observacion !== null) {
                     $sentence = $db->prepare("INSERT INTO datos_medicos_x_estudiante 
-                        (id_estudiante, id_dato_medico, valor_numero, valor_texto, valor_parrafo, valor_fecha, observacion) 
-                        VALUES (:id_estudiante, :id_dato_medico, :valor_numero, :valor_texto, :valor_parrafo, :valor_fecha, :observacion)");
+                        (id_tenant, id_estudiante, id_dato_medico, valor_numero, valor_texto, valor_parrafo, valor_fecha, observacion) 
+                        VALUES (:id_tenant, :id_estudiante, :id_dato_medico, :valor_numero, :valor_texto, :valor_parrafo, :valor_fecha, :observacion)");
+                    $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $sentence->bindParam(':id_estudiante', $id_estudiante);
                     $sentence->bindParam(':id_dato_medico', $id_dato_medico);
                     $sentence->bindParam(':valor_numero', $valor_numero);

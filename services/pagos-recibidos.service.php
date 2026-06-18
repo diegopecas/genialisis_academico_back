@@ -78,6 +78,7 @@ class PagosRecibidos
                 personas p_ua ON ua.id_persona = p_ua.id
             LEFT JOIN 
                 cuenta_pagada cp ON pr.id = cp.id_pago_recibido
+            WHERE pr.id_tenant = :id_tenant
             GROUP BY 
                 pr.id, pr.fecha, pr.id_estudiante, pr.id_colaborador, pr.id_acudiente, 
                 a.id_estudiante, p.primer_nombre, p.segundo_nombre,
@@ -93,6 +94,7 @@ class PagosRecibidos
                 p_ua.segundo_nombre, p_ua.primer_apellido, p_ua.segundo_apellido
             ORDER BY pr.fecha DESC
         ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -153,7 +155,7 @@ class PagosRecibidos
         LEFT JOIN 
             personas p_ua ON ua.id_persona = p_ua.id
         WHERE 
-            pr.id = :id
+            pr.id = :id AND pr.id_tenant = :id_tenant
         GROUP BY 
             pr.id, pr.fecha, pr.id_estudiante, pr.id_colaborador, pr.id_acudiente, pr.id_tipo_pago, pr.valor_recibido,
             pr.observaciones, pr.referencia_bancaria, pr.fecha_registro,
@@ -164,6 +166,7 @@ class PagosRecibidos
             p_ua.segundo_nombre, p_ua.primer_apellido, p_ua.segundo_apellido
     ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -230,7 +233,7 @@ class PagosRecibidos
                 LEFT JOIN 
                     cuenta_pagada cp ON pr.id = cp.id_pago_recibido
                 WHERE 
-                    pr.id_estudiante = :id
+                    pr.id_estudiante = :id AND pr.id_tenant = :id_tenant
                 GROUP BY 
                     pr.id, pr.fecha, pr.id_acudiente, a.id_estudiante, p.primer_nombre, p.segundo_nombre,
                     p.primer_apellido, p.segundo_apellido, ta.nombre, pr.id_tipo_pago, tp.nombre,
@@ -244,6 +247,7 @@ class PagosRecibidos
         ");
 
         $sentence->bindParam(':id', $idEstudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -307,7 +311,7 @@ class PagosRecibidos
         LEFT JOIN 
             cuenta_pagada cp ON pr.id = cp.id_pago_recibido
         WHERE 
-            pr.id_colaborador = :id
+            pr.id_colaborador = :id AND pr.id_tenant = :id_tenant
         GROUP BY 
             pr.id, pr.fecha, pr.id_colaborador, pr.id_acudiente, pc.primer_nombre, pc.segundo_nombre,
             pc.primer_apellido, pc.segundo_apellido, pr.id_tipo_pago, tp.nombre,
@@ -321,6 +325,7 @@ class PagosRecibidos
     ");
 
         $sentence->bindParam(':id', $idColaborador);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -353,11 +358,14 @@ class PagosRecibidos
                 throw new Exception('Debe especificar id_estudiante o id_colaborador, pero no ambos');
             }
 
-            $query = "INSERT INTO pagos_recibidos(fecha, id_estudiante, id_colaborador, id_acudiente, id_tipo_pago, valor_recibido, observaciones, referencia_bancaria, fecha_registro, id_usuario_registro, fecha_contabilizacion, id_usuario_contable) 
-                 VALUES (:fecha, :id_estudiante, :id_colaborador, :id_acudiente, :id_tipo_pago, :valor_recibido, :observaciones, :referencia_bancaria, :fecha_registro, :id_usuario_registro, :fecha_contabilizacion, :id_usuario_contable)";
+            $query = "INSERT INTO pagos_recibidos(id, id_tenant, fecha, id_estudiante, id_colaborador, id_acudiente, id_tipo_pago, valor_recibido, observaciones, referencia_bancaria, fecha_registro, id_usuario_registro, fecha_contabilizacion, id_usuario_contable) 
+                 VALUES (:id, :id_tenant, :fecha, :id_estudiante, :id_colaborador, :id_acudiente, :id_tipo_pago, :valor_recibido, :observaciones, :referencia_bancaria, :fecha_registro, :id_usuario_registro, :fecha_contabilizacion, :id_usuario_contable)";
 
             $sentence = $db->prepare($query);
 
+            $idPagoNew = Uuid::generar();
+            $sentence->bindValue(':id', $idPagoNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             // Vincular parámetros
             $sentence->bindParam(':fecha', $fecha);
             $sentence->bindParam(':id_estudiante', $id_estudiante);
@@ -374,7 +382,7 @@ class PagosRecibidos
 
             $sentence->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idPagoNew;
             Flight::json(array('id' => $id));
         } catch (PDOException $e) {
             error_log("Error PDO en new(): " . $e->getMessage());
@@ -411,7 +419,7 @@ class PagosRecibidos
                 throw new Exception('Debe especificar id_estudiante o id_colaborador, pero no ambos');
             }
 
-            $sentence = $db->prepare("UPDATE pagos_recibidos SET fecha = :fecha, id_estudiante = :id_estudiante, id_colaborador = :id_colaborador, id_acudiente = :id_acudiente, id_tipo_pago = :id_tipo_pago, valor_recibido = :valor_recibido, observaciones = :observaciones, referencia_bancaria = :referencia_bancaria, fecha_registro = :fecha_registro, id_usuario_registro = :id_usuario_registro, fecha_contabilizacion = :fecha_contabilizacion, id_usuario_contable = :id_usuario_contable WHERE id = :id");
+            $sentence = $db->prepare("UPDATE pagos_recibidos SET fecha = :fecha, id_estudiante = :id_estudiante, id_colaborador = :id_colaborador, id_acudiente = :id_acudiente, id_tipo_pago = :id_tipo_pago, valor_recibido = :valor_recibido, observaciones = :observaciones, referencia_bancaria = :referencia_bancaria, fecha_registro = :fecha_registro, id_usuario_registro = :id_usuario_registro, fecha_contabilizacion = :fecha_contabilizacion, id_usuario_contable = :id_usuario_contable WHERE id = :id AND id_tenant = :id_tenant");
 
             $sentence->bindParam(':id', $id);
             $sentence->bindParam(':fecha', $fecha);
@@ -427,6 +435,7 @@ class PagosRecibidos
             $sentence->bindParam(':fecha_contabilizacion', $fecha_contabilizacion);
             $sentence->bindParam(':id_usuario_contable', $id_usuario_contable);
 
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             self::getById($id);
         } catch (Exception $e) {
@@ -440,8 +449,9 @@ class PagosRecibidos
 
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("DELETE FROM pagos_recibidos WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM pagos_recibidos WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         Flight::json(array('id' => $id));
     }
@@ -465,11 +475,13 @@ class PagosRecibidos
                     id_usuario_anulacion = :id_usuario_anulacion,
                     observaciones = CONCAT(observaciones, ' | ANULADO: ', :observaciones_anulacion)
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
 
             $sentence->bindParam(':id', $id);
             $sentence->bindParam(':id_usuario_anulacion', $id_usuario_anulacion);
             $sentence->bindParam(':observaciones_anulacion', $observaciones_anulacion);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             // Desasociar reportes de pago vinculados a este pago anulado
@@ -520,12 +532,14 @@ class PagosRecibidos
                     id_usuario_contable = :id_usuario_contable,
                     observaciones = CONCAT(observaciones, ' | CONTABILIZADO: ', :observaciones_contabilizacion)
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
 
             $sentence->bindParam(':id', $id);
             $sentence->bindParam(':fecha_contabilizacion', $fecha_contabilizacion);
             $sentence->bindParam(':id_usuario_contable', $id_usuario_contable);
             $sentence->bindParam(':observaciones_contabilizacion', $observaciones_contabilizacion);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             // Devolvemos el registro actualizado
@@ -585,9 +599,10 @@ class PagosRecibidos
             LEFT JOIN 
                 personas p_uc ON uc.id_persona = p_uc.id
             WHERE 
-                pr.id = :id
+                pr.id = :id AND pr.id_tenant = :id_tenant
         ");
         $sentencePago->bindParam(':id', $id_pago_recibido);
+        $sentencePago->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentencePago->execute();
         $pago = $sentencePago->fetch(PDO::FETCH_ASSOC);
 
@@ -753,9 +768,10 @@ class PagosRecibidos
                 LEFT JOIN 
                     personas p_uc ON uc.id_persona = p_uc.id
                 WHERE 
-                    pr.id = :id
+                    pr.id = :id AND pr.id_tenant = :id_tenant
             ");
         $sentencePago->bindParam(':id', $id_pago_recibido);
+        $sentencePago->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentencePago->execute();
         $pago = $sentencePago->fetch(PDO::FETCH_ASSOC);
 
@@ -926,6 +942,7 @@ class PagosRecibidos
             WHERE 
                 pr.id_usuario_contable IS NULL 
                 AND pr.anulado != 1
+                AND pr.id_tenant = :id_tenant
             GROUP BY 
                 pr.id, pr.fecha, pr.id_estudiante, pr.id_colaborador, pr.id_acudiente,
                 p_est.primer_nombre, p_est.segundo_nombre, p_est.primer_apellido, p_est.segundo_apellido,
@@ -937,6 +954,7 @@ class PagosRecibidos
             ORDER BY 
                 pr.fecha DESC, pr.id DESC
         ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -986,6 +1004,7 @@ class PagosRecibidos
                         id_usuario_contable = :id_usuario_contable,
                         observaciones = CONCAT(observaciones, ' | CONTABLILIZACIÓN MÚLTIPLE: ', :observaciones_contabilizacion)
                     WHERE id = :id
+                    AND id_tenant = :id_tenant
                     AND id_usuario_contable IS NULL
                     AND anulado != 1
                 ");
@@ -996,6 +1015,7 @@ class PagosRecibidos
                 // Ejecutar la actualización para cada ID
                 foreach ($ids as $id) {
                     $sentence->bindParam(':id', $id);
+                    $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $sentence->bindParam(':fecha_contabilizacion', $fecha_contabilizacion);
                     $sentence->bindParam(':id_usuario_contable', $id_usuario_contable);
                     $sentence->bindParam(':observaciones_contabilizacion', $observaciones_contabilizacion);
@@ -1070,8 +1090,10 @@ class PagosRecibidos
                 LEFT JOIN estudiantes_x_grupos eg ON e.id = eg.id_estudiante AND eg.activo = 1
                 LEFT JOIN grupos g ON eg.id_grupo = g.id
                 WHERE e.activo = 1
+                AND e.id_tenant = :id_tenant
                 ORDER BY g.nombre, p.primer_nombre, p.primer_apellido
             ");
+            $stmtEstudiantes->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtEstudiantes->execute();
             $estudiantes = $stmtEstudiantes->fetchAll(PDO::FETCH_ASSOC);
 
@@ -1100,10 +1122,12 @@ class PagosRecibidos
                     LEFT JOIN pagos_recibidos pr_cp ON cp.id_pago_recibido = pr_cp.id 
                         AND (pr_cp.anulado = 0 OR pr_cp.anulado IS NULL)
                 WHERE (c.anulado = 0 OR c.anulado IS NULL)
+                AND c.id_tenant = :id_tenant
                 GROUP BY c.id, c.id_persona, e.id, c.fecha, c.valor, c.detalle, ps.nombre
                 HAVING saldo > 0
                 ORDER BY e.id, c.fecha ASC
             ");
+            $stmtCuentas->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtCuentas->execute();
             $cuentas = $stmtCuentas->fetchAll(PDO::FETCH_ASSOC);
 
@@ -1123,8 +1147,10 @@ class PagosRecibidos
                 INNER JOIN tipos_acudiente ta ON a.id_tipo_acudiente = ta.id
                 WHERE a.activo = 1
                   AND a.es_responsable_pago = 1
+                  AND a.id_tenant = :id_tenant
                 ORDER BY a.id_estudiante, ta.nombre
             ");
+            $stmtAcudientes->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtAcudientes->execute();
             $acudientes = $stmtAcudientes->fetchAll(PDO::FETCH_ASSOC);
 
@@ -1133,7 +1159,8 @@ class PagosRecibidos
             }
 
             // 4. Tipos de pago con requiere_documento
-            $stmtTiposPago = $db->prepare("SELECT id, nombre, requiere_documento FROM tipos_pagos ORDER BY id");
+            $stmtTiposPago = $db->prepare("SELECT id, nombre, requiere_documento FROM tipos_pagos WHERE id_tenant = :id_tenant ORDER BY id");
+            $stmtTiposPago->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtTiposPago->execute();
             $tiposPago = $stmtTiposPago->fetchAll(PDO::FETCH_ASSOC);
 
@@ -1178,7 +1205,8 @@ class PagosRecibidos
             }
 
             $db = Flight::db();
-            $stmt = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = 'gemini_api_key' LIMIT 1");
+            $stmt = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = 'gemini_api_key' AND id_tenant = :id_tenant LIMIT 1");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $config = $stmt->fetch();
 
@@ -1189,7 +1217,8 @@ class PagosRecibidos
 
             $apiKey = $config['valor'];
 
-            $stmtEstado = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = 'estado_servicio' LIMIT 1");
+            $stmtEstado = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = 'estado_servicio' AND id_tenant = :id_tenant LIMIT 1");
+            $stmtEstado->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtEstado->execute();
             $estado = $stmtEstado->fetch();
 
@@ -1287,7 +1316,8 @@ class PagosRecibidos
                 return;
             }
 
-            $stmtContador = $db->prepare("UPDATE ia_configuracion SET valor = valor + 1, fecha_actualizacion = NOW() WHERE clave = 'mensajes_generados_hoy'");
+            $stmtContador = $db->prepare("UPDATE ia_configuracion SET valor = valor + 1, fecha_actualizacion = NOW() WHERE clave = 'mensajes_generados_hoy' AND id_tenant = :id_tenant");
+            $stmtContador->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtContador->execute();
 
             // Leer tokens consumidos de la respuesta de Gemini
@@ -1302,8 +1332,9 @@ class PagosRecibidos
 
             // Acumular tokens consumidos
             if ($tokensTotal > 0) {
-                $stmtTokens = $db->prepare("UPDATE ia_configuracion SET valor = valor + :tokens, fecha_actualizacion = NOW() WHERE clave = 'tokens_consumidos_hoy'");
+                $stmtTokens = $db->prepare("UPDATE ia_configuracion SET valor = valor + :tokens, fecha_actualizacion = NOW() WHERE clave = 'tokens_consumidos_hoy' AND id_tenant = :id_tenant");
                 $stmtTokens->bindParam(':tokens', $tokensTotal);
+                $stmtTokens->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtTokens->execute();
             }
 
@@ -1404,12 +1435,12 @@ class PagosRecibidos
 
                 $stmtPago = $db->prepare("
                     INSERT INTO pagos_recibidos 
-                    (fecha, id_estudiante, id_colaborador, id_acudiente, id_tipo_pago, 
+                    (id, id_tenant, fecha, id_estudiante, id_colaborador, id_acudiente, id_tipo_pago, 
                      valor_recibido, observaciones, referencia_bancaria, 
                      fecha_registro, id_usuario_registro, 
                      fecha_contabilizacion, id_usuario_contable, id_documento_persona) 
                     VALUES 
-                    (:fecha, :id_estudiante, NULL, :id_acudiente, :id_tipo_pago, 
+                    (:id, :id_tenant, :fecha, :id_estudiante, NULL, :id_acudiente, :id_tipo_pago, 
                      :valor_recibido, :observaciones, :referencia_bancaria, 
                      :fecha_registro, :id_usuario_registro, 
                      NULL, NULL, :id_documento_persona)
@@ -1417,9 +1448,9 @@ class PagosRecibidos
 
                 $stmtCuenta = $db->prepare("
                     INSERT INTO cuenta_pagada 
-                    (id_cuenta_por_cobrar, id_pago_recibido, valor_aplicado, fecha) 
+                    (id, id_tenant, id_cuenta_por_cobrar, id_pago_recibido, valor_aplicado, fecha) 
                     VALUES 
-                    (:id_cuenta_por_cobrar, :id_pago_recibido, :valor_aplicado, :fecha)
+                    (:id, :id_tenant, :id_cuenta_por_cobrar, :id_pago_recibido, :valor_aplicado, :fecha)
                 ");
 
                 // Cargar reportes de pago pendientes UNA sola vez para asociar automáticamente
@@ -1427,8 +1458,10 @@ class PagosRecibidos
                     SELECT id, id_estudiante, id_tipo_pago, valor 
                     FROM reportes_pago 
                     WHERE estado = 'pendiente' 
+                    AND id_tenant = :id_tenant
                     ORDER BY fecha_registro ASC
                 ");
+                $stmtReportesPendientes->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtReportesPendientes->execute();
                 $reportesPendientes = $stmtReportesPendientes->fetchAll(PDO::FETCH_ASSOC);
 
@@ -1456,6 +1489,9 @@ class PagosRecibidos
                     $referencia_bancaria = !empty($pago['referencia_bancaria']) ? $pago['referencia_bancaria'] : '';
                     $id_documento_persona = !empty($pago['id_documento_persona']) ? $pago['id_documento_persona'] : null;
 
+                    $idPagoNew = Uuid::generar();
+                    $stmtPago->bindValue(':id', $idPagoNew);
+                    $stmtPago->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $stmtPago->bindParam(':fecha', $pago['fecha']);
                     $stmtPago->bindParam(':id_estudiante', $pago['id_estudiante']);
                     $stmtPago->bindParam(':id_acudiente', $id_acudiente);
@@ -1468,7 +1504,7 @@ class PagosRecibidos
                     $stmtPago->bindParam(':id_documento_persona', $id_documento_persona);
 
                     if ($stmtPago->execute()) {
-                        $idPago = $db->lastInsertId();
+                        $idPago = $idPagoNew;
 
                         // Insertar cuentas aplicadas para este pago
                         $cuentasAplicadas = isset($pago['cuentas_aplicadas']) ? $pago['cuentas_aplicadas'] : array();
@@ -1479,6 +1515,9 @@ class PagosRecibidos
                                 continue;
                             }
 
+                            $idCuentaPagadaNew = Uuid::generar();
+                            $stmtCuenta->bindValue(':id', $idCuentaPagadaNew);
+                            $stmtCuenta->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                             $stmtCuenta->bindParam(':id_cuenta_por_cobrar', $cuenta['id_cuenta_por_cobrar']);
                             $stmtCuenta->bindParam(':id_pago_recibido', $idPago);
                             $stmtCuenta->bindParam(':valor_aplicado', $cuenta['valor_aplicado']);

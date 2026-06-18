@@ -4,7 +4,8 @@ class Ambientes
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, nombre, icono, activo FROM ambientes ORDER BY nombre");
+        $sentence = $db->prepare("SELECT id, nombre, icono, activo FROM ambientes WHERE id_tenant = :id_tenant ORDER BY nombre");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -13,7 +14,8 @@ class Ambientes
     public static function getActivos()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, nombre, icono FROM ambientes WHERE activo = 1 ORDER BY nombre");
+        $sentence = $db->prepare("SELECT id, nombre, icono FROM ambientes WHERE activo = 1 AND id_tenant = :id_tenant ORDER BY nombre");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -22,8 +24,9 @@ class Ambientes
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM ambientes WHERE id = :id");
+        $sentence = $db->prepare("SELECT * FROM ambientes WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -41,12 +44,15 @@ class Ambientes
                 return;
             }
 
-            $sentence = $db->prepare("INSERT INTO ambientes (nombre, icono) VALUES (:nombre, :icono)");
+            $idNew = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO ambientes (id, id_tenant, nombre, icono) VALUES (:id, :id_tenant, :nombre, :icono)");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':icono', $icono);
             $sentence->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idNew;
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log("Error en Ambientes::new: " . $e->getMessage());
@@ -68,11 +74,12 @@ class Ambientes
                 return;
             }
 
-            $sentence = $db->prepare("UPDATE ambientes SET nombre = :nombre, icono = :icono, activo = :activo WHERE id = :id");
+            $sentence = $db->prepare("UPDATE ambientes SET nombre = :nombre, icono = :icono, activo = :activo WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':icono', $icono);
             $sentence->bindParam(':activo', $activo);
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -88,8 +95,9 @@ class Ambientes
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM ambientes WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM ambientes WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));

@@ -4,7 +4,8 @@ class TiposUrgencia
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM tipos_urgencia WHERE activo = 1 ORDER BY id");
+        $sentence = $db->prepare("SELECT * FROM tipos_urgencia WHERE activo = 1 AND id_tenant = :id_tenant ORDER BY id");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -13,8 +14,9 @@ class TiposUrgencia
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM tipos_urgencia WHERE id = :id");
+        $sentence = $db->prepare("SELECT * FROM tipos_urgencia WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -28,13 +30,15 @@ class TiposUrgencia
             $codigo = Flight::request()->data['codigo'];
             $activo = isset(Flight::request()->data['activo']) ? Flight::request()->data['activo'] : 1;
 
-            $sentence = $db->prepare("INSERT INTO tipos_urgencia (nombre, codigo, activo) VALUES (:nombre, :codigo, :activo)");
+            $id = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO tipos_urgencia (id, id_tenant, nombre, codigo, activo) VALUES (:id, :id_tenant, :nombre, :codigo, :activo)");
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':codigo', $codigo);
             $sentence->bindParam(':activo', $activo);
             $sentence->execute();
 
-            $id = $db->lastInsertId();
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log("Error en tipos_urgencia new: " . $e->getMessage());
@@ -51,11 +55,12 @@ class TiposUrgencia
             $codigo = Flight::request()->data['codigo'];
             $activo = isset(Flight::request()->data['activo']) ? Flight::request()->data['activo'] : 1;
 
-            $sentence = $db->prepare("UPDATE tipos_urgencia SET nombre = :nombre, codigo = :codigo, activo = :activo WHERE id = :id");
+            $sentence = $db->prepare("UPDATE tipos_urgencia SET nombre = :nombre, codigo = :codigo, activo = :activo WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':codigo', $codigo);
             $sentence->bindParam(':activo', $activo);
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             self::getById($id);
@@ -71,8 +76,9 @@ class TiposUrgencia
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM tipos_urgencia WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM tipos_urgencia WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));

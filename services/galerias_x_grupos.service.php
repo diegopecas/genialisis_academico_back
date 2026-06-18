@@ -14,8 +14,10 @@ class GaleriasXGrupos
             FROM galerias_x_grupos gxg
             INNER JOIN galerias g ON gxg.id_galeria = g.id
             INNER JOIN grupos gr ON gxg.id_grupo = gr.id
+            WHERE gxg.id_tenant = :id_tenant
             ORDER BY gxg.id_galeria, gr.orden
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -32,10 +34,11 @@ class GaleriasXGrupos
                    gr.nombre as grupo_nombre, gr.icono, gr.color
             FROM galerias_x_grupos gxg
             INNER JOIN grupos gr ON gxg.id_grupo = gr.id
-            WHERE gxg.id_galeria = :id_galeria
+            WHERE gxg.id_galeria = :id_galeria AND gxg.id_tenant = :id_tenant
             ORDER BY gr.orden
         ");
         $sentence->bindParam(':id_galeria', $id_galeria);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -54,9 +57,11 @@ class GaleriasXGrupos
             INNER JOIN galerias g ON gxg.id_galeria = g.id
             WHERE gxg.id_grupo = :id_grupo
             AND g.activo = 1
+            AND gxg.id_tenant = :id_tenant
             ORDER BY g.fecha DESC
         ");
         $sentence->bindParam(':id_grupo', $id_grupo);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -70,15 +75,18 @@ class GaleriasXGrupos
         $db = Flight::db();
         $data = Flight::request()->data;
         
+        $idNew = Uuid::generar();
         $sentence = $db->prepare("
-            INSERT INTO galerias_x_grupos (id_galeria, id_grupo) 
-            VALUES (:id_galeria, :id_grupo)
+            INSERT INTO galerias_x_grupos (id, id_tenant, id_galeria, id_grupo) 
+            VALUES (:id, :id_tenant, :id_galeria, :id_grupo)
         ");
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_galeria', $data['id_galeria']);
         $sentence->bindParam(':id_grupo', $data['id_grupo']);
         $sentence->execute();
         
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(['id' => $id]);
     }
 
@@ -93,15 +101,17 @@ class GaleriasXGrupos
         $grupos = $data['grupos']; // Array de id_grupo
         
         // Eliminar asignaciones anteriores
-        $deleteStmt = $db->prepare("DELETE FROM galerias_x_grupos WHERE id_galeria = :id_galeria");
+        $deleteStmt = $db->prepare("DELETE FROM galerias_x_grupos WHERE id_galeria = :id_galeria AND id_tenant = :id_tenant");
         $deleteStmt->bindParam(':id_galeria', $id_galeria);
+        $deleteStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $deleteStmt->execute();
         
         // Insertar nuevas asignaciones
         $insertStmt = $db->prepare("
-            INSERT INTO galerias_x_grupos (id_galeria, id_grupo) 
-            VALUES (:id_galeria, :id_grupo)
+            INSERT INTO galerias_x_grupos (id_tenant, id_galeria, id_grupo) 
+            VALUES (:id_tenant, :id_galeria, :id_grupo)
         ");
+        $insertStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         
         foreach ($grupos as $id_grupo) {
             $insertStmt->bindParam(':id_galeria', $id_galeria);
@@ -120,8 +130,9 @@ class GaleriasXGrupos
         $db = Flight::db();
         $id = Flight::request()->data['id'];
         
-        $sentence = $db->prepare("DELETE FROM galerias_x_grupos WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM galerias_x_grupos WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         
         Flight::json(['deleted' => true, 'id' => $id]);
@@ -134,8 +145,9 @@ class GaleriasXGrupos
     {
         $db = Flight::db();
         
-        $sentence = $db->prepare("DELETE FROM galerias_x_grupos WHERE id_galeria = :id_galeria");
+        $sentence = $db->prepare("DELETE FROM galerias_x_grupos WHERE id_galeria = :id_galeria AND id_tenant = :id_tenant");
         $sentence->bindParam(':id_galeria', $id_galeria);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         
         Flight::json(['deleted' => true, 'id_galeria' => $id_galeria]);

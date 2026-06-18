@@ -104,8 +104,10 @@ class GaleriaImagenes
             FROM galeria_imagenes gi
             INNER JOIN galerias g ON gi.id_galeria = g.id
             LEFT JOIN subgalerias s ON gi.id_subgaleria = s.id
+            WHERE gi.id_tenant = :id_tenant
             ORDER BY gi.id_galeria, gi.id_subgaleria, gi.orden
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -118,9 +120,11 @@ class GaleriaImagenes
             SELECT id, guid, id_galeria, id_subgaleria, url, alt, orden 
             FROM galeria_imagenes 
             WHERE id_galeria = :id_galeria 
+            AND id_tenant = :id_tenant
             ORDER BY id_subgaleria, orden
         ");
         $sentence->bindParam(':id_galeria', $id_galeria);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -133,9 +137,11 @@ class GaleriaImagenes
             SELECT id, guid, id_galeria, id_subgaleria, url, alt, orden 
             FROM galeria_imagenes 
             WHERE id_subgaleria = :id_subgaleria 
+            AND id_tenant = :id_tenant
             ORDER BY orden
         ");
         $sentence->bindParam(':id_subgaleria', $id_subgaleria);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -149,9 +155,11 @@ class GaleriaImagenes
             FROM galeria_imagenes 
             WHERE id_galeria = :id_galeria 
             AND id_subgaleria IS NULL 
+            AND id_tenant = :id_tenant
             ORDER BY orden
         ");
         $sentence->bindParam(':id_galeria', $id_galeria);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -163,9 +171,10 @@ class GaleriaImagenes
         $sentence = $db->prepare("
             SELECT id, guid, id_galeria, id_subgaleria, url, alt, orden 
             FROM galeria_imagenes 
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetch();
         Flight::json($response);
@@ -183,10 +192,13 @@ class GaleriaImagenes
         $alt = isset($data['alt']) ? $data['alt'] : '';
         $orden = isset($data['orden']) ? $data['orden'] : 0;
         
+        $idNew = Uuid::generar();
         $sentence = $db->prepare("
-            INSERT INTO galeria_imagenes (guid, id_galeria, id_subgaleria, url, alt, orden) 
-            VALUES (:guid, :id_galeria, :id_subgaleria, :url, :alt, :orden)
+            INSERT INTO galeria_imagenes (id, id_tenant, guid, id_galeria, id_subgaleria, url, alt, orden) 
+            VALUES (:id, :id_tenant, :guid, :id_galeria, :id_subgaleria, :url, :alt, :orden)
         ");
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':guid', $guid);
         $sentence->bindParam(':id_galeria', $id_galeria);
         $sentence->bindParam(':id_subgaleria', $id_subgaleria);
@@ -195,7 +207,7 @@ class GaleriaImagenes
         $sentence->bindParam(':orden', $orden);
         $sentence->execute();
         
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(['id' => $id, 'guid' => $guid]);
     }
 
@@ -208,14 +220,17 @@ class GaleriaImagenes
         $insertedIds = [];
         
         $sentence = $db->prepare("
-            INSERT INTO galeria_imagenes (guid, id_galeria, id_subgaleria, url, alt, orden) 
-            VALUES (:guid, :id_galeria, :id_subgaleria, :url, :alt, :orden)
+            INSERT INTO galeria_imagenes (id, id_tenant, guid, id_galeria, id_subgaleria, url, alt, orden) 
+            VALUES (:id, :id_tenant, :guid, :id_galeria, :id_subgaleria, :url, :alt, :orden)
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         
         foreach ($imagenes as $img) {
             $guid = self::generarGUID();
             $id_subgaleria = isset($img['id_subgaleria']) && $img['id_subgaleria'] ? $img['id_subgaleria'] : null;
             
+            $idNew = Uuid::generar();
+            $sentence->bindValue(':id', $idNew);
             $sentence->bindParam(':guid', $guid);
             $sentence->bindParam(':id_galeria', $img['id_galeria']);
             $sentence->bindParam(':id_subgaleria', $id_subgaleria);
@@ -224,7 +239,7 @@ class GaleriaImagenes
             $sentence->bindParam(':orden', $img['orden']);
             $sentence->execute();
             
-            $insertedIds[] = ['id' => $db->lastInsertId(), 'guid' => $guid];
+            $insertedIds[] = ['id' => $idNew, 'guid' => $guid];
         }
         
         Flight::json(['inserted' => count($insertedIds), 'items' => $insertedIds]);
@@ -244,9 +259,10 @@ class GaleriaImagenes
                 url = :url, 
                 alt = :alt, 
                 orden = :orden 
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $data['id']);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_galeria', $data['id_galeria']);
         $sentence->bindParam(':id_subgaleria', $id_subgaleria);
         $sentence->bindParam(':url', $data['url']);
@@ -263,8 +279,9 @@ class GaleriaImagenes
         $id = Flight::request()->data['id'];
         
         // 1. Obtener la información de la imagen antes de eliminar
-        $stmt = $db->prepare("SELECT id, url FROM galeria_imagenes WHERE id = :id");
+        $stmt = $db->prepare("SELECT id, url FROM galeria_imagenes WHERE id = :id AND id_tenant = :id_tenant");
         $stmt->bindParam(':id', $id);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->execute();
         $imagen = $stmt->fetch(PDO::FETCH_ASSOC);
         
@@ -273,8 +290,9 @@ class GaleriaImagenes
             self::eliminarArchivoFisico($imagen['url'], $imagen['id']);
             
             // 3. Eliminar registro de la BD
-            $sentence = $db->prepare("DELETE FROM galeria_imagenes WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM galeria_imagenes WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             Flight::json(['deleted' => true, 'id' => $id, 'archivo_eliminado' => true]);
@@ -288,8 +306,9 @@ class GaleriaImagenes
         $db = Flight::db();
         
         // 1. Obtener todas las imágenes de la galería
-        $stmt = $db->prepare("SELECT id, url FROM galeria_imagenes WHERE id_galeria = :id_galeria");
+        $stmt = $db->prepare("SELECT id, url FROM galeria_imagenes WHERE id_galeria = :id_galeria AND id_tenant = :id_tenant");
         $stmt->bindParam(':id_galeria', $id_galeria);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->execute();
         $imagenes = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
@@ -299,8 +318,9 @@ class GaleriaImagenes
         }
         
         // 3. Eliminar registros de la BD
-        $sentence = $db->prepare("DELETE FROM galeria_imagenes WHERE id_galeria = :id_galeria");
+        $sentence = $db->prepare("DELETE FROM galeria_imagenes WHERE id_galeria = :id_galeria AND id_tenant = :id_tenant");
         $sentence->bindParam(':id_galeria', $id_galeria);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         
         Flight::json([
@@ -315,8 +335,9 @@ class GaleriaImagenes
         $db = Flight::db();
         
         // 1. Obtener todas las imágenes de la subgalería
-        $stmt = $db->prepare("SELECT id, url FROM galeria_imagenes WHERE id_subgaleria = :id_subgaleria");
+        $stmt = $db->prepare("SELECT id, url FROM galeria_imagenes WHERE id_subgaleria = :id_subgaleria AND id_tenant = :id_tenant");
         $stmt->bindParam(':id_subgaleria', $id_subgaleria);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->execute();
         $imagenes = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
@@ -326,8 +347,9 @@ class GaleriaImagenes
         }
         
         // 3. Eliminar registros de la BD
-        $sentence = $db->prepare("DELETE FROM galeria_imagenes WHERE id_subgaleria = :id_subgaleria");
+        $sentence = $db->prepare("DELETE FROM galeria_imagenes WHERE id_subgaleria = :id_subgaleria AND id_tenant = :id_tenant");
         $sentence->bindParam(':id_subgaleria', $id_subgaleria);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         
         Flight::json([
@@ -357,9 +379,10 @@ class GaleriaImagenes
             SELECT gi.id, gi.guid, gi.url, gi.alt
             FROM galeria_imagenes gi
             INNER JOIN galerias g ON gi.id_galeria = g.id
-            WHERE gi.guid = :guid AND g.activo = 1
+            WHERE gi.guid = :guid AND g.activo = 1 AND gi.id_tenant = :id_tenant
         ");
         $stmt->bindParam(':guid', $guid, PDO::PARAM_STR);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->execute();
         $imagen = $stmt->fetch(PDO::FETCH_OBJ);
         
@@ -608,14 +631,15 @@ class GaleriaImagenes
             return;
         }
         
-        $ids = array_map('intval', $data['ids']); // Sanitizar IDs
+        $ids = $data['ids']; // IDs UUID: el binding parametrizado evita inyeccion
         $eliminados = 0;
         $errores = [];
         
         foreach ($ids as $id) {
             // 1. Obtener la información de la imagen
-            $stmt = $db->prepare("SELECT id, url FROM galeria_imagenes WHERE id = :id");
+            $stmt = $db->prepare("SELECT id, url FROM galeria_imagenes WHERE id = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $imagen = $stmt->fetch(PDO::FETCH_ASSOC);
             
@@ -624,8 +648,9 @@ class GaleriaImagenes
                 self::eliminarArchivoFisico($imagen['url'], $imagen['id']);
                 
                 // 3. Eliminar registro de la BD
-                $sentence = $db->prepare("DELETE FROM galeria_imagenes WHERE id = :id");
+                $sentence = $db->prepare("DELETE FROM galeria_imagenes WHERE id = :id AND id_tenant = :id_tenant");
                 $sentence->bindParam(':id', $id);
+                $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentence->execute();
                 
                 $eliminados++;

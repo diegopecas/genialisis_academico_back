@@ -16,10 +16,11 @@ class MaterialesXActividad
                 p.imagen AS imagen_producto
             FROM materiales_x_actividad mxa
             LEFT JOIN productos p ON mxa.id_producto = p.id
-            WHERE mxa.id_actividad_academica = :id_actividad
+            WHERE mxa.id_actividad_academica = :id_actividad AND mxa.id_tenant = :id_tenant
             ORDER BY mxa.nombre_material
         ");
         $sentence->bindParam(':id_actividad', $id_actividad);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -39,16 +40,19 @@ class MaterialesXActividad
                 return;
             }
 
+            $idNew = Uuid::generar();
             $sentence = $db->prepare("INSERT INTO materiales_x_actividad 
-                (id_actividad_academica, id_producto, nombre_material, cantidad) 
-                VALUES (:id_actividad, :id_producto, :nombre_material, :cantidad)");
+                (id, id_tenant, id_actividad_academica, id_producto, nombre_material, cantidad) 
+                VALUES (:id, :id_tenant, :id_actividad, :id_producto, :nombre_material, :cantidad)");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_actividad', $id_actividad_academica);
             $sentence->bindParam(':id_producto', $id_producto);
             $sentence->bindParam(':nombre_material', $nombre_material);
             $sentence->bindParam(':cantidad', $cantidad);
             $sentence->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idNew;
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log("Error en MaterialesXActividad::new: " . $e->getMessage());
@@ -62,8 +66,9 @@ class MaterialesXActividad
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM materiales_x_actividad WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM materiales_x_actividad WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -77,8 +82,9 @@ class MaterialesXActividad
     {
         try {
             $db = Flight::db();
-            $sentence = $db->prepare("DELETE FROM materiales_x_actividad WHERE id_actividad_academica = :id_actividad");
+            $sentence = $db->prepare("DELETE FROM materiales_x_actividad WHERE id_actividad_academica = :id_actividad AND id_tenant = :id_tenant");
             $sentence->bindParam(':id_actividad', $id_actividad);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('eliminados' => $sentence->rowCount()));
@@ -109,9 +115,11 @@ class MaterialesXActividad
             LEFT JOIN tipos_producto_academico tpa ON pa.id_tipo_producto_academico = tpa.id
             WHERE paxg.id_grado = :id_grado
             AND p.activo = 1
+            AND paxg.id_tenant = :id_tenant
             ORDER BY p.nombre
         ");
         $sentence->bindParam(':id_grado', $id_grado);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -138,9 +146,11 @@ class MaterialesXActividad
             LEFT JOIN tipos_producto_academico tpa ON pa.id_tipo_producto_academico = tpa.id
             WHERE gxg.id_grupo = :id_grupo
             AND p.activo = 1
+            AND gxg.id_tenant = :id_tenant
             ORDER BY p.nombre
         ");
         $sentence->bindParam(':id_grupo', $id_grupo);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);

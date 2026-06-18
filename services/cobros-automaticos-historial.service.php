@@ -21,9 +21,11 @@ class CobrosAutomaticosHistorial
                 INNER JOIN personas pu ON pu.id = u.id_persona
                 INNER JOIN asistencia_estudiantes ae ON ae.id = cah.id_asistencia_estudiante
                 WHERE ae.id_estudiante = :id_estudiante
+                  AND cah.id_tenant = :id_tenant
                 ORDER BY cah.fecha_generacion DESC
             ");
             $stmt->bindParam(':id_estudiante', $id_estudiante);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $response = $stmt->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -40,11 +42,14 @@ class CobrosAutomaticosHistorial
             $request = Flight::request();
             $data = $request->data->getData();
 
+            $idNew = Uuid::generar();
             $stmt = $db->prepare("
                 INSERT INTO cobros_automaticos_historial 
-                (id_regla_cobro, id_asistencia_estudiante, id_cuenta_por_cobrar, id_usuario, detalle)
-                VALUES (:id_regla_cobro, :id_asistencia_estudiante, :id_cuenta_por_cobrar, :id_usuario, :detalle)
+                (id, id_tenant, id_regla_cobro, id_asistencia_estudiante, id_cuenta_por_cobrar, id_usuario, detalle)
+                VALUES (:id, :id_tenant, :id_regla_cobro, :id_asistencia_estudiante, :id_cuenta_por_cobrar, :id_usuario, :detalle)
             ");
+            $stmt->bindValue(':id', $idNew);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_regla_cobro', $data['id_regla_cobro']);
             $stmt->bindParam(':id_asistencia_estudiante', $data['id_asistencia_estudiante']);
             $stmt->bindParam(':id_cuenta_por_cobrar', $data['id_cuenta_por_cobrar']);
@@ -52,7 +57,7 @@ class CobrosAutomaticosHistorial
             $stmt->bindParam(':detalle', $data['detalle']);
             $stmt->execute();
 
-            $id = $db->lastInsertId();
+            $id = $idNew;
             Flight::json(['id' => $id]);
         } catch (Exception $e) {
             error_log('Error en CobrosAutomaticosHistorial::new: ' . $e->getMessage());

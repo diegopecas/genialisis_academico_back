@@ -58,6 +58,7 @@ class DocumentosPersonas
             LEFT JOIN personas pu ON u.id_persona = pu.id
             WHERE dp.id_persona = :id_persona
               AND dp.activo = 1
+              AND dp.id_tenant = :id_tenant
         ";
 
         // Filtro por contrato
@@ -74,6 +75,7 @@ class DocumentosPersonas
 
         $sentence = $db->prepare($sql);
         $sentence->bindParam(':id_persona', $idPersona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
         if ($idContrato !== null) {
             $sentence->bindParam(':id_contrato', $idContrato);
@@ -141,8 +143,10 @@ class DocumentosPersonas
             WHERE dp.id_persona = :id_persona
               AND dp.id_tipo_documento = :id_tipo_documento
               AND dp.activo = 1
+              AND dp.id_tenant = :id_tenant
             ORDER BY dp.fecha_subida DESC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_persona', $idPersona);
         $sentence->bindParam(':id_tipo_documento', $idTipoDocumento);
         $sentence->execute();
@@ -197,9 +201,11 @@ class DocumentosPersonas
                   OR dp.fecha_vencimiento <= DATE_ADD(CURDATE(), INTERVAL :dias DAY)
               )
               AND dp.activo = 1
+              AND dp.id_tenant = :id_tenant
             ORDER BY dp.fecha_vencimiento ASC
         ");
         $sentence->bindParam(':dias', $dias);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -226,11 +232,13 @@ class DocumentosPersonas
                 SET fecha_vencimiento = :fecha_vencimiento,
                     observaciones = :observaciones
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
 
             $sentence->bindParam(':id', $id);
             $sentence->bindParam(':fecha_vencimiento', $fecha_vencimiento);
             $sentence->bindParam(':observaciones', $observaciones);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id, 'mensaje' => 'Documento actualizado'));
@@ -247,8 +255,9 @@ class DocumentosPersonas
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("UPDATE documentos_personas SET activo = 0 WHERE id = :id");
+            $sentence = $db->prepare("UPDATE documentos_personas SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id, 'mensaje' => 'Documento eliminado'));
@@ -320,13 +329,16 @@ class DocumentosPersonas
             // Insertar en BD
             $sentence = $db->prepare("
                 INSERT INTO documentos_personas 
-                (id_persona, id_tipo_documento, id_contrato, nombre_archivo, ruta_archivo, tamanio_bytes, 
+                (id, id_tenant, id_persona, id_tipo_documento, id_contrato, nombre_archivo, ruta_archivo, tamanio_bytes, 
                  fecha_vencimiento, observaciones, id_usuario_subio)
                 VALUES 
-                (:id_persona, :id_tipo_documento, :id_contrato, :nombre_archivo, :ruta_archivo, :tamanio_bytes,
+                (:id, :id_tenant, :id_persona, :id_tipo_documento, :id_contrato, :nombre_archivo, :ruta_archivo, :tamanio_bytes,
                  :fecha_vencimiento, :observaciones, :id_usuario_subio)
             ");
 
+            $id = Uuid::generar();
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindParam(':id_tipo_documento', $id_tipo_documento);
             $sentence->bindParam(':id_contrato', $id_contrato);
@@ -338,7 +350,6 @@ class DocumentosPersonas
             $sentence->bindParam(':id_usuario_subio', $id_usuario_subio);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             Flight::json(array(
                 'id' => $id,
@@ -360,8 +371,10 @@ class DocumentosPersonas
                 SELECT nombre_archivo, ruta_archivo 
                 FROM documentos_personas 
                 WHERE id = :id AND activo = 1
+                AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $documento = $sentence->fetch();
 

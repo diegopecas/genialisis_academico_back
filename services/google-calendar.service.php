@@ -176,9 +176,10 @@ class GoogleCalendarService
             FROM tareas_colaboradores tc
             INNER JOIN colaboradores c ON c.id = tc.id_colaborador
             INNER JOIN personas p ON p.id = c.id_persona
-            WHERE tc.id = :id_tarea
+            WHERE tc.id = :id_tarea AND tc.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id_tarea', $idTarea);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $tarea = $sentence->fetch();
 
@@ -247,9 +248,10 @@ class GoogleCalendarService
         }
 
         $googleEventId = $resultado['id'] ?? '';
-        $sentence = $db->prepare("UPDATE tareas_colaboradores SET google_event_id = :google_event_id WHERE id = :id");
+        $sentence = $db->prepare("UPDATE tareas_colaboradores SET google_event_id = :google_event_id WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':google_event_id', $googleEventId);
         $sentence->bindParam(':id', $idTarea);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json([
@@ -321,9 +323,10 @@ class GoogleCalendarService
         }
 
         $googleEventId = $resultado['id'];
-        $sentence = $db->prepare("UPDATE tareas_colaboradores SET google_event_id = :google_event_id WHERE id = :id");
+        $sentence = $db->prepare("UPDATE tareas_colaboradores SET google_event_id = :google_event_id WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':google_event_id', $googleEventId);
         $sentence->bindParam(':id', $idTarea);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json([
@@ -380,9 +383,10 @@ class GoogleCalendarService
         }
 
         $googleEventId = $resultado['id'];
-        $sentence = $db->prepare("UPDATE tareas_colaboradores SET google_event_id = :google_event_id WHERE id = :id");
+        $sentence = $db->prepare("UPDATE tareas_colaboradores SET google_event_id = :google_event_id WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':google_event_id', $googleEventId);
         $sentence->bindParam(':id', $idTarea);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json([
@@ -423,9 +427,10 @@ class GoogleCalendarService
             INNER JOIN tipos_actividades_colaboradores ta ON ta.id = ac.id_tipo_actividad
             INNER JOIN colaboradores c ON c.id = ac.id_colaborador
             INNER JOIN personas p ON p.id = c.id_persona
-            WHERE ac.id = :id_actividad
+            WHERE ac.id = :id_actividad AND ac.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id_actividad', $idActividad);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $actividad = $sentence->fetch();
 
@@ -475,9 +480,10 @@ class GoogleCalendarService
         }
 
         $googleEventId = $resultado['id'];
-        $sentence = $db->prepare("UPDATE actividades_colaboradores SET google_event_id = :google_event_id WHERE id = :id");
+        $sentence = $db->prepare("UPDATE actividades_colaboradores SET google_event_id = :google_event_id WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':google_event_id', $googleEventId);
         $sentence->bindParam(':id', $idActividad);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json([
@@ -610,8 +616,9 @@ class GoogleCalendarService
 
     private static function getConfigValor($db, $clave)
     {
-        $sentence = $db->prepare("SELECT valor FROM google_configuracion WHERE clave = :clave");
+        $sentence = $db->prepare("SELECT valor FROM google_configuracion WHERE clave = :clave AND id_tenant = :id_tenant");
         $sentence->bindParam(':clave', $clave);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $row = $sentence->fetch();
         return $row ? $row['valor'] : null;
@@ -619,9 +626,10 @@ class GoogleCalendarService
 
     private static function setConfigValor($db, $clave, $valor)
     {
-        $sentence = $db->prepare("UPDATE google_configuracion SET valor = :valor WHERE clave = :clave");
+        $sentence = $db->prepare("UPDATE google_configuracion SET valor = :valor WHERE clave = :clave AND id_tenant = :id_tenant");
         $sentence->bindParam(':clave', $clave);
         $sentence->bindParam(':valor', $valor);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
     }
 

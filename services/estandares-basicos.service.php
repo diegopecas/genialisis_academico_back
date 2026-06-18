@@ -4,7 +4,8 @@ class EstandaresBasicos
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM estandares_basicos ORDER BY nombre ASC");
+        $sentence = $db->prepare("SELECT * FROM estandares_basicos WHERE id_tenant = :id_tenant ORDER BY nombre ASC");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -13,8 +14,9 @@ class EstandaresBasicos
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM estandares_basicos WHERE id = :id");
+        $sentence = $db->prepare("SELECT * FROM estandares_basicos WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -29,12 +31,15 @@ class EstandaresBasicos
             
             error_log("Creando estándar básico: nombre=$nombre");
             
-            $sentence = $db->prepare("INSERT INTO estandares_basicos (nombre, descripcion) VALUES (:nombre, :descripcion)");
+            $idNew = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO estandares_basicos (id, id_tenant, nombre, descripcion) VALUES (:id, :id_tenant, :nombre, :descripcion)");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':descripcion', $descripcion);
             $sentence->execute();
             
-            $id = $db->lastInsertId();
+            $id = $idNew;
             error_log("Estándar básico creado con ID: $id");
             
             Flight::json(array('id' => $id));
@@ -59,10 +64,11 @@ class EstandaresBasicos
                 return;
             }
             
-            $sentence = $db->prepare("UPDATE estandares_basicos SET nombre = :nombre, descripcion = :descripcion WHERE id = :id");
+            $sentence = $db->prepare("UPDATE estandares_basicos SET nombre = :nombre, descripcion = :descripcion WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':descripcion', $descripcion);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             if ($sentence->rowCount() == 0) {
@@ -86,8 +92,9 @@ class EstandaresBasicos
             
             error_log("Eliminando estándar básico ID: $id");
             
-            $sentence = $db->prepare("DELETE FROM estandares_basicos WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM estandares_basicos WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             
             Flight::json(array('id' => $id));

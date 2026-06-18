@@ -14,9 +14,11 @@ class ItemsMenu
                                 LEFT JOIN items_menu_ingredientes imi ON im.id = imi.id_item_menu
                                 LEFT JOIN productos_alimentacion pa ON imi.id_producto_alimentacion = pa.id
                                 LEFT JOIN productos prod ON pa.id_producto = prod.id
+                                WHERE im.id_tenant = :id_tenant
                                 GROUP BY im.id
                                 ORDER BY im.nombre ASC
                             ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -31,9 +33,10 @@ class ItemsMenu
             SELECT im.*, p.nombre as nombre_porcion 
             FROM items_menu im
             LEFT JOIN porciones p ON im.id_porcion = p.id
-            WHERE im.id = :id
+            WHERE im.id = :id AND im.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $item = $sentence->fetch();
 
@@ -54,10 +57,11 @@ class ItemsMenu
             INNER JOIN productos_alimentacion pa ON imi.id_producto_alimentacion = pa.id
             INNER JOIN productos p ON pa.id_producto = p.id
             LEFT JOIN unidades_medida um ON p.id_unidad_medida = um.id
-            WHERE imi.id_item_menu = :id_item
+            WHERE imi.id_item_menu = :id_item AND imi.id_tenant = :id_tenant
             ORDER BY p.nombre
         ");
         $stmtIngredientes->bindParam(':id_item', $id);
+        $stmtIngredientes->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmtIngredientes->execute();
         $ingredientes = $stmtIngredientes->fetchAll();
 
@@ -73,16 +77,19 @@ class ItemsMenu
         $nombre = Flight::request()->data['nombre'];
         $id_porcion = Flight::request()->data['id_porcion'];
 
+        $idNew = Uuid::generar();
         $sentence = $db->prepare("
-            INSERT INTO items_menu (nombre, id_porcion)
-            VALUES (:nombre, :id_porcion)
+            INSERT INTO items_menu (id, id_tenant, nombre, id_porcion)
+            VALUES (:id, :id_tenant, :nombre, :id_porcion)
         ");
 
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':id_porcion', $id_porcion);
         $sentence->execute();
 
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(['id' => $id]);
     }
 
@@ -98,12 +105,13 @@ class ItemsMenu
             UPDATE items_menu SET 
                 nombre = :nombre,
                 id_porcion = :id_porcion
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
 
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':id_porcion', $id_porcion);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         self::getById($id);
@@ -118,8 +126,9 @@ class ItemsMenu
             $db->beginTransaction();
 
             // Verificar si el item está siendo usado en algún menú
-            $checkStmt = $db->prepare("SELECT COUNT(*) as total FROM menu_x_items WHERE id_item_menu = :id");
+            $checkStmt = $db->prepare("SELECT COUNT(*) as total FROM menu_x_items WHERE id_item_menu = :id AND id_tenant = :id_tenant");
             $checkStmt->bindParam(':id', $id);
+            $checkStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkStmt->execute();
             $result = $checkStmt->fetch();
 
@@ -130,13 +139,15 @@ class ItemsMenu
             }
 
             // Eliminar ingredientes
-            $stmt = $db->prepare("DELETE FROM items_menu_ingredientes WHERE id_item_menu = :id");
+            $stmt = $db->prepare("DELETE FROM items_menu_ingredientes WHERE id_item_menu = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             // Eliminar item
-            $stmt = $db->prepare("DELETE FROM items_menu WHERE id = :id");
+            $stmt = $db->prepare("DELETE FROM items_menu WHERE id = :id AND id_tenant = :id_tenant");
             $stmt->bindParam(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 
             $db->commit();
@@ -161,10 +172,11 @@ class ItemsMenu
             INNER JOIN productos_alimentacion pa ON imi.id_producto_alimentacion = pa.id
             INNER JOIN productos p ON pa.id_producto = p.id
             LEFT JOIN unidades_medida um ON p.id_unidad_medida = um.id
-            WHERE imi.id_item_menu = :id_item
+            WHERE imi.id_item_menu = :id_item AND imi.id_tenant = :id_tenant
             ORDER BY p.nombre
         ");
         $sentence->bindParam(':id_item', $id_item);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -179,17 +191,19 @@ class ItemsMenu
             $db->beginTransaction();
 
             // Eliminar ingredientes actuales
-            $deleteStmt = $db->prepare("DELETE FROM items_menu_ingredientes WHERE id_item_menu = :id_item");
+            $deleteStmt = $db->prepare("DELETE FROM items_menu_ingredientes WHERE id_item_menu = :id_item AND id_tenant = :id_tenant");
             $deleteStmt->bindParam(':id_item', $id_item);
+            $deleteStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $deleteStmt->execute();
 
             // Insertar nuevos ingredientes
             if (!empty($ingredientes)) {
                 $insertStmt = $db->prepare("
                     INSERT INTO items_menu_ingredientes 
-                    (id_item_menu, id_producto_alimentacion, cantidad, es_opcional)
-                    VALUES (:id_item_menu, :id_producto_alimentacion, :cantidad, :es_opcional)
+                    (id_tenant, id_item_menu, id_producto_alimentacion, cantidad, es_opcional)
+                    VALUES (:id_tenant, :id_item_menu, :id_producto_alimentacion, :cantidad, :es_opcional)
                 ");
+                $insertStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
                 foreach ($ingredientes as $ingrediente) {
                     $insertStmt->bindParam(':id_item_menu', $id_item);
@@ -223,9 +237,11 @@ class ItemsMenu
                 FROM menu_x_items 
                 WHERE id_menu = :id_menu
             )
+            AND im.id_tenant = :id_tenant
             ORDER BY im.nombre ASC
         ");
         $sentence->bindParam(':id_menu', $id_menu);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);

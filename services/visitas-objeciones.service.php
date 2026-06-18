@@ -13,8 +13,10 @@ class VisitasObjeciones
                 FROM visitas_objeciones vo
                 INNER JOIN tipos_objeciones tob ON vo.id_tipo_objecion = tob.id
                 INNER JOIN visitas v ON vo.id_visita = v.id
+                WHERE vo.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -38,8 +40,10 @@ class VisitasObjeciones
                 INNER JOIN tipos_objeciones tob ON vo.id_tipo_objecion = tob.id
                 INNER JOIN visitas v ON vo.id_visita = v.id
                 WHERE vo.id = :id
+                AND vo.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -61,9 +65,11 @@ class VisitasObjeciones
                 FROM visitas_objeciones vo
                 INNER JOIN tipos_objeciones tob ON vo.id_tipo_objecion = tob.id
                 WHERE vo.id_visita = :id_visita
+                AND vo.id_tenant = :id_tenant
                 ORDER BY vo.id
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -84,12 +90,15 @@ class VisitasObjeciones
 
             $sentence = $db->prepare("
                 INSERT INTO visitas_objeciones (
-                    id_visita, id_tipo_objecion, como_se_manejo, superada, notas_adicionales
+                    id, id_tenant, id_visita, id_tipo_objecion, como_se_manejo, superada, notas_adicionales
                 ) VALUES (
-                    :id_visita, :id_tipo_objecion, :como_se_manejo, :superada, :notas_adicionales
+                    :id, :id_tenant, :id_visita, :id_tipo_objecion, :como_se_manejo, :superada, :notas_adicionales
                 )
             ");
 
+            $id = Uuid::generar();
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $data['id_visita']);
             $sentence->bindParam(':id_tipo_objecion', $data['id_tipo_objecion']);
             $sentence->bindParam(':como_se_manejo', $data['como_se_manejo']);
@@ -97,7 +106,6 @@ class VisitasObjeciones
             $sentence->bindParam(':notas_adicionales', $data['notas_adicionales']);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
             
             // ✅ Si se llamó con parámetro, retornar el ID, sino usar Flight::json
             if ($dataParam !== null) {
@@ -130,6 +138,7 @@ class VisitasObjeciones
                     superada = :superada,
                     notas_adicionales = :notas_adicionales
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
 
             $sentence->bindParam(':id', $data['id']);
@@ -137,6 +146,7 @@ class VisitasObjeciones
             $sentence->bindParam(':como_se_manejo', $data['como_se_manejo']);
             $sentence->bindParam(':superada', $data['superada']);
             $sentence->bindParam(':notas_adicionales', $data['notas_adicionales']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
             self::getById($data['id']);
@@ -152,8 +162,9 @@ class VisitasObjeciones
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_objeciones WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_objeciones WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -177,8 +188,8 @@ class VisitasObjeciones
             error_log("📋 Objeciones recibidas: " . json_encode($objeciones));
 
             // ✅ Eliminar las objeciones existentes
-            $stmt = $db->prepare("DELETE FROM visitas_objeciones WHERE id_visita = :id_visita");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt = $db->prepare("DELETE FROM visitas_objeciones WHERE id_visita = :id_visita AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
 
             $totalInsertadas = 0;
 
@@ -244,9 +255,11 @@ class VisitasObjeciones
                     ROUND((SUM(CASE WHEN vo.superada = 1 THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2) as porcentaje_superada
                 FROM visitas_objeciones vo
                 INNER JOIN tipos_objeciones tob ON vo.id_tipo_objecion = tob.id
+                WHERE vo.id_tenant = :id_tenant
                 GROUP BY vo.id_tipo_objecion, tob.nombre
                 ORDER BY total_veces DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);

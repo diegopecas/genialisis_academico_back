@@ -4,7 +4,8 @@ class TiposObjeciones
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM tipos_objeciones WHERE activo = 1 ORDER BY orden");
+        $sentence = $db->prepare("SELECT * FROM tipos_objeciones WHERE activo = 1 AND id_tenant = :id_tenant ORDER BY orden");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -13,8 +14,9 @@ class TiposObjeciones
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT * FROM tipos_objeciones WHERE id = :id");
+        $sentence = $db->prepare("SELECT * FROM tipos_objeciones WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -32,7 +34,10 @@ class TiposObjeciones
             $orden = isset(Flight::request()->data['orden']) ? Flight::request()->data['orden'] : 0;
             $activo = isset(Flight::request()->data['activo']) ? Flight::request()->data['activo'] : 1;
 
-            $sentence = $db->prepare("INSERT INTO tipos_objeciones (nombre, descripcion, estrategia, role_plays, respuestas_rapidas, orden, activo) VALUES (:nombre, :descripcion, :estrategia, :role_plays, :respuestas_rapidas, :orden, :activo)");
+            $id = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO tipos_objeciones (id, id_tenant, nombre, descripcion, estrategia, role_plays, respuestas_rapidas, orden, activo) VALUES (:id, :id_tenant, :nombre, :descripcion, :estrategia, :role_plays, :respuestas_rapidas, :orden, :activo)");
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':descripcion', $descripcion);
             $sentence->bindParam(':estrategia', $estrategia);
@@ -42,7 +47,6 @@ class TiposObjeciones
             $sentence->bindParam(':activo', $activo);
             $sentence->execute();
 
-            $id = $db->lastInsertId();
             Flight::json(array('id' => $id));
         } catch (Exception $e) {
             error_log("Error en tipos_objeciones new: " . $e->getMessage());
@@ -63,7 +67,7 @@ class TiposObjeciones
             $orden = isset(Flight::request()->data['orden']) ? Flight::request()->data['orden'] : 0;
             $activo = isset(Flight::request()->data['activo']) ? Flight::request()->data['activo'] : 1;
 
-            $sentence = $db->prepare("UPDATE tipos_objeciones SET nombre = :nombre, descripcion = :descripcion, estrategia = :estrategia, role_plays = :role_plays, respuestas_rapidas = :respuestas_rapidas, orden = :orden, activo = :activo WHERE id = :id");
+            $sentence = $db->prepare("UPDATE tipos_objeciones SET nombre = :nombre, descripcion = :descripcion, estrategia = :estrategia, role_plays = :role_plays, respuestas_rapidas = :respuestas_rapidas, orden = :orden, activo = :activo WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':descripcion', $descripcion);
             $sentence->bindParam(':estrategia', $estrategia);
@@ -72,6 +76,7 @@ class TiposObjeciones
             $sentence->bindParam(':orden', $orden);
             $sentence->bindParam(':activo', $activo);
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             self::getById($id);
@@ -87,8 +92,9 @@ class TiposObjeciones
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM tipos_objeciones WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM tipos_objeciones WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));

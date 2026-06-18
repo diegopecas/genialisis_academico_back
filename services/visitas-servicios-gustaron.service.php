@@ -13,8 +13,10 @@ class VisitasServiciosGustaron
                 FROM visitas_servicios_gustaron vsg
                 INNER JOIN servicios_jardin sj ON vsg.id_servicio = sj.id
                 INNER JOIN visitas v ON vsg.id_visita = v.id
+                WHERE vsg.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -34,9 +36,10 @@ class VisitasServiciosGustaron
                     sj.nombre as nombre_servicio
                 FROM visitas_servicios_gustaron vsg
                 INNER JOIN servicios_jardin sj ON vsg.id_servicio = sj.id
-                WHERE vsg.id = :id
+                WHERE vsg.id = :id AND vsg.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -56,10 +59,11 @@ class VisitasServiciosGustaron
                     sj.nombre as nombre_servicio
                 FROM visitas_servicios_gustaron vsg
                 INNER JOIN servicios_jardin sj ON vsg.id_servicio = sj.id
-                WHERE vsg.id_visita = :id_visita
+                WHERE vsg.id_visita = :id_visita AND vsg.id_tenant = :id_tenant
                 ORDER BY vsg.id
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -75,16 +79,19 @@ class VisitasServiciosGustaron
             $db = Flight::db();
             $data = $dataParam ?? Flight::request()->data;
 
+            $idNew = Uuid::generar();
             $sentence = $db->prepare("
-                INSERT INTO visitas_servicios_gustaron (id_visita, id_servicio)
-                VALUES (:id_visita, :id_servicio)
+                INSERT INTO visitas_servicios_gustaron (id, id_tenant, id_visita, id_servicio)
+                VALUES (:id, :id_tenant, :id_visita, :id_servicio)
             ");
 
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $data['id_visita']);
             $sentence->bindParam(':id_servicio', $data['id_servicio']);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
+            $id = $idNew;
 
             if ($dataParam !== null) {
                 return $id;
@@ -108,8 +115,9 @@ class VisitasServiciosGustaron
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_servicios_gustaron WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_servicios_gustaron WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -133,8 +141,8 @@ class VisitasServiciosGustaron
             error_log("📋 Servicios recibidos: " . json_encode($servicios));
 
             // Primero eliminar los existentes
-            $stmt = $db->prepare("DELETE FROM visitas_servicios_gustaron WHERE id_visita = :id_visita");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt = $db->prepare("DELETE FROM visitas_servicios_gustaron WHERE id_visita = :id_visita AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
 
             $totalInsertados = 0;
 
@@ -186,12 +194,15 @@ class VisitasServiciosGustaron
                 SELECT 
                     sj.nombre as servicio,
                     COUNT(*) as veces_destacado,
-                    ROUND((COUNT(*) / (SELECT COUNT(DISTINCT id_visita) FROM visitas_servicios_gustaron)) * 100, 2) as porcentaje
+                    ROUND((COUNT(*) / (SELECT COUNT(DISTINCT id_visita) FROM visitas_servicios_gustaron WHERE id_tenant = :id_tenant_sub)) * 100, 2) as porcentaje
                 FROM visitas_servicios_gustaron vsg
                 INNER JOIN servicios_jardin sj ON vsg.id_servicio = sj.id
+                WHERE vsg.id_tenant = :id_tenant
                 GROUP BY vsg.id_servicio, sj.nombre
                 ORDER BY veces_destacado DESC
             ");
+            $sentence->bindValue(':id_tenant_sub', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);

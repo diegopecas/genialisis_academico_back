@@ -18,7 +18,9 @@ class EstudiantesXGrupos
         inner join grupos g on exg.id_grupo = g.id 
         left join grados gr on exg.id_grado = gr.id
         where exg.activo = 1
+        and exg.id_tenant = :id_tenant
         order by g.orden, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -37,7 +39,9 @@ class EstudiantesXGrupos
         inner join grupos g on exg.id_grupo = g.id 
         left join grados gr on exg.id_grado = gr.id
         where e.activo = 1 and exg.activo = 1
+        and exg.id_tenant = :id_tenant
         order by g.orden, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -62,8 +66,10 @@ class EstudiantesXGrupos
             inner join grupos g on exg.id_grupo = g.id 
             left join grados gr on exg.id_grado = gr.id
             where exg.activo = 1
-            and g.id = :id_grupo");
+            and g.id = :id_grupo
+            and exg.id_tenant = :id_tenant");
             $sentence->bindParam(':id_grupo', $idGrupo);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll();
             Flight::json($response);
@@ -83,10 +89,11 @@ class EstudiantesXGrupos
         INNER JOIN personas p ON e.id_persona = p.id 
         INNER JOIN grupos g ON exg.id_grupo = g.id 
         LEFT JOIN grados gr ON exg.id_grado = gr.id
-        WHERE exg.id_estudiante = :id AND exg.activo = 1
+        WHERE exg.id_estudiante = :id AND exg.activo = 1 AND exg.id_tenant = :id_tenant
         ORDER BY g.orden");
 
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -105,8 +112,10 @@ class EstudiantesXGrupos
         inner join grupos g on exg.id_grupo = g.id 
         left join grados gr on exg.id_grado = gr.id
         where exg.activo = 1
-        and exg.id = :id");
+        and exg.id = :id
+        and exg.id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -125,13 +134,16 @@ class EstudiantesXGrupos
         $id_grado = (isset(Flight::request()->data['id_grado']) && Flight::request()->data['id_grado'] !== '' && Flight::request()->data['id_grado'] !== null)
             ? Flight::request()->data['id_grado']
             : null;
-        $sentence = $db->prepare("insert into estudiantes_x_grupos(anio, id_estudiante, id_grupo, id_grado, activo) values (:anio, :id_estudiante, :id_grupo, :id_grado, 1)");
+        $idNew = Uuid::generar();
+        $sentence = $db->prepare("insert into estudiantes_x_grupos(id, id_tenant, anio, id_estudiante, id_grupo, id_grado, activo) values (:id, :id_tenant, :anio, :id_estudiante, :id_grupo, :id_grado, 1)");
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':anio', $anio);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
         $sentence->bindParam(':id_grupo', $id_grupo);
         $sentence->bindParam(':id_grado', $id_grado);
         $sentence->execute();
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(array('id' => $id));
     }
 
@@ -143,8 +155,9 @@ class EstudiantesXGrupos
 
             $db = Flight::db();
             $id = Flight::request()->data['id'];
-            $sentence = $db->prepare("update estudiantes_x_grupos set activo = 0 where id = :id");
+            $sentence = $db->prepare("update estudiantes_x_grupos set activo = 0 where id = :id and id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             self::getById($id);
         } catch (Exception $e) {
@@ -177,12 +190,14 @@ class EstudiantesXGrupos
                 $id_grado_est = isset($est['id_grado']) ? $est['id_grado'] : $id_grado_nuevo;
 
                 // Inactivar registro actual
-                $sentenceInactivar = $db->prepare("UPDATE estudiantes_x_grupos SET activo = 0 WHERE id = :id");
+                $sentenceInactivar = $db->prepare("UPDATE estudiantes_x_grupos SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
                 $sentenceInactivar->bindParam(':id', $id_estudiante_grupo);
+                $sentenceInactivar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentenceInactivar->execute();
 
                 // Crear nuevo registro con el año del estudiante
-                $sentenceNuevo = $db->prepare("INSERT INTO estudiantes_x_grupos (anio, id_estudiante, id_grupo, id_grado, activo) VALUES (:anio, :id_estudiante, :id_grupo, :id_grado, 1)");
+                $sentenceNuevo = $db->prepare("INSERT INTO estudiantes_x_grupos (id_tenant, anio, id_estudiante, id_grupo, id_grado, activo) VALUES (:id_tenant, :anio, :id_estudiante, :id_grupo, :id_grado, 1)");
+                $sentenceNuevo->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentenceNuevo->bindParam(':anio', $anno);
                 $sentenceNuevo->bindParam(':id_estudiante', $id_estudiante);
                 $sentenceNuevo->bindParam(':id_grupo', $id_grupo_nuevo);

@@ -10,8 +10,10 @@ class Galerias
         $sentence = $db->prepare("
             SELECT id, nombre, descripcion, thumbnail, fecha, es_publica, activo, orden 
             FROM galerias 
+            WHERE id_tenant = :id_tenant
             ORDER BY orden, fecha DESC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -27,8 +29,10 @@ class Galerias
             SELECT id, nombre, descripcion, thumbnail, fecha, es_publica, orden 
             FROM galerias 
             WHERE activo = 1 
+            AND id_tenant = :id_tenant
             ORDER BY orden, fecha DESC
         ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -43,9 +47,10 @@ class Galerias
         $sentence = $db->prepare("
             SELECT id, nombre, descripcion, thumbnail, fecha, es_publica, activo, orden 
             FROM galerias 
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetch();
         Flight::json($response);
@@ -79,6 +84,7 @@ class Galerias
                 END AS primera_imagen_guid
             FROM galerias g
             WHERE g.activo = 1
+            AND g.id_tenant = :id_tenant
             AND (
                 g.es_publica = 1
                 OR g.id IN (
@@ -96,6 +102,7 @@ class Galerias
             ORDER BY g.orden, g.fecha DESC
         ");
         $sentence->bindParam(':id_persona', $id_persona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -112,7 +119,7 @@ class Galerias
     {
         $db = Flight::db();
         
-        $id_docente = intval($id_docente);
+        $id_docente = (!empty($id_docente) && $id_docente !== '0') ? $id_docente : null;
 
         // Query base: públicas + acceso como acudiente
         $sql = "
@@ -135,6 +142,7 @@ class Galerias
                 END AS primera_imagen_guid
             FROM galerias g
             WHERE g.activo = 1
+            AND g.id_tenant = :id_tenant
             AND (
                 g.es_publica = 1
                 OR g.id IN (
@@ -148,7 +156,7 @@ class Galerias
         ";
 
         // Si es docente, agregar acceso por sus grupos
-        if ($id_docente > 0) {
+        if ($id_docente !== null) {
             $sql .= "
                 OR g.id IN (
                     SELECT gxg2.id_galeria
@@ -170,8 +178,9 @@ class Galerias
 
         $sentence = $db->prepare($sql);
         $sentence->bindParam(':id_persona', $id_persona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         
-        if ($id_docente > 0) {
+        if ($id_docente !== null) {
             $sentence->bindParam(':id_docente', $id_docente);
         }
 
@@ -192,7 +201,7 @@ class Galerias
     {
         $db = Flight::db();
         
-        $id_docente = intval($id_docente);
+        $id_docente = (!empty($id_docente) && $id_docente !== '0') ? $id_docente : null;
 
         // Verificar que el usuario tiene acceso a esta galería (acudiente o docente)
         $sqlAccess = "
@@ -200,6 +209,7 @@ class Galerias
             FROM galerias g
             WHERE g.id = :id_galeria
             AND g.activo = 1
+            AND g.id_tenant = :id_tenant
             AND (
                 g.es_publica = 1
                 OR g.id IN (
@@ -212,7 +222,7 @@ class Galerias
                 )
         ";
 
-        if ($id_docente > 0) {
+        if ($id_docente !== null) {
             $sqlAccess .= "
                 OR g.id IN (
                     SELECT gxg2.id_galeria
@@ -229,8 +239,9 @@ class Galerias
         $checkAccess = $db->prepare($sqlAccess);
         $checkAccess->bindParam(':id_galeria', $id_galeria);
         $checkAccess->bindParam(':id_persona', $id_persona);
+        $checkAccess->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
-        if ($id_docente > 0) {
+        if ($id_docente !== null) {
             $checkAccess->bindParam(':id_docente', $id_docente);
         }
 
@@ -245,9 +256,10 @@ class Galerias
         $galeriaStmt = $db->prepare("
             SELECT id, nombre, descripcion, thumbnail, fecha, es_publica 
             FROM galerias 
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
         $galeriaStmt->bindParam(':id', $id_galeria);
+        $galeriaStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $galeriaStmt->execute();
         $galeria = $galeriaStmt->fetch(PDO::FETCH_ASSOC);
 
@@ -256,9 +268,11 @@ class Galerias
             SELECT id, nombre, orden 
             FROM subgalerias 
             WHERE id_galeria = :id_galeria 
+            AND id_tenant = :id_tenant
             ORDER BY orden
         ");
         $subgaleriasStmt->bindParam(':id_galeria', $id_galeria);
+        $subgaleriasStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $subgaleriasStmt->execute();
         $subgalerias = $subgaleriasStmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -268,9 +282,11 @@ class Galerias
             FROM galeria_imagenes 
             WHERE id_galeria = :id_galeria 
             AND id_subgaleria IS NULL 
+            AND id_tenant = :id_tenant
             ORDER BY orden
         ");
         $imagenesStmt->bindParam(':id_galeria', $id_galeria);
+        $imagenesStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $imagenesStmt->execute();
         $galeria['images'] = $imagenesStmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -280,9 +296,11 @@ class Galerias
                 SELECT id, guid, url, alt, orden 
                 FROM galeria_imagenes 
                 WHERE id_subgaleria = :id_subgaleria 
+                AND id_tenant = :id_tenant
                 ORDER BY orden
             ");
             $subImagenesStmt->bindParam(':id_subgaleria', $sub['id']);
+            $subImagenesStmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $subImagenesStmt->execute();
             $sub['images'] = $subImagenesStmt->fetchAll(PDO::FETCH_ASSOC);
         }
@@ -317,10 +335,13 @@ class Galerias
         $activo = isset($data['activo']) ? $data['activo'] : 1;
         $orden = isset($data['orden']) ? $data['orden'] : 0;
         
+        $idNew = Uuid::generar();
         $sentence = $db->prepare("
-            INSERT INTO galerias (nombre, descripcion, thumbnail, fecha, es_publica, activo, orden) 
-            VALUES (:nombre, :descripcion, :thumbnail, :fecha, :es_publica, :activo, :orden)
+            INSERT INTO galerias (id, id_tenant, nombre, descripcion, thumbnail, fecha, es_publica, activo, orden) 
+            VALUES (:id, :id_tenant, :nombre, :descripcion, :thumbnail, :fecha, :es_publica, :activo, :orden)
         ");
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':descripcion', $descripcion);
         $sentence->bindParam(':thumbnail', $thumbnail);
@@ -330,7 +351,7 @@ class Galerias
         $sentence->bindParam(':orden', $orden);
         $sentence->execute();
         
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(['id' => $id]);
     }
 
@@ -360,9 +381,10 @@ class Galerias
                 es_publica = :es_publica, 
                 activo = :activo, 
                 orden = :orden 
-            WHERE id = :id
+            WHERE id = :id AND id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':descripcion', $descripcion);
         $sentence->bindParam(':thumbnail', $thumbnail);
@@ -383,8 +405,9 @@ class Galerias
         $db = Flight::db();
         $id = Flight::request()->data['id'];
         
-        $sentence = $db->prepare("DELETE FROM galerias WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM galerias WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         
         Flight::json(['deleted' => true, 'id' => $id]);

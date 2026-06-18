@@ -10,7 +10,9 @@ class DatosMedicos
             dm.orden, dm.activo, tdm.nombre AS nombre_tipo, tdm.icono AS icono_tipo
             FROM datos_medicos dm
             INNER JOIN tipos_datos_medicos tdm ON dm.id_tipo_dato_medico = tdm.id
+            WHERE dm.id_tenant = :id_tenant
             ORDER BY tdm.orden, dm.orden, dm.nombre");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -24,8 +26,9 @@ class DatosMedicos
             dm.orden, dm.activo, tdm.nombre AS nombre_tipo, tdm.icono AS icono_tipo
             FROM datos_medicos dm
             INNER JOIN tipos_datos_medicos tdm ON dm.id_tipo_dato_medico = tdm.id
-            WHERE dm.id = :id");
+            WHERE dm.id = :id AND dm.id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -40,8 +43,10 @@ class DatosMedicos
             FROM datos_medicos dm
             INNER JOIN tipos_datos_medicos tdm ON dm.id_tipo_dato_medico = tdm.id
             WHERE dm.id_tipo_dato_medico = :id_tipo
+            AND dm.id_tenant = :id_tenant
             ORDER BY dm.orden, dm.nombre");
         $sentence->bindParam(':id_tipo', $id_tipo);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -62,8 +67,11 @@ class DatosMedicos
         $orden = isset(Flight::request()->data['orden']) ? Flight::request()->data['orden'] : 0;
         $activo = isset(Flight::request()->data['activo']) ? Flight::request()->data['activo'] : 1;
 
-        $sentence = $db->prepare("INSERT INTO datos_medicos (id_tipo_dato_medico, nombre, es_numero, es_texto, es_parrafo, es_fecha, opciones, orden, activo) 
-            VALUES (:id_tipo_dato_medico, :nombre, :es_numero, :es_texto, :es_parrafo, :es_fecha, :opciones, :orden, :activo)");
+        $id = Uuid::generar();
+        $sentence = $db->prepare("INSERT INTO datos_medicos (id, id_tenant, id_tipo_dato_medico, nombre, es_numero, es_texto, es_parrafo, es_fecha, opciones, orden, activo) 
+            VALUES (:id, :id_tenant, :id_tipo_dato_medico, :nombre, :es_numero, :es_texto, :es_parrafo, :es_fecha, :opciones, :orden, :activo)");
+        $sentence->bindValue(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_tipo_dato_medico', $id_tipo_dato_medico);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':es_numero', $es_numero);
@@ -75,7 +83,6 @@ class DatosMedicos
         $sentence->bindParam(':activo', $activo);
         $sentence->execute();
 
-        $id = $db->lastInsertId();
         Flight::json(array('id' => $id));
     }
 
@@ -97,7 +104,7 @@ class DatosMedicos
 
         $sentence = $db->prepare("UPDATE datos_medicos SET id_tipo_dato_medico = :id_tipo_dato_medico, nombre = :nombre, 
             es_numero = :es_numero, es_texto = :es_texto, es_parrafo = :es_parrafo, es_fecha = :es_fecha, 
-            opciones = :opciones, orden = :orden, activo = :activo WHERE id = :id");
+            opciones = :opciones, orden = :orden, activo = :activo WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id_tipo_dato_medico', $id_tipo_dato_medico);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':es_numero', $es_numero);
@@ -108,6 +115,7 @@ class DatosMedicos
         $sentence->bindParam(':orden', $orden);
         $sentence->bindParam(':activo', $activo);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         self::getById($id);
@@ -117,8 +125,9 @@ class DatosMedicos
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("DELETE FROM datos_medicos WHERE id = :id");
+        $sentence = $db->prepare("DELETE FROM datos_medicos WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         Flight::json(array('id' => $id));
     }

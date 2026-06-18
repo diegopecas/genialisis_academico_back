@@ -25,7 +25,9 @@ class Horarios
                                 inner join area_academica_x_grupo aaxg on aaxg.id_area_academica = ac.id and aaxg.id_grupo = g.id 
                                 left join docentes d ON aaxg.id_docente = d.id
                                 left join personas dp ON d.id_persona = dp.id
+                                where h.id_tenant = :id_tenant
                                 order by h.id_dia_semana, h.hora_inicial");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -54,8 +56,9 @@ class Horarios
                                 inner join area_academica_x_grupo aaxg on aaxg.id_area_academica = ac.id and aaxg.id_grupo = g.id 
                                 left join docentes d ON aaxg.id_docente = d.id
                                 left join personas dp ON d.id_persona = dp.id
-                                where h.id = :id");
+                                where h.id = :id and h.id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -88,9 +91,10 @@ class Horarios
                                 left join area_academica_x_grupo aaxg on aaxg.id_area_academica = ac.id and aaxg.id_grupo = g.id 
                                 left join docentes d ON aaxg.id_docente = d.id
                                 left join personas dp ON d.id_persona = dp.id
-                                where h.id_grupo = :id_grupo
+                                where h.id_grupo = :id_grupo and h.id_tenant = :id_tenant
                                 order by h.id_dia_semana, h.hora_inicial");
         $sentence->bindParam(':id_grupo', $id_grupo);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -119,9 +123,10 @@ class Horarios
                                 inner join area_academica_x_grupo aaxg on aaxg.id_area_academica = ac.id and aaxg.id_grupo = g.id 
                                 left join docentes d ON aaxg.id_docente = d.id
                                 left join personas dp ON d.id_persona = dp.id
-                                where h.id_area_academica = :id_area_academica
+                                where h.id_area_academica = :id_area_academica and h.id_tenant = :id_tenant
                                 order by h.id_dia_semana, h.hora_inicial");
         $sentence->bindParam(':id_area_academica', $id_area_academica);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -138,8 +143,11 @@ class Horarios
         $total_minutos = Flight::request()->data['total_minutos'];
         $total_clases = Flight::request()->data['total_clases'] ?? 1;
         
-        $sentence = $db->prepare("insert into horarios(id_grupo, id_area_academica, id_dia_semana, hora_inicial, hora_final, total_minutos, total_clases) 
-                                  values (:id_grupo, :id_area_academica, :id_dia_semana, :hora_inicial, :hora_final, :total_minutos, :total_clases)");
+        $idNew = Uuid::generar();
+        $sentence = $db->prepare("insert into horarios(id, id_tenant, id_grupo, id_area_academica, id_dia_semana, hora_inicial, hora_final, total_minutos, total_clases) 
+                                  values (:id, :id_tenant, :id_grupo, :id_area_academica, :id_dia_semana, :hora_inicial, :hora_final, :total_minutos, :total_clases)");
+        $sentence->bindValue(':id', $idNew);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_grupo', $id_grupo);
         $sentence->bindParam(':id_area_academica', $id_area_academica);
         $sentence->bindParam(':id_dia_semana', $id_dia_semana);
@@ -148,7 +156,7 @@ class Horarios
         $sentence->bindParam(':total_minutos', $total_minutos);
         $sentence->bindParam(':total_clases', $total_clases);
         $sentence->execute();
-        $id = $db->lastInsertId();
+        $id = $idNew;
         Flight::json(array('id' => $id));
     }
 
@@ -172,7 +180,7 @@ class Horarios
                                   hora_final = :hora_final, 
                                   total_minutos = :total_minutos, 
                                   total_clases = :total_clases 
-                                  where id = :id");
+                                  where id = :id and id_tenant = :id_tenant");
         $sentence->bindParam(':id_grupo', $id_grupo);
         $sentence->bindParam(':id_area_academica', $id_area_academica);
         $sentence->bindParam(':id_dia_semana', $id_dia_semana);
@@ -181,6 +189,7 @@ class Horarios
         $sentence->bindParam(':total_minutos', $total_minutos);
         $sentence->bindParam(':total_clases', $total_clases);
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
     }
@@ -189,8 +198,9 @@ class Horarios
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("delete from horarios where id = :id");
+        $sentence = $db->prepare("delete from horarios where id = :id and id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         Flight::json(array('id' => $id, 'deleted' => true));
     }

@@ -14,8 +14,10 @@ class VisitasCompromisos
                 FROM visitas_compromisos vc
                 INNER JOIN tipos_compromisos tc ON vc.id_tipo_compromiso = tc.id
                 INNER JOIN visitas v ON vc.id_visita = v.id
+                WHERE vc.id_tenant = :id_tenant
                 ORDER BY v.fecha DESC, vc.fecha_compromiso ASC
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -39,8 +41,10 @@ class VisitasCompromisos
                 INNER JOIN tipos_compromisos tc ON vc.id_tipo_compromiso = tc.id
                 INNER JOIN visitas v ON vc.id_visita = v.id
                 WHERE vc.id = :id
+                AND vc.id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -61,9 +65,11 @@ class VisitasCompromisos
                 FROM visitas_compromisos vc
                 INNER JOIN tipos_compromisos tc ON vc.id_tipo_compromiso = tc.id
                 WHERE vc.id_visita = :id_visita
+                AND vc.id_tenant = :id_tenant
                 ORDER BY vc.fecha_compromiso ASC, vc.hora_compromiso ASC
             ");
             $sentence->bindParam(':id_visita', $id_visita);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -87,10 +93,10 @@ class VisitasCompromisos
 
             $sentence = $db->prepare("
                 INSERT INTO visitas_compromisos (
-                    id_visita, id_tipo_compromiso, 
+                    id, id_tenant, id_visita, id_tipo_compromiso, 
                     fecha_compromiso, hora_compromiso, detalle_especifico
                 ) VALUES (
-                    :id_visita, :id_tipo_compromiso, 
+                    :id, :id_tenant, :id_visita, :id_tipo_compromiso, 
                     :fecha_compromiso, :hora_compromiso, :detalle_especifico
                 )
             ");
@@ -101,6 +107,9 @@ class VisitasCompromisos
             $hora_compromiso = $data['hora_compromiso'] ?? null;
             $detalle_especifico = $data['detalle_especifico'] ?? null;
 
+            $id = Uuid::generar();
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_visita', $id_visita);
             $sentence->bindParam(':id_tipo_compromiso', $id_tipo_compromiso);
             $sentence->bindParam(':fecha_compromiso', $fecha_compromiso);
@@ -108,7 +117,6 @@ class VisitasCompromisos
             $sentence->bindParam(':detalle_especifico', $detalle_especifico);
 
             $sentence->execute();
-            $id = $db->lastInsertId();
 
             // ✅ Si se llamó con parámetro, retornar el ID
             if ($dataParam !== null) {
@@ -147,6 +155,7 @@ class VisitasCompromisos
                     hora_compromiso = :hora_compromiso,
                     detalle_especifico = :detalle_especifico
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
 
             $id = $data['id'];
@@ -160,6 +169,7 @@ class VisitasCompromisos
             $sentence->bindParam(':fecha_compromiso', $fecha_compromiso);
             $sentence->bindParam(':hora_compromiso', $hora_compromiso);
             $sentence->bindParam(':detalle_especifico', $detalle_especifico);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();
 
@@ -187,8 +197,9 @@ class VisitasCompromisos
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
-            $sentence = $db->prepare("DELETE FROM visitas_compromisos WHERE id = :id");
+            $sentence = $db->prepare("DELETE FROM visitas_compromisos WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -215,8 +226,8 @@ class VisitasCompromisos
             $compromisos = $data['compromisos'] ?? []; // Array de objetos
 
             // Primero eliminar los existentes
-            $stmt = $db->prepare("DELETE FROM visitas_compromisos WHERE id_visita = :id_visita");
-            $stmt->execute(['id_visita' => $id_visita]);
+            $stmt = $db->prepare("DELETE FROM visitas_compromisos WHERE id_visita = :id_visita AND id_tenant = :id_tenant");
+            $stmt->execute(['id_visita' => $id_visita, 'id_tenant' => TenantContext::id()]);
 
             // Insertar los nuevos usando el método new()
             if (is_array($compromisos) && count($compromisos) > 0) {
@@ -260,9 +271,11 @@ class VisitasCompromisos
                 INNER JOIN tipos_compromisos tc ON vc.id_tipo_compromiso = tc.id
                 INNER JOIN visitas v ON vc.id_visita = v.id
                 WHERE vc.fecha_compromiso >= CURDATE()
+                AND vc.id_tenant = :id_tenant
                 ORDER BY vc.fecha_compromiso ASC, vc.hora_compromiso ASC
                 LIMIT 50
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
@@ -288,9 +301,11 @@ class VisitasCompromisos
                 INNER JOIN tipos_compromisos tc ON vc.id_tipo_compromiso = tc.id
                 INNER JOIN visitas v ON vc.id_visita = v.id
                 WHERE vc.fecha_compromiso < CURDATE()
+                AND vc.id_tenant = :id_tenant
                 ORDER BY vc.fecha_compromiso DESC
                 LIMIT 50
             ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
             Flight::json($response);
