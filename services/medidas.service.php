@@ -6,7 +6,7 @@ class Medidas
         $db = Flight::db();
         $sentence = $db->prepare("
             SELECT 
-                m.id, m.nombre, m.unidad,
+                m.id, m.nombre, m.codigo, m.unidad,
                 m.id_categoria, m.id_unidad, m.id_tipo_valor, m.orden,
                 cm.nombre AS categoria_nombre,
                 cm.icono AS categoria_icono,
@@ -31,7 +31,7 @@ class Medidas
         $db = Flight::db();
         $sentence = $db->prepare("
             SELECT 
-                m.id, m.nombre, m.unidad,
+                m.id, m.nombre, m.codigo, m.unidad,
                 m.id_categoria, m.id_unidad, m.id_tipo_valor, m.orden,
                 umc.abreviatura AS unidad_abreviatura,
                 tvm.nombre AS tipo_valor

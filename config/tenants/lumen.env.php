@@ -4,9 +4,12 @@
 // CONFIGURACIÓN BD PRINCIPAL (GENIALISIS)
 // ========================================
 define('DB_HOST', '92.205.2.161');
-define('DB_NAME', 'lumen_academico_prod');
-define('DB_USERNAME', 'liceo_lumen_prod');
-define('DB_PASSWORD', 'lVuAT1xn2Q-j');
+//define('DB_NAME', 'lumen_academico_prod');
+//define('DB_USERNAME', 'liceo_lumen_prod');
+//define('DB_PASSWORD', 'lVuAT1xn2Q-j');
+define('DB_NAME', 'g_lumen_prod');
+define('DB_USERNAME', 'usr_g_lumen_prod');
+define('DB_PASSWORD', 'Z$3$M,Ao1pNCH2G8');
 define('DB_CHARSET', 'utf8mb4');
 define('DB_TYPE', 'mysql');
 define('DB_DSN', DB_TYPE . ':host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=' . DB_CHARSET);
@@ -22,6 +25,12 @@ define('DB_PORTAL_PASSWORD', 'm_deEi1U2Bjl');
 define('DB_PORTAL_CHARSET', 'utf8mb4');
 define('DB_PORTAL_TYPE', 'mysql');
 define('DB_PORTAL_DSN', DB_PORTAL_TYPE . ':host=' . DB_PORTAL_HOST . ';dbname=' . DB_PORTAL_NAME . ';charset=' . DB_PORTAL_CHARSET);
+
+// ========================================
+// ID NUMÉRICO DEL TENANT (= tenants.id en la BD maestra)
+// Lo lee TenantContext::id() para aislar las filas por id_tenant.
+// ========================================
+define('TENANT_ID', 1);
 
 
 // =============================================

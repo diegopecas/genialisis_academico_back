@@ -5,7 +5,7 @@ class ClasificacionProductosServicios
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("select id, nombre, icono from clasificacion_productos_servicios where id_tenant = :id_tenant");
+        $sentence = $db->prepare("select id, nombre, codigo, icono from clasificacion_productos_servicios where id_tenant = :id_tenant");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
@@ -15,7 +15,7 @@ class ClasificacionProductosServicios
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("select id, nombre, icono from clasificacion_productos_servicios where id = :id and id_tenant = :id_tenant");
+        $sentence = $db->prepare("select id, nombre, codigo, icono from clasificacion_productos_servicios where id = :id and id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();

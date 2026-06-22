@@ -7,7 +7,7 @@ class ProductosServicios
         $sentence = $db->prepare("
         SELECT ps.*, 
                cp.nombre AS nombre_categoria, 
-               cl.nombre AS nombre_clasificacion, 
+               cl.nombre AS nombre_clasificacion, cl.codigo AS clasificacion_codigo, 
                pc.nombre AS nombre_periodicidad,
                ha.nombre AS nombre_horario_alimentacion
         FROM productos_servicios ps
@@ -30,7 +30,7 @@ class ProductosServicios
         $sentence = $db->prepare("
         SELECT ps.*, 
                cp.nombre AS nombre_categoria, 
-               cl.nombre AS nombre_clasificacion, 
+               cl.nombre AS nombre_clasificacion, cl.codigo AS clasificacion_codigo, 
                pc.nombre AS nombre_periodicidad,
                ha.nombre AS nombre_horario_alimentacion
         FROM productos_servicios ps
@@ -55,7 +55,7 @@ class ProductosServicios
         $sentence = $db->prepare("
         SELECT ps.*, 
                cp.nombre AS nombre_categoria, 
-               cl.nombre AS nombre_clasificacion, 
+               cl.nombre AS nombre_clasificacion, cl.codigo AS clasificacion_codigo, 
                pc.nombre AS nombre_periodicidad,
                ha.nombre AS nombre_horario_alimentacion
         FROM productos_servicios ps
@@ -87,6 +87,7 @@ class ProductosServicios
                    ps.valor_sugerido,
                    ps.id_horario_alimentacion_sugerido,
                    cl.nombre AS nombre_clasificacion,
+                   cl.codigo AS clasificacion_codigo,
                    cl.icono AS icono_clasificacion,
                    cp.nombre AS nombre_categoria,
                    pc.nombre AS nombre_periodicidad,

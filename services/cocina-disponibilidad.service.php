@@ -46,7 +46,7 @@ class CocinaDisponibilidad
                     LEFT JOIN cocina_disponibilidad cd_ultima 
                         ON cd_ultima.id_producto_servicio = ps.id 
                         AND cd_ultima.fecha = :ultima_fecha
-                    WHERE ps.id_clasificacion_productos_servicios = 3
+                    WHERE ps.id_clasificacion_productos_servicios IN (SELECT cps.id FROM clasificacion_productos_servicios cps WHERE cps.codigo = 'ALIMENTACION' AND cps.id_tenant = ps.id_tenant)
                       AND ps.id_periodicidad_cobro = 3
                       AND ps.disponible = 1
                       AND ps.id_tenant = :id_tenant

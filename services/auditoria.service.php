@@ -50,12 +50,12 @@ class Auditoria
                 CEIL(DATEDIFF(:fecha_fin1, :fecha_inicio1) / 7) as total_semanas,
                 -- Semanas con al menos un registro de peso
                 COUNT(DISTINCT CASE 
-                    WHEN mxe.id_medida = 1 
+                    WHEN mxe.id_medida IN (SELECT m.id FROM medidas m WHERE m.codigo = 'PESO' AND m.id_tenant = mxe.id_tenant) 
                     THEN CONCAT(YEAR(mxe.fecha), '-', WEEK(mxe.fecha))
                 END) as semanas_con_peso,
                 -- Semanas con al menos un registro de talla
                 COUNT(DISTINCT CASE 
-                    WHEN mxe.id_medida = 2 
+                    WHEN mxe.id_medida IN (SELECT m.id FROM medidas m WHERE m.codigo = 'TALLA' AND m.id_tenant = mxe.id_tenant) 
                     THEN CONCAT(YEAR(mxe.fecha), '-', WEEK(mxe.fecha))
                 END) as semanas_con_talla,
                 -- Total de registros (para verificar que hay datos)

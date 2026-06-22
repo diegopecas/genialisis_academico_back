@@ -190,11 +190,11 @@ class MedidasXEstudiantes
                 COUNT(DISTINCT eg.id_estudiante) as total_estudiantes,
                 COUNT(DISTINCT CASE WHEN mxe.id IS NOT NULL THEN eg.id_estudiante END) as estudiantes_con_medidas,
                 COUNT(DISTINCT CASE 
-                    WHEN mxe.fecha BETWEEN :fecha_inicio1 AND :fecha_fin1 AND mxe.id_medida = 1
+                    WHEN mxe.fecha BETWEEN :fecha_inicio1 AND :fecha_fin1 AND mxe.id_medida IN (SELECT m.id FROM medidas m WHERE m.codigo = 'PESO' AND m.id_tenant = mxe.id_tenant)
                     THEN CONCAT(eg.id_estudiante, '-', WEEK(mxe.fecha))
                 END) as registros_peso_semanales,
                 COUNT(DISTINCT CASE 
-                    WHEN mxe.fecha BETWEEN :fecha_inicio2 AND :fecha_fin2 AND mxe.id_medida = 2
+                    WHEN mxe.fecha BETWEEN :fecha_inicio2 AND :fecha_fin2 AND mxe.id_medida IN (SELECT m.id FROM medidas m WHERE m.codigo = 'TALLA' AND m.id_tenant = mxe.id_tenant)
                     THEN CONCAT(eg.id_estudiante, '-', WEEK(mxe.fecha))
                 END) as registros_talla_semanales,
                 CEIL(DATEDIFF(:fecha_fin3, :fecha_inicio3) / 7) as total_semanas

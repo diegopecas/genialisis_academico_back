@@ -4,7 +4,7 @@ class RolesColaborador
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, nombre, descripcion, activo 
+        $sentence = $db->prepare("SELECT id, nombre, codigo, descripcion, activo 
         FROM roles_colaborador 
         WHERE id_tenant = :id_tenant
         ORDER BY nombre");
@@ -18,7 +18,7 @@ class RolesColaborador
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, nombre, descripcion, activo 
+        $sentence = $db->prepare("SELECT id, nombre, codigo, descripcion, activo 
         FROM roles_colaborador 
         WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);

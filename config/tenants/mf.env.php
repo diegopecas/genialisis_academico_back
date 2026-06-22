@@ -11,6 +11,11 @@ define('DB_CHARSET', 'utf8mb4');
 define('DB_TYPE', 'mysql');
 define('DB_DSN', DB_TYPE . ':host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=' . DB_CHARSET);
 
+// ========================================
+// ID NUMÉRICO DEL TENANT (= tenants.id en la BD maestra)
+// Lo lee TenantContext::id() para aislar las filas por id_tenant.
+// ========================================
+define('TENANT_ID', 4);
 
 
 // =============================================

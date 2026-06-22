@@ -65,7 +65,7 @@ class Alimentacion
                     INNER JOIN personas pu ON u.id_persona = pu.id
                     INNER JOIN asistencia_estudiantes ae ON e.id = ae.id_estudiante 
                         AND DATE(ae.fecha_ingreso) = :fecha_ingreso
-                    WHERE ps.id_clasificacion_productos_servicios = 3 
+                    WHERE ps.id_clasificacion_productos_servicios IN (SELECT cps.id FROM clasificacion_productos_servicios cps WHERE cps.codigo = 'ALIMENTACION' AND cps.id_tenant = ps.id_tenant) 
                     AND cpc.anulado = 0
                     AND cpc.id_tenant = :id_tenant
                     AND (
@@ -124,7 +124,7 @@ class Alimentacion
                     INNER JOIN horarios_alimentacion ha ON cpc.id_horario_alimentacion = ha.id
                     INNER JOIN usuarios u ON cpc.id_usuario = u.id
                     INNER JOIN personas pu ON u.id_persona = pu.id
-                    WHERE ps.id_clasificacion_productos_servicios = 3 
+                    WHERE ps.id_clasificacion_productos_servicios IN (SELECT cps.id FROM clasificacion_productos_servicios cps WHERE cps.codigo = 'ALIMENTACION' AND cps.id_tenant = ps.id_tenant) 
                     AND cpc.anulado = 0
                     AND cpc.id_tenant = :id_tenant
                     AND pc.id = 2

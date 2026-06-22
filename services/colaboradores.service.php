@@ -4,7 +4,7 @@ class Colaboradores
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT c.id, c.id_persona, c.id_rol_colaborador, rc.nombre nombre_rol, rc.descripcion descripcion_rol,
+        $sentence = $db->prepare("SELECT c.id, c.id_persona, c.id_rol_colaborador, rc.nombre nombre_rol, rc.codigo rol_codigo, rc.descripcion descripcion_rol,
         c.id_nivel_escolaridad, ne.nombre nivel_escolaridad, c.id_casa_colaborador, cc.nombre nombre_casa_colaborador,
         c.correo_electronico, c.sobrenombre, c.fecha_ingreso, c.fecha_retiro, c.id_motivo_retiro, mr.nombre nombre_motivo_retiro,
         c.id_cargo, car.nombre nombre_cargo, c.salario_mensual, c.id_tipo_contrato, tc.nombre nombre_tipo_contrato, tc.aplica_nomina,
@@ -41,7 +41,7 @@ class Colaboradores
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT c.id, c.id_persona, c.id_rol_colaborador, rc.nombre nombre_rol, rc.descripcion descripcion_rol,
+        $sentence = $db->prepare("SELECT c.id, c.id_persona, c.id_rol_colaborador, rc.nombre nombre_rol, rc.codigo rol_codigo, rc.descripcion descripcion_rol,
         c.id_nivel_escolaridad, ne.nombre nivel_escolaridad, c.id_casa_colaborador, cc.nombre nombre_casa_colaborador,
         c.correo_electronico, c.sobrenombre, c.fecha_ingreso, c.fecha_retiro, c.id_motivo_retiro, mr.nombre nombre_motivo_retiro,
         c.id_cargo, car.nombre nombre_cargo, c.salario_mensual, c.id_tipo_contrato, tc.nombre nombre_tipo_contrato, tc.aplica_nomina,
@@ -83,7 +83,7 @@ class Colaboradores
     public static function getByIdPersona($id_persona)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT c.id, c.id_persona, c.id_rol_colaborador, rc.nombre nombre_rol, rc.descripcion descripcion_rol,
+        $sentence = $db->prepare("SELECT c.id, c.id_persona, c.id_rol_colaborador, rc.nombre nombre_rol, rc.codigo rol_codigo, rc.descripcion descripcion_rol,
         c.id_nivel_escolaridad, ne.nombre nivel_escolaridad, c.id_casa_colaborador, cc.nombre nombre_casa_colaborador,
         c.correo_electronico, c.sobrenombre, c.fecha_ingreso, c.fecha_retiro, c.id_motivo_retiro, mr.nombre nombre_motivo_retiro,
         c.id_cargo, car.nombre nombre_cargo, c.salario_mensual, c.id_tipo_contrato, tc.nombre nombre_tipo_contrato, tc.aplica_nomina,
@@ -180,7 +180,12 @@ class Colaboradores
 
             error_log("ID colaborador insertado: $id_colaborador");
 
-            if ($id_rol_colaborador == 1) {
+            $stmtRolCod = $db->prepare("SELECT codigo FROM roles_colaborador WHERE id = :id_rol AND id_tenant = :id_tenant");
+            $stmtRolCod->bindParam(':id_rol', $id_rol_colaborador);
+            $stmtRolCod->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtRolCod->execute();
+            $rolCodRow = $stmtRolCod->fetch();
+            if ($rolCodRow && $rolCodRow['codigo'] === 'DOCENTE') {
                 error_log("Creando registro de docente para colaborador $id_colaborador");
 
                 $insertDocente = $db->prepare("INSERT INTO docentes(id, id_tenant, id_persona, id_colaborador, activo, id_casa_docente) VALUES (:id, :id_tenant, :id_persona, :id_colaborador, :activo, :id_casa_docente)");
@@ -423,7 +428,7 @@ class Colaboradores
                 return;
             }
 
-            $getRol = $db->prepare("SELECT id_rol_colaborador FROM colaboradores WHERE id = :id AND id_tenant = :id_tenant");
+            $getRol = $db->prepare("SELECT rc.codigo AS codigo_rol FROM colaboradores c LEFT JOIN roles_colaborador rc ON rc.id = c.id_rol_colaborador WHERE c.id = :id AND c.id_tenant = :id_tenant");
             $getRol->bindParam(':id', $id);
             $getRol->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $getRol->execute();
@@ -434,7 +439,7 @@ class Colaboradores
                 return;
             }
 
-            if ($colaborador['id_rol_colaborador'] == 1) {
+            if ($colaborador['codigo_rol'] === 'DOCENTE') {
                 error_log("Eliminando docente asociado");
                 $getDocente = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador AND id_tenant = :id_tenant");
                 $getDocente->bindParam(':id_colaborador', $id);

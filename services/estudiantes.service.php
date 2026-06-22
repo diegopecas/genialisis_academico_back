@@ -438,7 +438,7 @@ class Estudiantes
                         INNER JOIN contratos_matricula cm6 ON cmv.id_contrato_matricula = cm6.id
                         INNER JOIN productos_servicios ps ON cmv.id_producto_servicio = ps.id
                         WHERE cm6.id_estudiante = e.id AND cm6.anio = @anio_actual AND cm6.activo = 1
-                        AND ps.id_clasificacion_productos_servicios = 1 AND ps.id_periodicidad_cobro = 1 AND ps.id_categoria_productos_servicios = 1
+                        AND ps.id_clasificacion_productos_servicios IN (SELECT cps.id FROM clasificacion_productos_servicios cps WHERE cps.codigo = 'ACADEMICO' AND cps.id_tenant = ps.id_tenant) AND ps.id_periodicidad_cobro = 1 AND ps.id_categoria_productos_servicios IN (SELECT cat.id FROM categoria_productos_servicios cat WHERE cat.codigo = 'MENSUAL' AND cat.id_tenant = ps.id_tenant)
                         AND MONTH(cmv.fecha) = MONTH(CURDATE()) AND YEAR(cmv.fecha) = YEAR(CURDATE())
                         LIMIT 1), 0) AS matricula_mes_actual,
 
@@ -448,7 +448,7 @@ class Estudiantes
                         INNER JOIN contratos_matricula cm7 ON cmv2.id_contrato_matricula = cm7.id
                         INNER JOIN productos_servicios ps2 ON cmv2.id_producto_servicio = ps2.id
                         WHERE cm7.id_estudiante = e.id AND cm7.anio = @anio_actual AND cm7.activo = 1
-                        AND ps2.id_clasificacion_productos_servicios = 1 AND ps2.id_periodicidad_cobro = 2 AND ps2.id_categoria_productos_servicios = 1
+                        AND ps2.id_clasificacion_productos_servicios IN (SELECT cps.id FROM clasificacion_productos_servicios cps WHERE cps.codigo = 'ACADEMICO' AND cps.id_tenant = ps2.id_tenant) AND ps2.id_periodicidad_cobro = 2 AND ps2.id_categoria_productos_servicios IN (SELECT cat.id FROM categoria_productos_servicios cat WHERE cat.codigo = 'MENSUAL' AND cat.id_tenant = ps2.id_tenant)
                         AND MONTH(cmv2.fecha) = MONTH(CURDATE()) AND YEAR(cmv2.fecha) = YEAR(CURDATE())
                         LIMIT 1), 0) AS pension_mes_actual,
 
@@ -1080,7 +1080,7 @@ class Estudiantes
                         INNER JOIN contratos_matricula cm6 ON cmv.id_contrato_matricula = cm6.id
                         INNER JOIN productos_servicios ps ON cmv.id_producto_servicio = ps.id
                         WHERE cm6.id_estudiante = e.id AND cm6.anio = @anio_actual AND cm6.activo = 1
-                        AND ps.id_clasificacion_productos_servicios = 1 AND ps.id_periodicidad_cobro = 1 AND ps.id_categoria_productos_servicios = 1
+                        AND ps.id_clasificacion_productos_servicios IN (SELECT cps.id FROM clasificacion_productos_servicios cps WHERE cps.codigo = 'ACADEMICO' AND cps.id_tenant = ps.id_tenant) AND ps.id_periodicidad_cobro = 1 AND ps.id_categoria_productos_servicios IN (SELECT cat.id FROM categoria_productos_servicios cat WHERE cat.codigo = 'MENSUAL' AND cat.id_tenant = ps.id_tenant)
                         AND MONTH(cmv.fecha) = MONTH(CURDATE()) AND YEAR(cmv.fecha) = YEAR(CURDATE())
                         LIMIT 1), 0) AS matricula_mes_actual,
 
@@ -1090,7 +1090,7 @@ class Estudiantes
                         INNER JOIN contratos_matricula cm7 ON cmv2.id_contrato_matricula = cm7.id
                         INNER JOIN productos_servicios ps2 ON cmv2.id_producto_servicio = ps2.id
                         WHERE cm7.id_estudiante = e.id AND cm7.anio = @anio_actual AND cm7.activo = 1
-                        AND ps2.id_clasificacion_productos_servicios = 1 AND ps2.id_periodicidad_cobro = 2 AND ps2.id_categoria_productos_servicios = 1
+                        AND ps2.id_clasificacion_productos_servicios IN (SELECT cps.id FROM clasificacion_productos_servicios cps WHERE cps.codigo = 'ACADEMICO' AND cps.id_tenant = ps2.id_tenant) AND ps2.id_periodicidad_cobro = 2 AND ps2.id_categoria_productos_servicios IN (SELECT cat.id FROM categoria_productos_servicios cat WHERE cat.codigo = 'MENSUAL' AND cat.id_tenant = ps2.id_tenant)
                         AND MONTH(cmv2.fecha) = MONTH(CURDATE()) AND YEAR(cmv2.fecha) = YEAR(CURDATE())
                         LIMIT 1), 0) AS pension_mes_actual,
 

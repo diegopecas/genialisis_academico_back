@@ -570,7 +570,7 @@ class DashboardGerencial
             INNER JOIN horarios_alimentacion ha ON cpc.id_horario_alimentacion = ha.id
             INNER JOIN asistencia_estudiantes ae ON e.id = ae.id_estudiante
                 AND DATE(ae.fecha_ingreso) = :fecha_ingreso
-            WHERE ps.id_clasificacion_productos_servicios = 3
+            WHERE ps.id_clasificacion_productos_servicios IN (SELECT cps.id FROM clasificacion_productos_servicios cps WHERE cps.codigo = 'ALIMENTACION' AND cps.id_tenant = ps.id_tenant)
               AND cpc.anulado = 0
               AND ps.id_periodicidad_cobro = 2
               AND YEAR(cpc.fecha) = :anio
@@ -594,7 +594,7 @@ class DashboardGerencial
             FROM cuentas_por_cobrar cpc
             INNER JOIN productos_servicios ps ON cpc.id_producto_servicio = ps.id
             INNER JOIN horarios_alimentacion ha ON cpc.id_horario_alimentacion = ha.id
-            WHERE ps.id_clasificacion_productos_servicios = 3
+            WHERE ps.id_clasificacion_productos_servicios IN (SELECT cps.id FROM clasificacion_productos_servicios cps WHERE cps.codigo = 'ALIMENTACION' AND cps.id_tenant = ps.id_tenant)
               AND cpc.anulado = 0
               AND ps.id_periodicidad_cobro = 2
               AND YEAR(cpc.fecha) = :anio
@@ -617,7 +617,7 @@ class DashboardGerencial
             FROM cuentas_por_cobrar cpc
             INNER JOIN productos_servicios ps ON cpc.id_producto_servicio = ps.id
             INNER JOIN horarios_alimentacion ha ON cpc.id_horario_alimentacion = ha.id
-            WHERE ps.id_clasificacion_productos_servicios = 3
+            WHERE ps.id_clasificacion_productos_servicios IN (SELECT cps.id FROM clasificacion_productos_servicios cps WHERE cps.codigo = 'ALIMENTACION' AND cps.id_tenant = ps.id_tenant)
               AND cpc.anulado = 0
               AND ps.id_periodicidad_cobro = 3
               AND cpc.fecha = :fecha
@@ -1562,8 +1562,8 @@ class DashboardGerencial
     // IDs hardcodeados de tipos_movimientos_financieros:
     //   ID 1 = Ingreso
     //   ID 2 = Gasto
-    const TIPO_MOV_INGRESO = 1;
-    const TIPO_MOV_GASTO = 2;
+    const TIPO_MOV_INGRESO = 'INGRESO';
+    const TIPO_MOV_GASTO = 'GASTO';
 
     public static function getMovimientosResumen()
     {
@@ -1729,10 +1729,10 @@ class DashboardGerencial
                 INNER JOIN categorias_movimientos_financieros cmf ON cf.id_categoria_movimiento_financiero = cmf.id
                 WHERE (m.anulado = 0 OR m.anulado IS NULL)
                   AND m.fecha_aprobacion IS NOT NULL
-                  AND cmf.id_tipo_movimiento = :id_tipo
+                  AND cmf.id_tipo_movimiento IN (SELECT tmf.id FROM tipos_movimientos_financieros tmf WHERE tmf.codigo = :id_tipo AND tmf.id_tenant = cmf.id_tenant)
                   AND $where AND m.id_tenant = " . TenantContext::id();
             $stmt = $db->prepare($sql);
-            $stmt->bindValue(':id_tipo', $idTipo, PDO::PARAM_INT);
+            $stmt->bindValue(':id_tipo', $idTipo, PDO::PARAM_STR);
             $stmt->bindValue(':anio', $anio);
             if ($periodo === 'mes' || $periodo === 'mes_hasta') $stmt->bindValue(':mes', $mes);
             if ($periodo === 'mes_hasta') $stmt->bindValue(':hasta_fecha', $hastaFecha);
@@ -1778,14 +1778,14 @@ class DashboardGerencial
             INNER JOIN categorias_movimientos_financieros cmf ON cf.id_categoria_movimiento_financiero = cmf.id
             WHERE (m.anulado = 0 OR m.anulado IS NULL)
               AND m.fecha_aprobacion IS NOT NULL
-              AND cmf.id_tipo_movimiento = :id_tipo
+              AND cmf.id_tipo_movimiento IN (SELECT tmf.id FROM tipos_movimientos_financieros tmf WHERE tmf.codigo = :id_tipo AND tmf.id_tenant = cmf.id_tenant)
               AND YEAR(m.fecha) = :anio AND MONTH(m.fecha) = :mes
               AND m.id_tenant = " . TenantContext::id() . "
             GROUP BY cmf.id, cmf.nombre, cmf.color
             ORDER BY total DESC
             LIMIT 1";
         $stmt = $db->prepare($sqlTopCat);
-        $stmt->bindValue(':id_tipo', self::TIPO_MOV_GASTO, PDO::PARAM_INT);
+        $stmt->bindValue(':id_tipo', self::TIPO_MOV_GASTO, PDO::PARAM_STR);
         $stmt->bindValue(':anio', $anio);
         $stmt->bindValue(':mes', $mes);
         $stmt->execute();
@@ -1804,14 +1804,14 @@ class DashboardGerencial
             INNER JOIN categorias_movimientos_financieros cmf ON cf.id_categoria_movimiento_financiero = cmf.id
             WHERE (m.anulado = 0 OR m.anulado IS NULL)
               AND m.fecha_aprobacion IS NOT NULL
-              AND cmf.id_tipo_movimiento = :id_tipo
+              AND cmf.id_tipo_movimiento IN (SELECT tmf.id FROM tipos_movimientos_financieros tmf WHERE tmf.codigo = :id_tipo AND tmf.id_tenant = cmf.id_tenant)
               AND YEAR(m.fecha) = :anio AND MONTH(m.fecha) = :mes
               AND m.id_tenant = " . TenantContext::id() . "
             GROUP BY cf.id, cf.nombre, cmf.nombre, cmf.color
             ORDER BY total DESC
             LIMIT 1";
         $stmt = $db->prepare($sqlTopCon);
-        $stmt->bindValue(':id_tipo', self::TIPO_MOV_GASTO, PDO::PARAM_INT);
+        $stmt->bindValue(':id_tipo', self::TIPO_MOV_GASTO, PDO::PARAM_STR);
         $stmt->bindValue(':anio', $anio);
         $stmt->bindValue(':mes', $mes);
         $stmt->execute();

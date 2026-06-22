@@ -274,6 +274,14 @@ PROMPT;
 
             $resultados = [];
 
+            // Tipo por defecto (GRUPAL) si la IA no especifica uno valido
+            $idTipoDefault = null;
+            $stmtTipoDef = $db->prepare("SELECT id FROM tipos_actividades_academicas WHERE codigo = 'GRUPAL' AND id_tenant = :id_tenant LIMIT 1");
+            $stmtTipoDef->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtTipoDef->execute();
+            $rowTipoDef = $stmtTipoDef->fetch();
+            $idTipoDefault = $rowTipoDef ? $rowTipoDef['id'] : null;
+
             foreach ($data['actividades'] as $act) {
                 $materialesTexto = '';
                 if (!empty($act['materiales'])) {
@@ -283,7 +291,7 @@ PROMPT;
                     $materialesTexto = implode(', ', array_filter($nombres));
                 }
 
-                $idTipo = !empty($act['id_tipo_actividad_academica']) ? $act['id_tipo_actividad_academica'] : 1;
+                $idTipo = !empty($act['id_tipo_actividad_academica']) ? $act['id_tipo_actividad_academica'] : $idTipoDefault;
                 $idAmbiente = !empty($act['id_ambiente']) ? $act['id_ambiente'] : null;
 
                 $idActividad = Uuid::generar();
@@ -1095,6 +1103,14 @@ PROMPT;
 
             $resultados = [];
 
+            // Tipo por defecto (GRUPAL) si la IA no especifica uno valido
+            $idTipoDefault = null;
+            $stmtTipoDef = $db->prepare("SELECT id FROM tipos_actividades_academicas WHERE codigo = 'GRUPAL' AND id_tenant = :id_tenant LIMIT 1");
+            $stmtTipoDef->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtTipoDef->execute();
+            $rowTipoDef = $stmtTipoDef->fetch();
+            $idTipoDefault = $rowTipoDef ? $rowTipoDef['id'] : null;
+
             foreach ($data['actividades'] as $act) {
                 $idArea = !empty($act['id_area_academica']) ? $act['id_area_academica'] : null;
                 if (!$idArea) {
@@ -1109,7 +1125,7 @@ PROMPT;
                     $materialesTexto = implode(', ', array_filter($nombres));
                 }
 
-                $idTipo = !empty($act['id_tipo_actividad_academica']) ? $act['id_tipo_actividad_academica'] : 1;
+                $idTipo = !empty($act['id_tipo_actividad_academica']) ? $act['id_tipo_actividad_academica'] : $idTipoDefault;
                 $idAmbiente = !empty($act['id_ambiente']) ? $act['id_ambiente'] : null;
 
                 // 1. Insertar actividad académica
