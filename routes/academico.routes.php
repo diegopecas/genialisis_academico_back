@@ -107,6 +107,9 @@ Flight::route('POST /grupos', [Grupos::class, 'new']);
 Flight::route('PUT /grupos', [Grupos::class, 'replace']);
 Flight::route('DELETE /grupos', [Grupos::class, 'delete']);
 
+// ESTUDIANTES X GRUPOS - LISTADO FILTRADO
+Flight::route('GET /estudiantes-x-grupos-filtros', [EstudiantesXGrupos::class, 'getPorFiltros']);
+
 // ÁREAS ACADÉMICAS
 Flight::route('GET /areas-academicas', [AreasAcademicas::class, 'getAll']);
 Flight::route('GET /areas-academicas/list', [AreasAcademicas::class, 'getAllList']);

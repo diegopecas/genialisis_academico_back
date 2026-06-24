@@ -76,6 +76,74 @@ class EstudiantesXGrupos
         }
     }
 
+    /**
+     * Listado filtrado del módulo de estudiantes.
+     * Todos los filtros son opcionales y llegan por query string; los que vengan
+     * vacíos no se aplican (sin filtros => trae todos los activos del tenant).
+     *   id_grupo   => filtra por grupo
+     *   estado     => 'activo' | 'inactivo' (sobre e.activo)
+     *   permanente => '1' | '0' (sobre e.permanente)
+     *   nombre     => coincidencia parcial sobre el nombre completo
+     */
+    public static function getPorFiltros()
+    {
+        $userData = JWTService::requerirAutenticacion();
+        PermisosService::validar($userData, 'estudiantes.listado');
+
+        $db = Flight::db();
+
+        $idGrupo    = isset(Flight::request()->query['id_grupo']) ? trim(Flight::request()->query['id_grupo']) : '';
+        $estado     = isset(Flight::request()->query['estado']) ? trim(Flight::request()->query['estado']) : '';
+        $permanente = isset(Flight::request()->query['permanente']) ? trim(Flight::request()->query['permanente']) : '';
+        $nombre     = isset(Flight::request()->query['nombre']) ? trim(Flight::request()->query['nombre']) : '';
+
+        $sql = "select exg.id, exg.anio, exg.id_estudiante, 
+            p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido, 
+            exg.id_grupo, g.nombre nombre_grupo, exg.id_grado, gr.nombre nombre_grado,
+            e.activo, e.alimentacion, e.permanente, e.anno
+            from estudiantes_x_grupos exg
+            inner join estudiantes e on exg.id_estudiante = e.id 
+            inner join personas p on e.id_persona = p.id 
+            inner join grupos g on exg.id_grupo = g.id 
+            left join grados gr on exg.id_grado = gr.id
+            where exg.activo = 1
+            and exg.id_tenant = :id_tenant";
+
+        $params = [];
+
+        if ($idGrupo !== '') {
+            $sql .= " and g.id = :id_grupo";
+            $params[':id_grupo'] = $idGrupo;
+        }
+
+        if ($estado === 'activo') {
+            $sql .= " and e.activo = 1";
+        } elseif ($estado === 'inactivo') {
+            $sql .= " and e.activo = 0";
+        }
+
+        if ($permanente === '1' || $permanente === '0') {
+            $sql .= " and e.permanente = :permanente";
+            $params[':permanente'] = (int) $permanente;
+        }
+
+        if ($nombre !== '') {
+            $sql .= " and concat_ws(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) like :nombre";
+            $params[':nombre'] = '%' . $nombre . '%';
+        }
+
+        $sql .= " order by g.orden, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido";
+
+        $sentence = $db->prepare($sql);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        foreach ($params as $clave => $valor) {
+            $sentence->bindValue($clave, $valor);
+        }
+        $sentence->execute();
+        $response = $sentence->fetchAll();
+        Flight::json($response);
+    }
+
     public static function getByEstudiante($id)
     {
         $db = Flight::db();
