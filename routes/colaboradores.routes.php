@@ -2,6 +2,7 @@
 
 // COLABORADORES
 Flight::route('GET /colaboradores', [Colaboradores::class, 'getAll']);
+Flight::route('GET /colaboradores-filtros', [Colaboradores::class, 'getPorFiltros']);
 Flight::route('GET /colaboradores/@id', [Colaboradores::class, 'getById']);
 Flight::route('POST /colaboradores', [Colaboradores::class, 'new']);
 Flight::route('PUT /colaboradores', [Colaboradores::class, 'replace']);

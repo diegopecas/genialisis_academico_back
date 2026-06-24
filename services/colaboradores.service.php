@@ -38,6 +38,83 @@ class Colaboradores
         Flight::json($response);
     }
 
+    /**
+     * Listado filtrado de colaboradores. Filtros opcionales por query string;
+     * los vacíos no se aplican (sin filtros => trae todos los del tenant).
+     *   id_rol  => c.id_rol_colaborador
+     *   id_casa => c.id_casa_colaborador
+     *   estado  => 'activo' | 'inactivo' (sobre c.activo)
+     *   nombre  => coincidencia parcial sobre el nombre completo
+     */
+    public static function getPorFiltros()
+    {
+        $db = Flight::db();
+
+        $idRol  = isset(Flight::request()->query['id_rol']) ? trim(Flight::request()->query['id_rol']) : '';
+        $idCasa = isset(Flight::request()->query['id_casa']) ? trim(Flight::request()->query['id_casa']) : '';
+        $estado = isset(Flight::request()->query['estado']) ? trim(Flight::request()->query['estado']) : '';
+        $nombre = isset(Flight::request()->query['nombre']) ? trim(Flight::request()->query['nombre']) : '';
+
+        $sql = "SELECT c.id, c.id_persona, c.id_rol_colaborador, rc.nombre nombre_rol, rc.codigo rol_codigo, rc.descripcion descripcion_rol,
+        c.id_nivel_escolaridad, ne.nombre nivel_escolaridad, c.id_casa_colaborador, cc.nombre nombre_casa_colaborador,
+        c.correo_electronico, c.sobrenombre, c.fecha_ingreso, c.fecha_retiro, c.id_motivo_retiro, mr.nombre nombre_motivo_retiro,
+        c.id_cargo, car.nombre nombre_cargo, c.salario_mensual, c.id_tipo_contrato, tc.nombre nombre_tipo_contrato, tc.aplica_nomina,
+        c.id_jefe_directo, c.activo, c.valida_ingreso_jornada, c.valida_ingreso_descanso,
+        p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido, p.foto,
+        p.id_tipo_identificacion, ti.nombre tipo_identificacion, p.numero_identificacion, 
+        p.fecha_nacimiento, p.id_genero, g.nombre nombre_genero, p.direccion, p.telefono, p.id_ciudad,
+        CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo,
+        CONCAT(IFNULL(pj.primer_nombre, ''), ' ', IFNULL(pj.segundo_nombre, ''), ' ', IFNULL(pj.primer_apellido, ''), ' ', IFNULL(pj.segundo_apellido, '')) AS nombre_jefe_directo
+        FROM colaboradores c 
+        INNER JOIN roles_colaborador rc ON c.id_rol_colaborador = rc.id
+        INNER JOIN niveles_escolaridad ne ON c.id_nivel_escolaridad = ne.id 
+        INNER JOIN personas p ON c.id_persona = p.id
+        INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
+        INNER JOIN generos g ON p.id_genero = g.id
+        LEFT OUTER JOIN casas_colaboradores cc ON c.id_casa_colaborador = cc.id
+        LEFT OUTER JOIN motivos_retiro mr ON c.id_motivo_retiro = mr.id
+        LEFT OUTER JOIN cargos car ON c.id_cargo = car.id
+        LEFT OUTER JOIN tipos_contrato tc ON c.id_tipo_contrato = tc.id
+        LEFT OUTER JOIN colaboradores cj ON c.id_jefe_directo = cj.id
+        LEFT OUTER JOIN personas pj ON cj.id_persona = pj.id
+        WHERE c.id_tenant = :id_tenant";
+
+        $params = [];
+
+        if ($idRol !== '') {
+            $sql .= " AND c.id_rol_colaborador = :id_rol";
+            $params[':id_rol'] = $idRol;
+        }
+        if ($idCasa !== '') {
+            $sql .= " AND c.id_casa_colaborador = :id_casa";
+            $params[':id_casa'] = $idCasa;
+        }
+        if ($estado === 'activo') {
+            $sql .= " AND c.activo = 1";
+        } elseif ($estado === 'inactivo') {
+            $sql .= " AND c.activo = 0";
+        }
+        if ($nombre !== '') {
+            $sql .= " AND CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) LIKE :nombre";
+            $params[':nombre'] = '%' . $nombre . '%';
+        }
+
+        $sql .= " ORDER BY p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido";
+
+        $sentence = $db->prepare($sql);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        foreach ($params as $clave => $valor) {
+            $sentence->bindValue($clave, $valor);
+        }
+        $sentence->execute();
+        $response = $sentence->fetchAll();
+        foreach ($response as &$row) {
+            if (isset($row['nombre_completo'])) $row['nombre_completo'] = trim(preg_replace('/\s+/', ' ', $row['nombre_completo']));
+            if (isset($row['nombre_jefe_directo'])) $row['nombre_jefe_directo'] = trim(preg_replace('/\s+/', ' ', $row['nombre_jefe_directo']));
+        }
+        Flight::json($response);
+    }
+
     public static function getById($id)
     {
         $db = Flight::db();
