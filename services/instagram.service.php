@@ -3,38 +3,77 @@
 /**
  * Instagram
  *
- * Integración con la API de Instagram (Instagram Login) para publicar
- * imágenes de una galería en la cuenta del tenant:
- *   - Carrusel (o imagen única) en el feed -> publicar()
- *   - Historias (una por imagen seleccionada) -> publicarHistoria()
+ * Publica imágenes de una galería en la cuenta de Instagram del tenant:
+ *   - Carrusel/imagen en el feed -> publicar()
+ *   - Historias (una por imagen) -> publicarHistoria()
  *
- * - Token de larga duración (60 días) almacenado en la tabla instagram_config.
- * - Refresco PEREZOSO: se renueva cuando le quedan pocos días, sin cron.
- * - Las imágenes privadas se normalizan con GD (fondo difuminado, sin recortar
- *   caras): 1080x1080 para feed, 1080x1920 para historias. Se dejan en una
- *   carpeta temporal y se exponen vía una URL pública firmada (HMAC +
- *   expiración) que Meta descarga. Se borran al terminar.
+ * Notas de robustez aprendidas en producción:
+ * - El proceso es largo (normalización GD + subidas a Meta). MySQL cierra la
+ *   conexión por inactividad ("server has gone away"). Por eso este servicio
+ *   usa su PROPIA conexión PDO con ping/reconexión (self::db()).
+ * - Las historias tienen rate limit; se publican con pausa entre cada una y
+ *   reintentos con espera.
  *
- * Todas las llamadas usan el host graph.instagram.com (path del token IGAA...).
+ * Todas las llamadas a Meta usan graph.instagram.com (token IGAA...).
  */
 class Instagram
 {
-    // Host de la API para tokens de Instagram Login.
     private static $apiBase = 'https://graph.instagram.com';
 
     // Dimensiones de salida.
-    private static $feedLado = 1080;       // feed: cuadrado 1:1
+    private static $feedLado = 1080;       // feed: 1:1
     private static $storyAncho = 1080;     // historia: 9:16
     private static $storyAlto = 1920;
 
-    // Días restantes a partir de los cuales se intenta refrescar el token.
     private static $umbralRefrescoDias = 10;
-
-    // Validez (segundos) de la URL temporal firmada que se entrega a Meta.
     private static $urlTtlSegundos = 600;
 
+    // Historias: pausa entre cada una y reintentos del publish (rate limit).
+    private static $pausaEntreHistorias = 5;   // segundos
+    private static $reintentosPublish = 3;
+    private static $esperaReintento = 6;        // segundos (se multiplica por intento)
+
+    // Conexión propia (con reconexión).
+    private static $pdo = null;
+
     // =====================================================================
-    // RUTAS DE FILE SYSTEM (mismo patrón que GaleriaImagenes)
+    // CONEXIÓN PROPIA CON RECONEXIÓN (evita "MySQL server has gone away")
+    // =====================================================================
+
+    private static function db()
+    {
+        if (self::$pdo === null) {
+            self::$pdo = self::nuevaConexion();
+            return self::$pdo;
+        }
+        // Ping: si la conexión murió por inactividad, reconectar.
+        try {
+            self::$pdo->query('SELECT 1');
+        } catch (Exception $e) {
+            self::log('Reconectando a BD tras: ' . $e->getMessage());
+            self::$pdo = self::nuevaConexion();
+        }
+        return self::$pdo;
+    }
+
+    private static function nuevaConexion()
+    {
+        $opts = [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false
+        ];
+        $pdo = new PDO(DB_DSN, DB_USERNAME, DB_PASSWORD, $opts);
+        try {
+            $pdo->exec("SET time_zone = '-05:00'");
+        } catch (Exception $e) {
+            // no crítico
+        }
+        return $pdo;
+    }
+
+    // =====================================================================
+    // RUTAS DE FILE SYSTEM
     // =====================================================================
 
     private static function getBasePath($tenant)
@@ -47,7 +86,6 @@ class Instagram
         return __DIR__ . '/../galeria_privada/tmp/' . $tenant . '/';
     }
 
-    // Prefijo uniforme para los logs de esta integración.
     private static function log($mensaje)
     {
         error_log('[INSTAGRAM] ' . $mensaje);
@@ -57,10 +95,6 @@ class Instagram
     // ENDPOINTS PÚBLICOS (rutas con tenant + JWT)
     // =====================================================================
 
-    /**
-     * Estado de la conexión de Instagram del tenant.
-     * Aprovecha para refrescar el token de forma perezosa si está por vencer.
-     */
     public static function getEstado()
     {
         $config = self::obtenerConfig();
@@ -88,9 +122,37 @@ class Instagram
     }
 
     /**
-     * Publica un carrusel (o imagen única) en el FEED a partir de imágenes
-     * seleccionadas de una galería.
-     *
+     * Devuelve, por galería, qué imágenes se han publicado y en qué tipos.
+     * Respuesta: { "<id_imagen>": ["feed","historia"], ... }
+     */
+    public static function imagenesPublicadas($idGaleria)
+    {
+        $db = self::db();
+        $stmt = $db->prepare("
+            SELECT DISTINCT id_imagen, tipo
+            FROM instagram_publicacion_imagenes
+            WHERE id_tenant = :id_tenant AND id_galeria = :id_galeria
+        ");
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->bindValue(':id_galeria', $idGaleria);
+        $stmt->execute();
+        $filas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $mapa = [];
+        foreach ($filas as $f) {
+            $idImg = $f['id_imagen'];
+            if (!isset($mapa[$idImg])) {
+                $mapa[$idImg] = [];
+            }
+            if (!in_array($f['tipo'], $mapa[$idImg], true)) {
+                $mapa[$idImg][] = $f['tipo'];
+            }
+        }
+        Flight::json($mapa);
+    }
+
+    /**
+     * Publica un carrusel (o imagen única) en el FEED.
      * Body (JSON): id_galeria, ids[] (1..10), caption
      */
     public static function publicar()
@@ -129,7 +191,6 @@ class Instagram
 
         $temporales = [];
         try {
-            // Normalizar a 1080x1080 (feed).
             foreach ($imagenes as $img) {
                 $temporales[] = self::prepararTemporal($tenant, $img, self::$feedLado, self::$feedLado);
             }
@@ -146,10 +207,14 @@ class Instagram
             }
 
             self::esperarContenedorListo($creationId, $token);
-            $mediaId = self::publicarContenedor($igUserId, $token, $creationId);
+            $mediaId = self::publicarConReintento($igUserId, $token, $creationId);
             $permalink = self::obtenerPermalink($mediaId, $token);
 
+            // Reconecta si la BD se cayó durante las subidas, y marca publicada.
             self::actualizarPublicacion($idPublicacion, 'publicada', $creationId, $mediaId, null);
+            foreach ($imagenes as $img) {
+                self::registrarImagenPublicada($idPublicacion, $idGaleria, $img['id'], 'feed');
+            }
             self::log('FEED publicado. media_id=' . $mediaId);
 
             Flight::json([
@@ -169,10 +234,8 @@ class Instagram
     }
 
     /**
-     * Publica HISTORIAS: una historia por cada imagen seleccionada (en
-     * secuencia). Las historias no llevan caption.
-     *
-     * Body (JSON): id_galeria, ids[] (1..10)
+     * Publica HISTORIAS: una por cada imagen seleccionada (sin tope de 10).
+     * Body (JSON): id_galeria, ids[]
      */
     public static function publicarHistoria()
     {
@@ -184,10 +247,6 @@ class Instagram
 
         if (!$idGaleria || !is_array($ids) || count($ids) === 0) {
             Flight::json(['error' => 'Se requiere id_galeria y al menos una imagen.'], 400);
-            return;
-        }
-        if (count($ids) > 10) {
-            Flight::json(['error' => 'Máximo 10 historias por publicación.'], 400);
             return;
         }
 
@@ -210,15 +269,23 @@ class Instagram
         $temporales = [];
         $publicadas = [];
         try {
+            $primera = true;
             foreach ($imagenes as $img) {
-                // Normalizar a 1080x1920 (9:16) y publicar como historia.
+                // Pausa entre historias para no chocar con el rate limit de IG.
+                if (!$primera) {
+                    sleep(self::$pausaEntreHistorias);
+                }
+                $primera = false;
+
                 $t = self::prepararTemporal($tenant, $img, self::$storyAncho, self::$storyAlto);
                 $temporales[] = $t;
 
                 $creationId = self::crearContenedorImagen($igUserId, $token, $t['url'], '', false, 'STORIES');
                 self::esperarContenedorListo($creationId, $token);
-                $mediaId = self::publicarContenedor($igUserId, $token, $creationId);
+                $mediaId = self::publicarConReintento($igUserId, $token, $creationId);
+
                 $publicadas[] = $mediaId;
+                self::registrarImagenPublicada($idPublicacion, $idGaleria, $img['id'], 'historia');
                 self::log('Historia publicada. media_id=' . $mediaId);
             }
 
@@ -233,22 +300,32 @@ class Instagram
             ]);
         } catch (Exception $e) {
             self::log('ERROR HISTORIA id=' . $idPublicacion . ': ' . $e->getMessage());
-            // Puede que algunas historias ya se hayan publicado antes del fallo.
             $detalle = $e->getMessage();
             if (count($publicadas) > 0) {
                 $detalle = 'Se publicaron ' . count($publicadas) . ' de ' . count($imagenes)
                     . ' historias antes del error: ' . $detalle;
             }
-            self::actualizarPublicacion($idPublicacion, 'error', null, null, $detalle);
-            Flight::json(['error' => 'No se pudo completar: ' . $detalle], 500);
+            $estadoFinal = count($publicadas) > 0 ? 'publicada' : 'error';
+            self::actualizarPublicacion($idPublicacion, $estadoFinal, null,
+                (count($publicadas) > 0 ? $publicadas[0] : null), $detalle);
+
+            // Si publicó algunas, lo informamos como éxito parcial.
+            if (count($publicadas) > 0) {
+                Flight::json([
+                    'success' => true,
+                    'tipo' => 'historia',
+                    'historias_publicadas' => count($publicadas),
+                    'parcial' => true,
+                    'detalle' => $detalle
+                ]);
+            } else {
+                Flight::json(['error' => 'No se pudo completar: ' . $detalle], 500);
+            }
         } finally {
             self::limpiarTemporales($temporales);
         }
     }
 
-    /**
-     * Refresco manual del token (por si se quiere forzar o agendar un cron).
-     */
     public static function refrescarTokenManual()
     {
         $config = self::obtenerConfig();
@@ -268,10 +345,6 @@ class Instagram
         }
     }
 
-    /**
-     * Llamado desde el register_shutdown_function. Si el proceso murió por
-     * timeout/fatal y la fila sigue en 'pendiente', deja el motivo registrado.
-     */
     public static function registrarCorteAbrupto($idPublicacion, $err)
     {
         self::log('Corte abrupto id=' . $idPublicacion . ': ' . $err['message']
@@ -288,7 +361,6 @@ class Instagram
 
     // =====================================================================
     // SERVIR IMAGEN TEMPORAL (ruta pública, sin JWT, validada por HMAC)
-    // index.php: GET /ig-media/{tenant}/{file}
     // =====================================================================
     public static function servirTemporal($tenant, $file)
     {
@@ -328,7 +400,7 @@ class Instagram
     }
 
     // =====================================================================
-    // CONTEXTO COMÚN (validaciones + token) PARA FEED E HISTORIAS
+    // CONTEXTO COMÚN
     // =====================================================================
 
     private static function prepararContexto($idGaleria, $ids)
@@ -398,7 +470,7 @@ class Instagram
 
     private static function obtenerConfig()
     {
-        $db = Flight::db();
+        $db = self::db();
         $stmt = $db->prepare("
             SELECT id, ig_user_id, access_token, token_expira_en
             FROM instagram_config
@@ -436,7 +508,7 @@ class Instagram
         $nuevoToken = $resp['access_token'];
         $expiraEn = date('Y-m-d H:i:s', time() + (int)$resp['expires_in']);
 
-        $db = Flight::db();
+        $db = self::db();
         $stmt = $db->prepare("
             UPDATE instagram_config
             SET access_token = :token, token_expira_en = :expira
@@ -467,7 +539,7 @@ class Instagram
 
     private static function cargarImagenesSeleccionadas($idGaleria, $ids)
     {
-        $db = Flight::db();
+        $db = self::db();
 
         $marcadores = [];
         $params = [
@@ -506,7 +578,7 @@ class Instagram
 
     private static function registrarPublicacion($id, $idGaleria, $caption, $cantidad, $tipo, $estado)
     {
-        $db = Flight::db();
+        $db = self::db();
         $stmt = $db->prepare("
             INSERT INTO instagram_publicaciones
                 (id, id_tenant, id_galeria, caption, cantidad_imagenes, tipo, estado)
@@ -525,7 +597,7 @@ class Instagram
 
     private static function actualizarPublicacion($id, $estado, $containerId, $mediaId, $error)
     {
-        $db = Flight::db();
+        $db = self::db();
         $stmt = $db->prepare("
             UPDATE instagram_publicaciones
             SET estado = :estado,
@@ -543,9 +615,27 @@ class Instagram
         $stmt->execute();
     }
 
+    private static function registrarImagenPublicada($idPublicacion, $idGaleria, $idImagen, $tipo)
+    {
+        $db = self::db();
+        $stmt = $db->prepare("
+            INSERT INTO instagram_publicacion_imagenes
+                (id, id_tenant, id_publicacion, id_galeria, id_imagen, tipo)
+            VALUES
+                (:id, :id_tenant, :id_publicacion, :id_galeria, :id_imagen, :tipo)
+        ");
+        $stmt->bindValue(':id', Uuid::generar());
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->bindValue(':id_publicacion', $idPublicacion);
+        $stmt->bindValue(':id_galeria', $idGaleria);
+        $stmt->bindValue(':id_imagen', $idImagen);
+        $stmt->bindValue(':tipo', $tipo);
+        $stmt->execute();
+    }
+
     private static function marcarErrorSiPendiente($id, $error)
     {
-        $db = Flight::db();
+        $db = self::db();
         $stmt = $db->prepare("
             UPDATE instagram_publicaciones
             SET estado = 'error', error_detalle = :error
@@ -561,10 +651,6 @@ class Instagram
     // LLAMADAS A LA GRAPH API (graph.instagram.com)
     // =====================================================================
 
-    /**
-     * Crea un contenedor de imagen.
-     * @param string|null $mediaType  null = feed/carrusel, 'STORIES' = historia
-     */
     private static function crearContenedorImagen($igUserId, $token, $imageUrl, $caption, $esItemCarrusel, $mediaType)
     {
         $payload = [
@@ -626,16 +712,33 @@ class Instagram
         return true;
     }
 
-    private static function publicarContenedor($igUserId, $token, $creationId)
+    /**
+     * Publica el contenedor con reintentos. Instagram (sobre todo en historias)
+     * devuelve errores transitorios por rate limit; reintentamos con espera.
+     */
+    private static function publicarConReintento($igUserId, $token, $creationId)
     {
-        $resp = self::httpPost(self::$apiBase . '/' . $igUserId . '/media_publish', [
-            'creation_id' => $creationId,
-            'access_token' => $token
-        ]);
-        if (!isset($resp['id'])) {
-            throw new Exception(self::mensajeError($resp, 'publicar contenedor'));
+        $ultimoError = null;
+        for ($intento = 1; $intento <= self::$reintentosPublish; $intento++) {
+            try {
+                $resp = self::httpPost(self::$apiBase . '/' . $igUserId . '/media_publish', [
+                    'creation_id' => $creationId,
+                    'access_token' => $token
+                ]);
+                if (isset($resp['id'])) {
+                    return $resp['id'];
+                }
+                $ultimoError = self::mensajeError($resp, 'publicar contenedor');
+            } catch (Exception $e) {
+                $ultimoError = $e->getMessage();
+            }
+
+            self::log('Reintento publish ' . $intento . '/' . self::$reintentosPublish . ': ' . $ultimoError);
+            if ($intento < self::$reintentosPublish) {
+                sleep(self::$esperaReintento * $intento);
+            }
         }
-        return $resp['id'];
+        throw new Exception($ultimoError ?: 'No se pudo publicar el contenedor.');
     }
 
     private static function obtenerPermalink($mediaId, $token)
@@ -731,7 +834,6 @@ class Instagram
 
     // =====================================================================
     // NORMALIZACIÓN DE IMAGEN (GD): fondo difuminado, foto completa sin recorte
-    // Genérica: se usa para feed (1080x1080) e historias (1080x1920).
     // =====================================================================
 
     private static function normalizarImagen($origen, $destino, $wDest, $hDest)
@@ -760,7 +862,7 @@ class Instagram
 
         $lienzo = imagecreatetruecolor($wDest, $hDest);
 
-        // --- Fondo: la misma imagen escalada a "cover" y difuminada ---
+        // Fondo: la misma imagen escalada a "cover" y difuminada.
         $fondo = self::escalarCover($src, $anchoOrig, $altoOrig, $wDest, $hDest);
         for ($i = 0; $i < 12; $i++) {
             imagefilter($fondo, IMG_FILTER_GAUSSIAN_BLUR);
@@ -769,7 +871,7 @@ class Instagram
         imagecopy($lienzo, $fondo, 0, 0, 0, 0, $wDest, $hDest);
         imagedestroy($fondo);
 
-        // --- Primer plano: imagen completa "contain", centrada ---
+        // Primer plano: imagen completa "contain", centrada.
         $ratio = min($wDest / $anchoOrig, $hDest / $altoOrig);
         $nuevoAncho = max(1, (int)round($anchoOrig * $ratio));
         $nuevoAlto = max(1, (int)round($altoOrig * $ratio));
@@ -805,10 +907,6 @@ class Instagram
         }
     }
 
-    /**
-     * Escala la imagen para CUBRIR un rectángulo de $wDest x $hDest (recortando
-     * lo que sobra). Solo para el FONDO difuminado, no para la foto visible.
-     */
     private static function escalarCover($src, $anchoOrig, $altoOrig, $wDest, $hDest)
     {
         $ratio = max($wDest / $anchoOrig, $hDest / $altoOrig);
