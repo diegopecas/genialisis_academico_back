@@ -48,6 +48,18 @@ if (strpos($requestUri, '/webhooks/whatsapp') !== false) {
     require __DIR__ . '/webhook/index.php';
     exit(0);
 }
+// Servir imagen temporal de Instagram (tenant en la ruta, validada por HMAC).
+// Pública porque Meta la descarga sin enviar JWT. El tenant viaja en la URL.
+if (strpos($requestUri, '/ig-media/') !== false) {
+    require 'flight/Flight.php';
+    require_once __DIR__ . '/config/master.env.php';
+    require_once __DIR__ . '/services/instagram.service.php';
+
+    Flight::route('GET /ig-media/@tenant/@file', [Instagram::class, 'servirTemporal']);
+
+    Flight::start();
+    exit(0);
+}
 // Login biométrico directo (sin tenant)
 if (strpos($requestUri, '/auth/webauthn') !== false) {
     require 'flight/Flight.php';
@@ -325,8 +337,8 @@ Flight::map('json', function($data, $code = 200, $encode = true) {
 // ===================================================================
 // AUTENTICACION CENTRAL - exige token valido + tenant firmado en todas las
 // rutas que no sean publicas (login). Las rutas que hacen exit(0) mas arriba
-// (webhooks, /auth/pre-login, /auth/webauthn, /google-calendar/callback) no
-// llegan hasta este punto.
+// (webhooks, /ig-media, /auth/pre-login, /auth/webauthn, /google-calendar/callback)
+// no llegan hasta este punto.
 // ===================================================================
 Flight::before('start', function (&$params, &$output) {
     $metodo = Flight::request()->method;
