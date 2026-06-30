@@ -60,6 +60,19 @@ if (strpos($requestUri, '/ig-media/') !== false) {
     Flight::start();
     exit(0);
 }
+// Servir VIDEO original a Instagram para publicar Reel (sin reprocesar).
+// Pública porque Meta lo descarga sin enviar JWT. tenant en la ruta, ruta del
+// archivo + expiración + firma HMAC en el query string (p, exp, sig).
+if (strpos($requestUri, '/ig-video/') !== false) {
+    require 'flight/Flight.php';
+    require_once __DIR__ . '/config/master.env.php';
+    require_once __DIR__ . '/services/instagram.service.php';
+
+    Flight::route('GET /ig-video/@tenant', [Instagram::class, 'servirVideo']);
+
+    Flight::start();
+    exit(0);
+}
 // Login biométrico directo (sin tenant)
 if (strpos($requestUri, '/auth/webauthn') !== false) {
     require 'flight/Flight.php';
@@ -337,7 +350,7 @@ Flight::map('json', function($data, $code = 200, $encode = true) {
 // ===================================================================
 // AUTENTICACION CENTRAL - exige token valido + tenant firmado en todas las
 // rutas que no sean publicas (login). Las rutas que hacen exit(0) mas arriba
-// (webhooks, /ig-media, /auth/pre-login, /auth/webauthn, /google-calendar/callback)
+// (webhooks, /ig-media, /ig-video, /auth/pre-login, /auth/webauthn, /google-calendar/callback)
 // no llegan hasta este punto.
 // ===================================================================
 Flight::before('start', function (&$params, &$output) {

@@ -28,6 +28,12 @@ class Instagram
     private static $umbralRefrescoDias = 10;
     private static $urlTtlSegundos = 600;
 
+    // Para video/Reel: Meta tarda en descargar y procesar; la URL firmada debe
+    // seguir válida durante ese tiempo. Y el poll del contenedor es más largo.
+    private static $urlVideoTtlSegundos = 1800;   // 30 min
+    private static $reelPollIntentos = 30;         // 30 intentos
+    private static $reelPollEspera = 10;           // x 10s = hasta ~5 min
+
     // Historias: pausa entre cada una y reintentos del publish (rate limit).
     private static $pausaEntreHistorias = 5;   // segundos
     private static $reintentosPublish = 3;
@@ -326,6 +332,111 @@ class Instagram
         }
     }
 
+    /**
+     * Publica un VIDEO como Reel (sale en el tab de Reels y, con
+     * share_to_feed=true, también en la cuadrícula del perfil).
+     *
+     * El video NO se reprocesa: se sirve el original a Meta mediante una URL
+     * pública firmada. Si el video no cumple (más de 90s, no 9:16, códec no
+     * soportado), Meta lo rechaza y se informa el error.
+     *
+     * Body (JSON): id_galeria, id_video (UUID de la imagen tipo 'video'), caption
+     */
+    public static function publicarReel()
+    {
+        @set_time_limit(0);
+
+        $data = Flight::request()->data;
+        $idGaleria = isset($data['id_galeria']) ? $data['id_galeria'] : null;
+        $idVideo = isset($data['id_video']) ? $data['id_video'] : null;
+        $caption = isset($data['caption']) ? trim($data['caption']) : '';
+
+        if (!$idGaleria || !$idVideo) {
+            Flight::json(['error' => 'Se requiere id_galeria e id_video.'], 400);
+            return;
+        }
+
+        self::log('Inicio publicación REEL. galeria=' . $idGaleria . ' video=' . $idVideo);
+
+        // Config + token.
+        $config = self::obtenerConfig();
+        if (!$config) {
+            Flight::json(['error' => 'No hay una cuenta de Instagram configurada para este tenant.'], 400);
+            return;
+        }
+        try {
+            $config = self::refrescarSiNecesario($config);
+        } catch (Exception $e) {
+            self::log('Refresco perezoso (reel) falló: ' . $e->getMessage());
+        }
+        $token = $config['access_token'];
+        $igUserId = $config['ig_user_id'];
+
+        // Cargar el video (validando galería + tenant + que sea tipo video).
+        $video = self::cargarVideo($idGaleria, $idVideo);
+        if (!$video) {
+            Flight::json(['error' => 'El video indicado no existe en la galería o no es un video.'], 400);
+            return;
+        }
+
+        $tenant = TenantContext::codigo();
+
+        // Verificar que el archivo exista físicamente.
+        $rutaFisica = self::getBasePath($tenant) . str_replace(['../', '..\\', '..'], '', $video['url']);
+        if (!file_exists($rutaFisica)) {
+            Flight::json(['error' => 'No se encontró el archivo de video en el servidor.'], 400);
+            return;
+        }
+
+        $idPublicacion = Uuid::generar();
+        self::registrarPublicacion($idPublicacion, $idGaleria, $caption, 1, 'reel', 'pendiente');
+        self::registrarShutdown($idPublicacion);
+
+        try {
+            // URL pública firmada del video original (sin reprocesar).
+            $videoUrl = self::urlVideoFirmada($tenant, $video['url']);
+
+            // 1. Crear contenedor REELS.
+            $payload = [
+                'media_type' => 'REELS',
+                'video_url' => $videoUrl,
+                'share_to_feed' => 'true',
+                'access_token' => $token
+            ];
+            if ($caption !== '') {
+                $payload['caption'] = $caption;
+            }
+            $resp = self::httpPost(self::$apiBase . '/' . $igUserId . '/media', $payload);
+            if (!isset($resp['id'])) {
+                throw new Exception(self::mensajeError($resp, 'crear contenedor de reel'));
+            }
+            $creationId = $resp['id'];
+            self::log('Contenedor REEL creado: ' . $creationId);
+
+            // 2. Esperar procesamiento (video tarda; poll largo).
+            self::esperarContenedorListo($creationId, $token, self::$reelPollIntentos, self::$reelPollEspera);
+
+            // 3. Publicar.
+            $mediaId = self::publicarConReintento($igUserId, $token, $creationId);
+            $permalink = self::obtenerPermalink($mediaId, $token);
+
+            self::actualizarPublicacion($idPublicacion, 'publicada', $creationId, $mediaId, null);
+            self::registrarImagenPublicada($idPublicacion, $idGaleria, $idVideo, 'reel');
+            self::log('REEL publicado. media_id=' . $mediaId);
+
+            Flight::json([
+                'success' => true,
+                'tipo' => 'reel',
+                'media_id' => $mediaId,
+                'permalink' => $permalink
+            ]);
+        } catch (Exception $e) {
+            self::log('ERROR REEL id=' . $idPublicacion . ': ' . $e->getMessage());
+            self::actualizarPublicacion($idPublicacion, 'error', null, null, $e->getMessage());
+            Flight::json(['error' => 'No se pudo publicar el Reel: ' . $e->getMessage()], 500);
+        }
+    }
+
     public static function refrescarTokenManual()
     {
         $config = self::obtenerConfig();
@@ -393,6 +504,53 @@ class Instagram
         }
 
         header('Content-Type: image/jpeg');
+        header('Content-Length: ' . filesize($ruta));
+        header('Cache-Control: private, no-store');
+        readfile($ruta);
+        exit;
+    }
+
+    /**
+     * Sirve el VIDEO ORIGINAL a Meta (sin reprocesar), validado por HMAC.
+     * Llamada desde el bloque público de index.php: /ig-video/{tenant}
+     * con query: p (ruta relativa {id_galeria}/{archivo}), exp, sig.
+     */
+    public static function servirVideo($tenant)
+    {
+        $tenant = preg_replace('/[^a-z0-9\-_]/i', '', $tenant);
+
+        $p = isset($_GET['p']) ? $_GET['p'] : '';
+        $exp = isset($_GET['exp']) ? (int)$_GET['exp'] : 0;
+        $sig = isset($_GET['sig']) ? $_GET['sig'] : '';
+
+        // Sanitizar ruta relativa: solo {id_galeria}/{archivo}, sin traversal.
+        $p = str_replace(['../', '..\\', '..', "\0"], '', $p);
+        if (!preg_match('#^[A-Za-z0-9\-_]+/[A-Za-z0-9\-_\.]+$#', $p)) {
+            Flight::halt(404, 'No encontrado');
+            return;
+        }
+
+        if ($exp < time()) {
+            Flight::halt(410, 'Enlace expirado');
+            return;
+        }
+
+        $esperado = self::firmar($tenant . '|' . $p . '|' . $exp);
+        if (!hash_equals($esperado, $sig)) {
+            Flight::halt(403, 'Firma inválida');
+            return;
+        }
+
+        $ruta = self::getBasePath($tenant) . $p;
+        if (!file_exists($ruta)) {
+            Flight::halt(404, 'No encontrado');
+            return;
+        }
+
+        $ext = strtolower(pathinfo($ruta, PATHINFO_EXTENSION));
+        $contentType = ($ext === 'mov') ? 'video/quicktime' : 'video/mp4';
+
+        header('Content-Type: ' . $contentType);
         header('Content-Length: ' . filesize($ruta));
         header('Cache-Control: private, no-store');
         readfile($ruta);
@@ -570,6 +728,29 @@ class Instagram
         }
         $stmt->execute();
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * Carga un video de la galería (valida galería + tenant + tipo_media='video').
+     */
+    private static function cargarVideo($idGaleria, $idVideo)
+    {
+        $db = self::db();
+        $stmt = $db->prepare("
+            SELECT id, guid, url, tipo_media, alt
+            FROM galeria_imagenes
+            WHERE id = :id
+            AND id_galeria = :id_galeria
+            AND id_tenant = :id_tenant
+            AND tipo_media = 'video'
+            LIMIT 1
+        ");
+        $stmt->bindValue(':id', $idVideo);
+        $stmt->bindValue(':id_galeria', $idGaleria);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row ?: null;
     }
 
     // =====================================================================
@@ -813,6 +994,21 @@ class Instagram
         $base = self::baseUrlPublica();
         return $base . '/ig-media/' . rawurlencode($tenant) . '/' . rawurlencode($nombreArchivo)
             . '?exp=' . $exp . '&sig=' . $sig;
+    }
+
+    /**
+     * URL pública firmada del video original (ruta relativa {id_galeria}/{archivo}).
+     * TTL más largo: Meta descarga y procesa el video durante varios minutos.
+     */
+    private static function urlVideoFirmada($tenant, $rutaRelativa)
+    {
+        $exp = time() + self::$urlVideoTtlSegundos;
+        $sig = self::firmar($tenant . '|' . $rutaRelativa . '|' . $exp);
+
+        $base = self::baseUrlPublica();
+        return $base . '/ig-video/' . rawurlencode($tenant)
+            . '?p=' . rawurlencode($rutaRelativa)
+            . '&exp=' . $exp . '&sig=' . $sig;
     }
 
     private static function firmar($payload)

@@ -117,7 +117,7 @@ class GaleriaImagenes
     {
         $db = Flight::db();
         $sentence = $db->prepare("
-            SELECT id, guid, id_galeria, id_subgaleria, url, alt, orden 
+            SELECT id, guid, id_galeria, id_subgaleria, url, tipo_media, alt, orden 
             FROM galeria_imagenes 
             WHERE id_galeria = :id_galeria 
             AND id_tenant = :id_tenant
@@ -189,13 +189,14 @@ class GaleriaImagenes
         $id_galeria = isset($data['id_galeria']) ? $data['id_galeria'] : null;
         $id_subgaleria = isset($data['id_subgaleria']) && $data['id_subgaleria'] ? $data['id_subgaleria'] : null;
         $url = isset($data['url']) ? $data['url'] : '';
+        $tipo_media = isset($data['tipo_media']) && $data['tipo_media'] ? $data['tipo_media'] : 'imagen';
         $alt = isset($data['alt']) ? $data['alt'] : '';
         $orden = isset($data['orden']) ? $data['orden'] : 0;
         
         $idNew = Uuid::generar();
         $sentence = $db->prepare("
-            INSERT INTO galeria_imagenes (id, id_tenant, guid, id_galeria, id_subgaleria, url, alt, orden) 
-            VALUES (:id, :id_tenant, :guid, :id_galeria, :id_subgaleria, :url, :alt, :orden)
+            INSERT INTO galeria_imagenes (id, id_tenant, guid, id_galeria, id_subgaleria, url, tipo_media, alt, orden) 
+            VALUES (:id, :id_tenant, :guid, :id_galeria, :id_subgaleria, :url, :tipo_media, :alt, :orden)
         ");
         $sentence->bindValue(':id', $idNew);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -203,6 +204,7 @@ class GaleriaImagenes
         $sentence->bindParam(':id_galeria', $id_galeria);
         $sentence->bindParam(':id_subgaleria', $id_subgaleria);
         $sentence->bindParam(':url', $url);
+        $sentence->bindParam(':tipo_media', $tipo_media);
         $sentence->bindParam(':alt', $alt);
         $sentence->bindParam(':orden', $orden);
         $sentence->execute();
