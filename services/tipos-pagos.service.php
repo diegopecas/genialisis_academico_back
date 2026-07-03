@@ -5,7 +5,7 @@ class TiposPagos
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("select id, nombre, visible_portal_padres from tipos_pagos where id_tenant = :id_tenant");
+        $sentence = $db->prepare("select id, nombre, visible_portal_padres, requiere_documento, es_ingreso from tipos_pagos where id_tenant = :id_tenant");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
@@ -15,7 +15,7 @@ class TiposPagos
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("select id, nombre, visible_portal_padres from tipos_pagos where id = :id and id_tenant = :id_tenant");
+        $sentence = $db->prepare("select id, nombre, visible_portal_padres, requiere_documento, es_ingreso from tipos_pagos where id = :id and id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();

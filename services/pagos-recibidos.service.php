@@ -1592,4 +1592,140 @@ class PagosRecibidos
             Flight::json(array('error' => 'Error al registrar los pagos: ' . $e->getMessage()), 500);
         }
     }
+
+    /**
+     * Verifica, antes de registrar un pago, si podría tratarse de un duplicado.
+     * Solo lectura: no modifica datos. Ambos chequeos son independientes y se
+     * ejecutan únicamente si llegan los datos necesarios para cada uno.
+     *
+     * POST /pagos-recibidos/verificar-duplicado
+     *
+     * Body (JSON): {
+     *   id_estudiante, id_tipo_pago, valor_recibido, fecha,   // para posible_duplicado
+     *   referencia_bancaria                                   // para referencia_existente
+     *   id_pago_excluir (opcional)  // id a excluir (útil al editar, para no compararse consigo mismo)
+     * }
+     *
+     * Respuesta: {
+     *   referencia_existente: [ {id, fecha, valor_recibido, id_tipo_pago, tipo_pago, nombre_estudiante}, ... ],
+     *   posible_duplicado:    [ {id, fecha, valor_recibido, id_tipo_pago, tipo_pago, nombre_estudiante}, ... ]
+     * }
+     *
+     * Nota: ambos listados excluyen pagos anulados y filtran por tenant.
+     */
+    public static function verificarDuplicado()
+    {
+        $userData = JWTService::requerirAutenticacion();
+
+        try {
+            $db = Flight::db();
+
+            $id_estudiante = isset(Flight::request()->data['id_estudiante']) ? Flight::request()->data['id_estudiante'] : null;
+            $id_tipo_pago = isset(Flight::request()->data['id_tipo_pago']) ? Flight::request()->data['id_tipo_pago'] : null;
+            $valor_recibido = isset(Flight::request()->data['valor_recibido']) ? Flight::request()->data['valor_recibido'] : null;
+            $fecha = isset(Flight::request()->data['fecha']) ? Flight::request()->data['fecha'] : null;
+            $referencia_bancaria = isset(Flight::request()->data['referencia_bancaria']) ? trim(Flight::request()->data['referencia_bancaria']) : '';
+            // Al editar un pago existente, se envía su id para no compararlo contra sí mismo.
+            $id_pago_excluir = isset(Flight::request()->data['id_pago_excluir']) ? Flight::request()->data['id_pago_excluir'] : null;
+
+            $referenciaExistente = array();
+            $posibleDuplicado = array();
+
+            // Chequeo 1: la referencia bancaria ya está registrada en otro pago activo.
+            //            Solo aplica si viene una referencia no vacía.
+            if ($referencia_bancaria !== '') {
+                $sqlRef = "
+                    SELECT 
+                        pr.id, 
+                        pr.fecha, 
+                        pr.valor_recibido, 
+                        pr.id_tipo_pago,
+                        tp.nombre AS tipo_pago,
+                        pr.referencia_bancaria,
+                        CONCAT(pe.primer_nombre, ' ', COALESCE(pe.segundo_nombre, ''), ' ', 
+                               pe.primer_apellido, ' ', COALESCE(pe.segundo_apellido, '')) AS nombre_estudiante
+                    FROM pagos_recibidos pr
+                    LEFT JOIN estudiantes e ON pr.id_estudiante = e.id
+                    LEFT JOIN personas pe ON e.id_persona = pe.id
+                    LEFT JOIN tipos_pagos tp ON pr.id_tipo_pago = tp.id
+                    WHERE pr.referencia_bancaria = :referencia_bancaria
+                      AND (pr.anulado = 0 OR pr.anulado IS NULL)
+                      AND pr.id_tenant = :id_tenant
+                ";
+                if ($id_pago_excluir !== null) {
+                    $sqlRef .= " AND pr.id <> :id_pago_excluir ";
+                }
+                $sqlRef .= " ORDER BY pr.fecha DESC, pr.fecha_registro DESC";
+
+                $stmtRef = $db->prepare($sqlRef);
+                $stmtRef->bindParam(':referencia_bancaria', $referencia_bancaria);
+                $stmtRef->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                if ($id_pago_excluir !== null) {
+                    $stmtRef->bindParam(':id_pago_excluir', $id_pago_excluir);
+                }
+                $stmtRef->execute();
+                $referenciaExistente = $stmtRef->fetchAll(PDO::FETCH_ASSOC);
+
+                foreach ($referenciaExistente as &$row) {
+                    $row['nombre_estudiante'] = trim(preg_replace('/\s+/', ' ', $row['nombre_estudiante']));
+                }
+                unset($row);
+            }
+
+            // Chequeo 2: posible pago duplicado (mismo estudiante + tipo + valor + fecha).
+            //            Solo aplica si llegan los cuatro datos.
+            if ($id_estudiante !== null && $id_tipo_pago !== null && $valor_recibido !== null && $fecha !== null) {
+                $sqlDup = "
+                    SELECT 
+                        pr.id, 
+                        pr.fecha, 
+                        pr.valor_recibido, 
+                        pr.id_tipo_pago,
+                        tp.nombre AS tipo_pago,
+                        pr.referencia_bancaria,
+                        CONCAT(pe.primer_nombre, ' ', COALESCE(pe.segundo_nombre, ''), ' ', 
+                               pe.primer_apellido, ' ', COALESCE(pe.segundo_apellido, '')) AS nombre_estudiante
+                    FROM pagos_recibidos pr
+                    LEFT JOIN estudiantes e ON pr.id_estudiante = e.id
+                    LEFT JOIN personas pe ON e.id_persona = pe.id
+                    LEFT JOIN tipos_pagos tp ON pr.id_tipo_pago = tp.id
+                    WHERE pr.id_estudiante = :id_estudiante
+                      AND pr.id_tipo_pago = :id_tipo_pago
+                      AND pr.valor_recibido = :valor_recibido
+                      AND DATE(pr.fecha) = DATE(:fecha)
+                      AND (pr.anulado = 0 OR pr.anulado IS NULL)
+                      AND pr.id_tenant = :id_tenant
+                ";
+                if ($id_pago_excluir !== null) {
+                    $sqlDup .= " AND pr.id <> :id_pago_excluir ";
+                }
+                $sqlDup .= " ORDER BY pr.fecha_registro DESC";
+
+                $stmtDup = $db->prepare($sqlDup);
+                $stmtDup->bindParam(':id_estudiante', $id_estudiante);
+                $stmtDup->bindParam(':id_tipo_pago', $id_tipo_pago);
+                $stmtDup->bindParam(':valor_recibido', $valor_recibido);
+                $stmtDup->bindParam(':fecha', $fecha);
+                $stmtDup->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                if ($id_pago_excluir !== null) {
+                    $stmtDup->bindParam(':id_pago_excluir', $id_pago_excluir);
+                }
+                $stmtDup->execute();
+                $posibleDuplicado = $stmtDup->fetchAll(PDO::FETCH_ASSOC);
+
+                foreach ($posibleDuplicado as &$rowD) {
+                    $rowD['nombre_estudiante'] = trim(preg_replace('/\s+/', ' ', $rowD['nombre_estudiante']));
+                }
+                unset($rowD);
+            }
+
+            Flight::json(array(
+                'referencia_existente' => $referenciaExistente,
+                'posible_duplicado' => $posibleDuplicado
+            ));
+        } catch (Exception $e) {
+            error_log("Error en verificarDuplicado: " . $e->getMessage());
+            Flight::json(array('error' => 'Error al verificar duplicados: ' . $e->getMessage()), 500);
+        }
+    }
 }
