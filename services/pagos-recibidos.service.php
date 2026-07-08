@@ -132,6 +132,7 @@ class PagosRecibidos
             pr.anulado,
             pr.fecha_anulacion,
             pr.id_usuario_anulacion,
+            pr.id_documento_persona,
             CONCAT(p_ur.primer_nombre, ' ', COALESCE(p_ur.segundo_nombre, ''), ' ', 
                     p_ur.primer_apellido, ' ', COALESCE(p_ur.segundo_apellido, '')) AS nombre_completo_usuario_registro,
             CONCAT(p_uc.primer_nombre, ' ', COALESCE(p_uc.segundo_nombre, ''), ' ', 
@@ -163,7 +164,7 @@ class PagosRecibidos
             p_ur.primer_apellido, p_ur.segundo_apellido, pr.fecha_contabilizacion, pr.id_usuario_contable, 
             uc.usuario, p_uc.primer_nombre, p_uc.segundo_nombre, p_uc.primer_apellido, p_uc.segundo_apellido,
             pr.anulado, pr.fecha_anulacion, pr.id_usuario_anulacion, ua.usuario, p_ua.primer_nombre, 
-            p_ua.segundo_nombre, p_ua.primer_apellido, p_ua.segundo_apellido
+            p_ua.segundo_nombre, p_ua.primer_apellido, p_ua.segundo_apellido, pr.id_documento_persona
     ");
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -205,6 +206,7 @@ class PagosRecibidos
                     pr.anulado,
                     pr.fecha_anulacion,
                     pr.id_usuario_anulacion,
+                    pr.id_documento_persona,
                     ua.usuario AS nombre_usuario_anulacion,
                     CONCAT(p_ua.primer_nombre, ' ', COALESCE(p_ua.segundo_nombre, ''), ' ', 
                            p_ua.primer_apellido, ' ', COALESCE(p_ua.segundo_apellido, '')) AS nombre_completo_usuario_anulacion
@@ -242,7 +244,7 @@ class PagosRecibidos
                     p_ur.primer_apellido, p_ur.segundo_apellido, pr.fecha_contabilizacion, pr.id_usuario_contable, 
                     uc.usuario, p_uc.primer_nombre, p_uc.segundo_nombre, p_uc.primer_apellido, p_uc.segundo_apellido,
                     pr.anulado, pr.fecha_anulacion, pr.id_usuario_anulacion, ua.usuario, p_ua.primer_nombre, 
-                    p_ua.segundo_nombre, p_ua.primer_apellido, p_ua.segundo_apellido
+                    p_ua.segundo_nombre, p_ua.primer_apellido, p_ua.segundo_apellido, pr.id_documento_persona
                 order by pr.fecha desc, pr.id desc
         ");
 
@@ -350,6 +352,8 @@ class PagosRecibidos
             $id_usuario_registro = Flight::request()->data['id_usuario_registro'];
             $fecha_contabilizacion = Flight::request()->data['fecha_contabilizacion'];
             $id_usuario_contable = Flight::request()->data['id_usuario_contable'];
+            // Opcional: id del documento (comprobante) asociado al pago. Si no viene, queda null.
+            $id_documento_persona = isset(Flight::request()->data['id_documento_persona']) ? Flight::request()->data['id_documento_persona'] : null;
 
             // Validar que solo uno de los dos esté presente
             if (($id_estudiante !== null && $id_colaborador !== null) ||
@@ -358,8 +362,8 @@ class PagosRecibidos
                 throw new Exception('Debe especificar id_estudiante o id_colaborador, pero no ambos');
             }
 
-            $query = "INSERT INTO pagos_recibidos(id, id_tenant, fecha, id_estudiante, id_colaborador, id_acudiente, id_tipo_pago, valor_recibido, observaciones, referencia_bancaria, fecha_registro, id_usuario_registro, fecha_contabilizacion, id_usuario_contable) 
-                 VALUES (:id, :id_tenant, :fecha, :id_estudiante, :id_colaborador, :id_acudiente, :id_tipo_pago, :valor_recibido, :observaciones, :referencia_bancaria, :fecha_registro, :id_usuario_registro, :fecha_contabilizacion, :id_usuario_contable)";
+            $query = "INSERT INTO pagos_recibidos(id, id_tenant, fecha, id_estudiante, id_colaborador, id_acudiente, id_tipo_pago, valor_recibido, observaciones, referencia_bancaria, fecha_registro, id_usuario_registro, fecha_contabilizacion, id_usuario_contable, id_documento_persona) 
+                 VALUES (:id, :id_tenant, :fecha, :id_estudiante, :id_colaborador, :id_acudiente, :id_tipo_pago, :valor_recibido, :observaciones, :referencia_bancaria, :fecha_registro, :id_usuario_registro, :fecha_contabilizacion, :id_usuario_contable, :id_documento_persona)";
 
             $sentence = $db->prepare($query);
 
@@ -379,6 +383,7 @@ class PagosRecibidos
             $sentence->bindParam(':id_usuario_registro', $id_usuario_registro);
             $sentence->bindParam(':fecha_contabilizacion', $fecha_contabilizacion);
             $sentence->bindParam(':id_usuario_contable', $id_usuario_contable);
+            $sentence->bindParam(':id_documento_persona', $id_documento_persona);
 
             $sentence->execute();
 
@@ -1236,7 +1241,8 @@ class PagosRecibidos
                 . "{\n"
                 . "  \"valor\": (número entero, solo dígitos, sin puntos ni comas),\n"
                 . "  \"referencia\": (string con el número de referencia, aprobación o comprobante),\n"
-                . "  \"fecha\": (string en formato YYYY-MM-DD)\n"
+                . "  \"fecha\": (string en formato YYYY-MM-DD),\n"
+                . "  \"banco\": (string con el nombre de la entidad o banco emisor del comprobante, por ejemplo: Nequi, Bancolombia, Daviplata, etc.)\n"
                 . "}\n\n"
                 . "Si no puedes identificar algún campo, usa null para ese campo.\n"
                 . "IMPORTANTE sobre el valor:\n"
@@ -1244,7 +1250,9 @@ class PagosRecibidos
                 . "- Ejemplo: '$150.000,00' significa CIENTO CINCUENTA MIL pesos = 150000\n"
                 . "- Ejemplo: '$1.200.000,00' significa UN MILLÓN DOSCIENTOS MIL pesos = 1200000\n"
                 . "- Elimina los puntos de miles y los decimales, retorna solo el número entero.\n"
-                . "- El valor debe ser un número entero sin separadores.";
+                . "- El valor debe ser un número entero sin separadores.\n"
+                . "IMPORTANTE sobre el banco:\n"
+                . "- Devuelve el nombre de la entidad financiera que emitió el comprobante (la app o banco de origen).";
 
             $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" . $apiKey;
 
@@ -1343,7 +1351,8 @@ class PagosRecibidos
                 'datos' => array(
                     'valor' => isset($datosExtraidos['valor']) ? intval($datosExtraidos['valor']) : null,
                     'referencia' => isset($datosExtraidos['referencia']) ? trim($datosExtraidos['referencia']) : null,
-                    'fecha' => isset($datosExtraidos['fecha']) ? $datosExtraidos['fecha'] : null
+                    'fecha' => isset($datosExtraidos['fecha']) ? $datosExtraidos['fecha'] : null,
+                    'banco' => isset($datosExtraidos['banco']) ? trim($datosExtraidos['banco']) : null
                 ),
                 'tokens' => array(
                     'input' => $tokensInput,

@@ -3,13 +3,14 @@
 // ========================================
 // CONFIGURACIÓN BD PRINCIPAL (GENIALISIS)
 // ========================================
-define('DB_HOST', '92.205.2.161');
+//define('DB_HOST', '92.205.2.161');
 //define('DB_NAME', 'lumen_academico_prod');
 //define('DB_USERNAME', 'liceo_lumen_prod');
 //define('DB_PASSWORD', 'lVuAT1xn2Q-j');
+define('DB_HOST', '132.148.181.209');
 define('DB_NAME', 'g_lumen_prod');
 define('DB_USERNAME', 'usr_g_lumen_prod');
-define('DB_PASSWORD', 'Z$3$M,Ao1pNCH2G8');
+define('DB_PASSWORD', 'NPv;(Fp#(zPmr{QH');
 define('DB_CHARSET', 'utf8mb4');
 define('DB_TYPE', 'mysql');
 define('DB_DSN', DB_TYPE . ':host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=' . DB_CHARSET);

@@ -246,7 +246,7 @@ class Estudiantes
         Flight::json(array('existe' => $response['total'] > 0));
     }
 
-    public static function getReporteCompleto()
+public static function getReporteCompleto()
     {
         try {
             $db = Flight::db();
@@ -258,19 +258,24 @@ class Estudiantes
 
             /* ========================================================
                Tabla temporal: cobrado por persona, concepto y periodo
+               clasif y categ se resuelven por CÓDIGO (estable ante el
+               cambio de PK INT -> UUID de las tablas de catálogo).
+               period sigue siendo entero (periodicidad_cobro no cambió).
                ======================================================== */
             $db->exec("DROP TEMPORARY TABLE IF EXISTS tmp_cobrado");
             $db->exec("
                 CREATE TEMPORARY TABLE tmp_cobrado AS
                 SELECT 
                     cxc.id_persona,
-                    ps.id_clasificacion_productos_servicios AS clasif,
+                    cl.codigo AS clasif,
                     ps.id_periodicidad_cobro AS period,
-                    ps.id_categoria_productos_servicios AS categ,
+                    cat.codigo AS categ,
                     SUM(CASE WHEN YEAR(cxc.fecha) = @anio_actual THEN cxc.valor ELSE 0 END) AS cobrado_actual,
                     SUM(CASE WHEN YEAR(cxc.fecha) < @anio_actual THEN cxc.valor ELSE 0 END) AS cobrado_anterior
                 FROM cuentas_por_cobrar cxc
                 INNER JOIN productos_servicios ps ON cxc.id_producto_servicio = ps.id
+                LEFT JOIN clasificacion_productos_servicios cl ON cl.id = ps.id_clasificacion_productos_servicios AND cl.id_tenant = ps.id_tenant
+                LEFT JOIN categoria_productos_servicios cat ON cat.id = ps.id_categoria_productos_servicios AND cat.id_tenant = ps.id_tenant
                 WHERE cxc.anulado = 0 AND cxc.id_tenant = " . TenantContext::id() . "
                 GROUP BY cxc.id_persona, clasif, period, categ
             ");
@@ -283,92 +288,95 @@ class Estudiantes
                 CREATE TEMPORARY TABLE tmp_pagado AS
                 SELECT 
                     cxc.id_persona,
-                    ps.id_clasificacion_productos_servicios AS clasif,
+                    cl.codigo AS clasif,
                     ps.id_periodicidad_cobro AS period,
-                    ps.id_categoria_productos_servicios AS categ,
+                    cat.codigo AS categ,
                     SUM(CASE WHEN YEAR(cxc.fecha) = @anio_actual THEN cp.valor_aplicado ELSE 0 END) AS pagado_actual,
                     SUM(CASE WHEN YEAR(cxc.fecha) < @anio_actual THEN cp.valor_aplicado ELSE 0 END) AS pagado_anterior
                 FROM cuenta_pagada cp
                 INNER JOIN cuentas_por_cobrar cxc ON cp.id_cuenta_por_cobrar = cxc.id
                 INNER JOIN pagos_recibidos pr ON cp.id_pago_recibido = pr.id
                 INNER JOIN productos_servicios ps ON cxc.id_producto_servicio = ps.id
+                LEFT JOIN clasificacion_productos_servicios cl ON cl.id = ps.id_clasificacion_productos_servicios AND cl.id_tenant = ps.id_tenant
+                LEFT JOIN categoria_productos_servicios cat ON cat.id = ps.id_categoria_productos_servicios AND cat.id_tenant = ps.id_tenant
                 WHERE cxc.anulado = 0 AND pr.anulado = 0 AND cxc.id_tenant = " . TenantContext::id() . "
                 GROUP BY cxc.id_persona, clasif, period, categ
             ");
 
             /* ========================================================
                Tabla temporal: pivoteo por persona con las 36 columnas
+               Concepto = (clasif codigo, period entero, categ codigo)
                ======================================================== */
             $db->exec("DROP TEMPORARY TABLE IF EXISTS tmp_cartera");
             $db->exec("
                 CREATE TEMPORARY TABLE tmp_cartera AS
                 SELECT 
                     id_persona,
-                    /* MATRÍCULA - Año actual (clasif=1, period=1, categ=1) */
-                    SUM(CASE WHEN clasif=1 AND period=1 AND categ=1 THEN cobrado_actual ELSE 0 END) AS matricula_cobrado_actual,
-                    SUM(CASE WHEN clasif=1 AND period=1 AND categ=1 THEN pagado_actual ELSE 0 END) AS matricula_pagado_actual,
-                    SUM(CASE WHEN clasif=1 AND period=1 AND categ=1 THEN cobrado_actual ELSE 0 END) 
-                    - SUM(CASE WHEN clasif=1 AND period=1 AND categ=1 THEN pagado_actual ELSE 0 END) AS matricula_saldo_actual,
+                    /* MATRÍCULA - Año actual (ACADEMICO, period=1, MENSUAL) */
+                    SUM(CASE WHEN clasif='ACADEMICO' AND period=1 AND categ='MENSUAL' THEN cobrado_actual ELSE 0 END) AS matricula_cobrado_actual,
+                    SUM(CASE WHEN clasif='ACADEMICO' AND period=1 AND categ='MENSUAL' THEN pagado_actual ELSE 0 END) AS matricula_pagado_actual,
+                    SUM(CASE WHEN clasif='ACADEMICO' AND period=1 AND categ='MENSUAL' THEN cobrado_actual ELSE 0 END) 
+                    - SUM(CASE WHEN clasif='ACADEMICO' AND period=1 AND categ='MENSUAL' THEN pagado_actual ELSE 0 END) AS matricula_saldo_actual,
                     /* MATRÍCULA - Años anteriores */
-                    SUM(CASE WHEN clasif=1 AND period=1 AND categ=1 THEN cobrado_anterior ELSE 0 END) AS matricula_cobrado_anterior,
-                    SUM(CASE WHEN clasif=1 AND period=1 AND categ=1 THEN pagado_anterior ELSE 0 END) AS matricula_pagado_anterior,
-                    SUM(CASE WHEN clasif=1 AND period=1 AND categ=1 THEN cobrado_anterior ELSE 0 END) 
-                    - SUM(CASE WHEN clasif=1 AND period=1 AND categ=1 THEN pagado_anterior ELSE 0 END) AS matricula_saldo_anterior,
+                    SUM(CASE WHEN clasif='ACADEMICO' AND period=1 AND categ='MENSUAL' THEN cobrado_anterior ELSE 0 END) AS matricula_cobrado_anterior,
+                    SUM(CASE WHEN clasif='ACADEMICO' AND period=1 AND categ='MENSUAL' THEN pagado_anterior ELSE 0 END) AS matricula_pagado_anterior,
+                    SUM(CASE WHEN clasif='ACADEMICO' AND period=1 AND categ='MENSUAL' THEN cobrado_anterior ELSE 0 END) 
+                    - SUM(CASE WHEN clasif='ACADEMICO' AND period=1 AND categ='MENSUAL' THEN pagado_anterior ELSE 0 END) AS matricula_saldo_anterior,
 
-                    /* PENSIÓN - Año actual (clasif=1, period=2, categ=1) */
-                    SUM(CASE WHEN clasif=1 AND period=2 AND categ=1 THEN cobrado_actual ELSE 0 END) AS pension_cobrado_actual,
-                    SUM(CASE WHEN clasif=1 AND period=2 AND categ=1 THEN pagado_actual ELSE 0 END) AS pension_pagado_actual,
-                    SUM(CASE WHEN clasif=1 AND period=2 AND categ=1 THEN cobrado_actual ELSE 0 END) 
-                    - SUM(CASE WHEN clasif=1 AND period=2 AND categ=1 THEN pagado_actual ELSE 0 END) AS pension_saldo_actual,
+                    /* PENSIÓN - Año actual (ACADEMICO, period=2, MENSUAL) */
+                    SUM(CASE WHEN clasif='ACADEMICO' AND period=2 AND categ='MENSUAL' THEN cobrado_actual ELSE 0 END) AS pension_cobrado_actual,
+                    SUM(CASE WHEN clasif='ACADEMICO' AND period=2 AND categ='MENSUAL' THEN pagado_actual ELSE 0 END) AS pension_pagado_actual,
+                    SUM(CASE WHEN clasif='ACADEMICO' AND period=2 AND categ='MENSUAL' THEN cobrado_actual ELSE 0 END) 
+                    - SUM(CASE WHEN clasif='ACADEMICO' AND period=2 AND categ='MENSUAL' THEN pagado_actual ELSE 0 END) AS pension_saldo_actual,
                     /* PENSIÓN - Años anteriores */
-                    SUM(CASE WHEN clasif=1 AND period=2 AND categ=1 THEN cobrado_anterior ELSE 0 END) AS pension_cobrado_anterior,
-                    SUM(CASE WHEN clasif=1 AND period=2 AND categ=1 THEN pagado_anterior ELSE 0 END) AS pension_pagado_anterior,
-                    SUM(CASE WHEN clasif=1 AND period=2 AND categ=1 THEN cobrado_anterior ELSE 0 END) 
-                    - SUM(CASE WHEN clasif=1 AND period=2 AND categ=1 THEN pagado_anterior ELSE 0 END) AS pension_saldo_anterior,
+                    SUM(CASE WHEN clasif='ACADEMICO' AND period=2 AND categ='MENSUAL' THEN cobrado_anterior ELSE 0 END) AS pension_cobrado_anterior,
+                    SUM(CASE WHEN clasif='ACADEMICO' AND period=2 AND categ='MENSUAL' THEN pagado_anterior ELSE 0 END) AS pension_pagado_anterior,
+                    SUM(CASE WHEN clasif='ACADEMICO' AND period=2 AND categ='MENSUAL' THEN cobrado_anterior ELSE 0 END) 
+                    - SUM(CASE WHEN clasif='ACADEMICO' AND period=2 AND categ='MENSUAL' THEN pagado_anterior ELSE 0 END) AS pension_saldo_anterior,
 
-                    /* ALMUERZO - Año actual (clasif=3, period=2, categ=1) */
-                    SUM(CASE WHEN clasif=3 AND period=2 AND categ=1 THEN cobrado_actual ELSE 0 END) AS almuerzo_cobrado_actual,
-                    SUM(CASE WHEN clasif=3 AND period=2 AND categ=1 THEN pagado_actual ELSE 0 END) AS almuerzo_pagado_actual,
-                    SUM(CASE WHEN clasif=3 AND period=2 AND categ=1 THEN cobrado_actual ELSE 0 END) 
-                    - SUM(CASE WHEN clasif=3 AND period=2 AND categ=1 THEN pagado_actual ELSE 0 END) AS almuerzo_saldo_actual,
+                    /* ALMUERZO - Año actual (ALIMENTACION, period=2, MENSUAL) */
+                    SUM(CASE WHEN clasif='ALIMENTACION' AND period=2 AND categ='MENSUAL' THEN cobrado_actual ELSE 0 END) AS almuerzo_cobrado_actual,
+                    SUM(CASE WHEN clasif='ALIMENTACION' AND period=2 AND categ='MENSUAL' THEN pagado_actual ELSE 0 END) AS almuerzo_pagado_actual,
+                    SUM(CASE WHEN clasif='ALIMENTACION' AND period=2 AND categ='MENSUAL' THEN cobrado_actual ELSE 0 END) 
+                    - SUM(CASE WHEN clasif='ALIMENTACION' AND period=2 AND categ='MENSUAL' THEN pagado_actual ELSE 0 END) AS almuerzo_saldo_actual,
                     /* ALMUERZO - Años anteriores */
-                    SUM(CASE WHEN clasif=3 AND period=2 AND categ=1 THEN cobrado_anterior ELSE 0 END) AS almuerzo_cobrado_anterior,
-                    SUM(CASE WHEN clasif=3 AND period=2 AND categ=1 THEN pagado_anterior ELSE 0 END) AS almuerzo_pagado_anterior,
-                    SUM(CASE WHEN clasif=3 AND period=2 AND categ=1 THEN cobrado_anterior ELSE 0 END) 
-                    - SUM(CASE WHEN clasif=3 AND period=2 AND categ=1 THEN pagado_anterior ELSE 0 END) AS almuerzo_saldo_anterior,
+                    SUM(CASE WHEN clasif='ALIMENTACION' AND period=2 AND categ='MENSUAL' THEN cobrado_anterior ELSE 0 END) AS almuerzo_cobrado_anterior,
+                    SUM(CASE WHEN clasif='ALIMENTACION' AND period=2 AND categ='MENSUAL' THEN pagado_anterior ELSE 0 END) AS almuerzo_pagado_anterior,
+                    SUM(CASE WHEN clasif='ALIMENTACION' AND period=2 AND categ='MENSUAL' THEN cobrado_anterior ELSE 0 END) 
+                    - SUM(CASE WHEN clasif='ALIMENTACION' AND period=2 AND categ='MENSUAL' THEN pagado_anterior ELSE 0 END) AS almuerzo_saldo_anterior,
 
-                    /* ONCES - Año actual (clasif=3, period=3, categ=2) */
-                    SUM(CASE WHEN clasif=3 AND period=3 AND categ=2 THEN cobrado_actual ELSE 0 END) AS onces_cobrado_actual,
-                    SUM(CASE WHEN clasif=3 AND period=3 AND categ=2 THEN pagado_actual ELSE 0 END) AS onces_pagado_actual,
-                    SUM(CASE WHEN clasif=3 AND period=3 AND categ=2 THEN cobrado_actual ELSE 0 END) 
-                    - SUM(CASE WHEN clasif=3 AND period=3 AND categ=2 THEN pagado_actual ELSE 0 END) AS onces_saldo_actual,
+                    /* ONCES - Año actual (ALIMENTACION, period=3, EXTRA) */
+                    SUM(CASE WHEN clasif='ALIMENTACION' AND period=3 AND categ='EXTRA' THEN cobrado_actual ELSE 0 END) AS onces_cobrado_actual,
+                    SUM(CASE WHEN clasif='ALIMENTACION' AND period=3 AND categ='EXTRA' THEN pagado_actual ELSE 0 END) AS onces_pagado_actual,
+                    SUM(CASE WHEN clasif='ALIMENTACION' AND period=3 AND categ='EXTRA' THEN cobrado_actual ELSE 0 END) 
+                    - SUM(CASE WHEN clasif='ALIMENTACION' AND period=3 AND categ='EXTRA' THEN pagado_actual ELSE 0 END) AS onces_saldo_actual,
                     /* ONCES - Años anteriores */
-                    SUM(CASE WHEN clasif=3 AND period=3 AND categ=2 THEN cobrado_anterior ELSE 0 END) AS onces_cobrado_anterior,
-                    SUM(CASE WHEN clasif=3 AND period=3 AND categ=2 THEN pagado_anterior ELSE 0 END) AS onces_pagado_anterior,
-                    SUM(CASE WHEN clasif=3 AND period=3 AND categ=2 THEN cobrado_anterior ELSE 0 END) 
-                    - SUM(CASE WHEN clasif=3 AND period=3 AND categ=2 THEN pagado_anterior ELSE 0 END) AS onces_saldo_anterior,
+                    SUM(CASE WHEN clasif='ALIMENTACION' AND period=3 AND categ='EXTRA' THEN cobrado_anterior ELSE 0 END) AS onces_cobrado_anterior,
+                    SUM(CASE WHEN clasif='ALIMENTACION' AND period=3 AND categ='EXTRA' THEN pagado_anterior ELSE 0 END) AS onces_pagado_anterior,
+                    SUM(CASE WHEN clasif='ALIMENTACION' AND period=3 AND categ='EXTRA' THEN cobrado_anterior ELSE 0 END) 
+                    - SUM(CASE WHEN clasif='ALIMENTACION' AND period=3 AND categ='EXTRA' THEN pagado_anterior ELSE 0 END) AS onces_saldo_anterior,
 
-                    /* HORAS EXTRAS - Año actual (clasif=2, period=3, categ=2) */
-                    SUM(CASE WHEN clasif=2 AND period=3 AND categ=2 THEN cobrado_actual ELSE 0 END) AS horas_extras_cobrado_actual,
-                    SUM(CASE WHEN clasif=2 AND period=3 AND categ=2 THEN pagado_actual ELSE 0 END) AS horas_extras_pagado_actual,
-                    SUM(CASE WHEN clasif=2 AND period=3 AND categ=2 THEN cobrado_actual ELSE 0 END) 
-                    - SUM(CASE WHEN clasif=2 AND period=3 AND categ=2 THEN pagado_actual ELSE 0 END) AS horas_extras_saldo_actual,
+                    /* HORAS EXTRAS - Año actual (EXTRA_ACADEMICO, period=3, EXTRA) */
+                    SUM(CASE WHEN clasif='EXTRA_ACADEMICO' AND period=3 AND categ='EXTRA' THEN cobrado_actual ELSE 0 END) AS horas_extras_cobrado_actual,
+                    SUM(CASE WHEN clasif='EXTRA_ACADEMICO' AND period=3 AND categ='EXTRA' THEN pagado_actual ELSE 0 END) AS horas_extras_pagado_actual,
+                    SUM(CASE WHEN clasif='EXTRA_ACADEMICO' AND period=3 AND categ='EXTRA' THEN cobrado_actual ELSE 0 END) 
+                    - SUM(CASE WHEN clasif='EXTRA_ACADEMICO' AND period=3 AND categ='EXTRA' THEN pagado_actual ELSE 0 END) AS horas_extras_saldo_actual,
                     /* HORAS EXTRAS - Años anteriores */
-                    SUM(CASE WHEN clasif=2 AND period=3 AND categ=2 THEN cobrado_anterior ELSE 0 END) AS horas_extras_cobrado_anterior,
-                    SUM(CASE WHEN clasif=2 AND period=3 AND categ=2 THEN pagado_anterior ELSE 0 END) AS horas_extras_pagado_anterior,
-                    SUM(CASE WHEN clasif=2 AND period=3 AND categ=2 THEN cobrado_anterior ELSE 0 END) 
-                    - SUM(CASE WHEN clasif=2 AND period=3 AND categ=2 THEN pagado_anterior ELSE 0 END) AS horas_extras_saldo_anterior,
+                    SUM(CASE WHEN clasif='EXTRA_ACADEMICO' AND period=3 AND categ='EXTRA' THEN cobrado_anterior ELSE 0 END) AS horas_extras_cobrado_anterior,
+                    SUM(CASE WHEN clasif='EXTRA_ACADEMICO' AND period=3 AND categ='EXTRA' THEN pagado_anterior ELSE 0 END) AS horas_extras_pagado_anterior,
+                    SUM(CASE WHEN clasif='EXTRA_ACADEMICO' AND period=3 AND categ='EXTRA' THEN cobrado_anterior ELSE 0 END) 
+                    - SUM(CASE WHEN clasif='EXTRA_ACADEMICO' AND period=3 AND categ='EXTRA' THEN pagado_anterior ELSE 0 END) AS horas_extras_saldo_anterior,
 
-                    /* VESTUARIO - Año actual (clasif=4, period=4, categ=2) */
-                    SUM(CASE WHEN clasif=4 AND period=4 AND categ=2 THEN cobrado_actual ELSE 0 END) AS vestuario_cobrado_actual,
-                    SUM(CASE WHEN clasif=4 AND period=4 AND categ=2 THEN pagado_actual ELSE 0 END) AS vestuario_pagado_actual,
-                    SUM(CASE WHEN clasif=4 AND period=4 AND categ=2 THEN cobrado_actual ELSE 0 END) 
-                    - SUM(CASE WHEN clasif=4 AND period=4 AND categ=2 THEN pagado_actual ELSE 0 END) AS vestuario_saldo_actual,
+                    /* VESTUARIO - Año actual (VESTUARIO, period=4, EXTRA) */
+                    SUM(CASE WHEN clasif='VESTUARIO' AND period=4 AND categ='EXTRA' THEN cobrado_actual ELSE 0 END) AS vestuario_cobrado_actual,
+                    SUM(CASE WHEN clasif='VESTUARIO' AND period=4 AND categ='EXTRA' THEN pagado_actual ELSE 0 END) AS vestuario_pagado_actual,
+                    SUM(CASE WHEN clasif='VESTUARIO' AND period=4 AND categ='EXTRA' THEN cobrado_actual ELSE 0 END) 
+                    - SUM(CASE WHEN clasif='VESTUARIO' AND period=4 AND categ='EXTRA' THEN pagado_actual ELSE 0 END) AS vestuario_saldo_actual,
                     /* VESTUARIO - Años anteriores */
-                    SUM(CASE WHEN clasif=4 AND period=4 AND categ=2 THEN cobrado_anterior ELSE 0 END) AS vestuario_cobrado_anterior,
-                    SUM(CASE WHEN clasif=4 AND period=4 AND categ=2 THEN pagado_anterior ELSE 0 END) AS vestuario_pagado_anterior,
-                    SUM(CASE WHEN clasif=4 AND period=4 AND categ=2 THEN cobrado_anterior ELSE 0 END) 
-                    - SUM(CASE WHEN clasif=4 AND period=4 AND categ=2 THEN pagado_anterior ELSE 0 END) AS vestuario_saldo_anterior
+                    SUM(CASE WHEN clasif='VESTUARIO' AND period=4 AND categ='EXTRA' THEN cobrado_anterior ELSE 0 END) AS vestuario_cobrado_anterior,
+                    SUM(CASE WHEN clasif='VESTUARIO' AND period=4 AND categ='EXTRA' THEN pagado_anterior ELSE 0 END) AS vestuario_pagado_anterior,
+                    SUM(CASE WHEN clasif='VESTUARIO' AND period=4 AND categ='EXTRA' THEN cobrado_anterior ELSE 0 END) 
+                    - SUM(CASE WHEN clasif='VESTUARIO' AND period=4 AND categ='EXTRA' THEN pagado_anterior ELSE 0 END) AS vestuario_saldo_anterior
                 FROM (
                     SELECT id_persona, clasif, period, categ, cobrado_actual, cobrado_anterior, 0 AS pagado_actual, 0 AS pagado_anterior
                     FROM tmp_cobrado

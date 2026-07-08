@@ -274,6 +274,11 @@ class DocumentosPersonas
 
             $id_persona = Flight::request()->data['id_persona'];
             $id_tipo_documento = Flight::request()->data['id_tipo_documento'];
+            // Opcional: código del tipo de documento. Si viene, tiene prioridad sobre
+            // el id (el código es estable entre tenants y migraciones). Se resuelve su UUID.
+            $codigo_tipo_documento = isset(Flight::request()->data['codigo_tipo_documento'])
+                ? trim(Flight::request()->data['codigo_tipo_documento'])
+                : null;
             $id_contrato = isset(Flight::request()->data['id_contrato'])
                 ? Flight::request()->data['id_contrato']
                 : null;
@@ -286,6 +291,27 @@ class DocumentosPersonas
             $id_usuario_subio = isset(Flight::request()->data['id_usuario_subio'])
                 ? Flight::request()->data['id_usuario_subio']
                 : null;
+
+            // Si se envió el código del tipo de documento, resolver su id (UUID) por
+            // código dentro del tenant. Prevalece sobre el id_tipo_documento recibido.
+            if ($codigo_tipo_documento !== null && $codigo_tipo_documento !== '') {
+                $stmtTipo = $db->prepare("
+                    SELECT id FROM tipos_documentos 
+                    WHERE codigo = :codigo AND id_tenant = :id_tenant 
+                    LIMIT 1
+                ");
+                $stmtTipo->bindParam(':codigo', $codigo_tipo_documento);
+                $stmtTipo->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmtTipo->execute();
+                $tipoDocumento = $stmtTipo->fetch();
+
+                if (!$tipoDocumento) {
+                    Flight::json(array('error' => 'Tipo de documento no encontrado para el código: ' . $codigo_tipo_documento), 400);
+                    return;
+                }
+
+                $id_tipo_documento = $tipoDocumento['id'];
+            }
 
             // Validar que se subió archivo
             if (!isset($_FILES['archivo']) || $_FILES['archivo']['error'] !== UPLOAD_ERR_OK) {

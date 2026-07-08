@@ -32,6 +32,7 @@ class CuentaPagada
                 cp.id_pago_recibido,
                 cp.valor_aplicado,
                 cp.fecha,
+                cpc.fecha AS fecha_cobro,
                 ps.id AS id_producto_servicio,
                 ps.nombre AS nombre_producto_servicio
             FROM cuenta_pagada cp

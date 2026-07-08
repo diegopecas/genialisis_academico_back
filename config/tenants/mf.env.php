@@ -4,7 +4,7 @@
 // CONFIGURACIÓN BD PRINCIPAL (GENIALISIS)
 // ========================================
 define('DB_HOST', '92.205.2.161');
-define('DB_NAME', 'g-mf-prod');
+define('DB_NAME', 'g-mf-prod_');
 define('DB_USERNAME', 'usr-mf-prod');
 define('DB_PASSWORD', '9=(+gkusi_~-');
 define('DB_CHARSET', 'utf8mb4');
