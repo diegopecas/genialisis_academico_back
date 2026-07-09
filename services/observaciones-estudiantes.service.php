@@ -40,6 +40,12 @@ class ObservacionesEstudiantes
             oe.id, 
             oe.id_estudiante, 
             oe.id_tipo_observacion_estudiante, 
+            toe.nombre AS nombre_tipo_observacion,
+            toe.seccion AS seccion_observacion,
+            toe.color AS color_seccion,
+            toe.orden_seccion,
+            toe.icono AS icono_seccion,
+            toe.aplica_informe,
             oe.descripcion, 
             oe.fecha, 
             oe.id_estudiante_afectado, 
@@ -77,12 +83,14 @@ class ObservacionesEstudiantes
         -- Join con sprints para mostrar el sprint asociado
         LEFT JOIN
             sprints s ON oe.id_sprint = s.id
+        LEFT JOIN
+            tipos_observaciones_estudiantes toe ON oe.id_tipo_observacion_estudiante = toe.id
         WHERE 
             oe.id_estudiante = :id_estudiante
             AND oe.id_tenant = :id_tenant
         -- Ordenar por fecha descendente (más reciente primero)
         ORDER BY 
-            oe.fecha DESC, oe.id DESC
+            oe.fecha DESC, oe.fecha_registro DESC
     ");
         $sentence->bindParam(':id_estudiante', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -302,6 +310,10 @@ class ObservacionesEstudiantes
                 oe.id,
                 oe.id_estudiante,
                 oe.id_tipo_observacion_estudiante,
+                toe.nombre AS nombre_tipo_observacion,
+                toe.seccion AS seccion_observacion,
+                toe.color AS color_seccion,
+                toe.orden_seccion,
                 oe.descripcion,
                 oe.fecha,
                 oe.id_sprint,
