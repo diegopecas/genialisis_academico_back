@@ -136,6 +136,7 @@ class CuentasPorCobrar
             pc.nombre AS periodicidad_cobro_nombre,
             ps.id_clasificacion_productos_servicios,
             cps.nombre AS nombre_clasificacion,
+            cps.codigo AS clasificacion_codigo,
             CONCAT(p.primer_nombre, ' ', p.segundo_nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido) AS nombre_usuario
         FROM 
             cuentas_por_cobrar cpc
@@ -160,7 +161,7 @@ class CuentasPorCobrar
             AND (cpc.anulado = 0 OR cpc.anulado IS NULL)
             AND cpc.id_tenant = :id_tenant
         GROUP BY 
-            cpc.id, cpc.fecha, cpc.valor, cpc.detalle, ps.nombre, cps.nombre, 
+            cpc.id, cpc.fecha, cpc.valor, cpc.detalle, ps.nombre, cps.nombre, cps.codigo, 
             p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido,
             cpc.anulado, cpc.fecha_anulacion, cpc.id_usuario_anulacion, cpc.id_horario_alimentacion,
             ha.id, ha.nombre, ps.id_periodicidad_cobro, pc.id, pc.nombre

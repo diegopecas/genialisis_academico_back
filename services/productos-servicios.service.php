@@ -6,7 +6,7 @@ class ProductosServicios
         $db = Flight::db();
         $sentence = $db->prepare("
         SELECT ps.*, 
-               cp.nombre AS nombre_categoria, 
+               cp.nombre AS nombre_categoria, cp.codigo AS categoria_codigo, 
                cl.nombre AS nombre_clasificacion, cl.codigo AS clasificacion_codigo, 
                pc.nombre AS nombre_periodicidad,
                ha.nombre AS nombre_horario_alimentacion
@@ -29,7 +29,7 @@ class ProductosServicios
         $db = Flight::db();
         $sentence = $db->prepare("
         SELECT ps.*, 
-               cp.nombre AS nombre_categoria, 
+               cp.nombre AS nombre_categoria, cp.codigo AS categoria_codigo, 
                cl.nombre AS nombre_clasificacion, cl.codigo AS clasificacion_codigo, 
                pc.nombre AS nombre_periodicidad,
                ha.nombre AS nombre_horario_alimentacion
@@ -54,7 +54,7 @@ class ProductosServicios
         $db = Flight::db();
         $sentence = $db->prepare("
         SELECT ps.*, 
-               cp.nombre AS nombre_categoria, 
+               cp.nombre AS nombre_categoria, cp.codigo AS categoria_codigo, 
                cl.nombre AS nombre_clasificacion, cl.codigo AS clasificacion_codigo, 
                pc.nombre AS nombre_periodicidad,
                ha.nombre AS nombre_horario_alimentacion
@@ -90,6 +90,7 @@ class ProductosServicios
                    cl.codigo AS clasificacion_codigo,
                    cl.icono AS icono_clasificacion,
                    cp.nombre AS nombre_categoria,
+                   cp.codigo AS categoria_codigo,
                    pc.nombre AS nombre_periodicidad,
                    ha.nombre AS nombre_horario_alimentacion
             FROM productos_servicios ps
