@@ -9,7 +9,6 @@ Flight::route('GET /asistencia-estudiantes-no-salidas', [AsistenciaEstudiantes::
 Flight::route('POST /asistencia-estudiantes', [AsistenciaEstudiantes::class, 'new']); // registrar ingreso
 Flight::route('PUT /asistencia-estudiantes', [AsistenciaEstudiantes::class, 'replace']); // registrar salida
 Flight::route('DELETE /asistencia-estudiantes', [AsistenciaEstudiantes::class, 'delete']); // borrar registro
-Flight::route('GET /estudiantes-diario', [EstudiantesDiario::class, 'getAll']);
 Flight::route('POST /asistencia-estudiantes/verificar-x-dia', [AsistenciaEstudiantes::class, 'verificarAsistenciaEstudiante']); // verificar la asistencia en un dia
 Flight::route('POST /asistencia-estudiantes/mensual', [AsistenciaEstudiantes::class, 'getAsistenciaMensual']); // obtener asistencia mensual de un estudiante
 Flight::route('GET /asistencia-estudiantes/resumen-grupo/@id_grupo', [AsistenciaEstudiantes::class, 'getResumenAsistenciaPorGrupo']);

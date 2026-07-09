@@ -4,13 +4,6 @@
 // CATEGORIAS-ACTIVIDADES
 Flight::route('GET /esferas-desarrollo', [EsferasDesarrollo::class, 'getAll']);
 
-// OBJETIVOS ACADEMICOS
-Flight::route('GET /objetivos-academicos', [ObjetivosAcademicos::class, 'getAll']);
-Flight::route('GET /objetivos-academicos/@id', [ObjetivosAcademicos::class, 'getById']);
-Flight::route('POST /objetivos-academicos', [ObjetivosAcademicos::class, 'new']);
-Flight::route('PUT /objetivos-academicos', [ObjetivosAcademicos::class, 'replace']);
-Flight::route('DELETE /objetivos-academicos', [ObjetivosAcademicos::class, 'delete']);
-
 
 Flight::route('GET /competencias-cognitivas', [CompetenciasCognitivas::class, 'getAll']);
 

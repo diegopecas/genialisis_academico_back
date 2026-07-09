@@ -136,8 +136,8 @@ class ProductosMobiliario
             SELECT p.*, u.abreviatura abreviatura_unidad, tp.nombre tipo_producto_nombre
             FROM productos p
             LEFT JOIN unidades_medida u ON p.id_unidad_medida = u.id
-            LEFT JOIN tipos_producto tp ON p.id_tipo_producto = tp.id
-            WHERE p.id_tipo_producto = 1 
+            LEFT JOIN tipos_producto tp ON p.id_tipo_producto = tp.id AND tp.id_tenant = p.id_tenant
+            WHERE tp.codigo = 'MOBILIARIO' 
             AND p.activo = 1
             AND p.id_tenant = :id_tenant
             AND p.id NOT IN (

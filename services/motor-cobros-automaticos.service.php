@@ -145,7 +145,8 @@ class MotorCobrosAutomaticos
             $stmtTipos->execute();
             $tiposEventoMap = [];
             foreach ($stmtTipos->fetchAll(PDO::FETCH_ASSOC) as $te) {
-                $tiposEventoMap[$te['nombre']] = intval($te['id']);
+                /* id es UUID (CHAR(36)): intval() lo convertia a 0 y rompia todas las comparaciones. */
+                $tiposEventoMap[$te['nombre']] = $te['id'];
             }
 
             $id_ingreso_antes = isset($tiposEventoMap['ingreso_antes_hora']) ? $tiposEventoMap['ingreso_antes_hora'] : null;
@@ -211,13 +212,16 @@ class MotorCobrosAutomaticos
             $tiposEventoYaProcesados = [];
 
             // Tipos que solo aplican la primera regla que coincida
-            $tiposUnicaRegla = array_filter([$id_dia_suelto, $id_sabado_sin_conv, $id_domingo_sin_conv]);
+            $tiposUnicaRegla = array_filter(
+                [$id_dia_suelto, $id_sabado_sin_conv, $id_domingo_sin_conv],
+                function ($v) { return $v !== null; }
+            );
 
             foreach ($reglas as $regla) {
-                $tipo = intval($regla['id_tipo_evento']);
+                $tipo = $regla['id_tipo_evento'];
 
                 // Para día suelto, sábado y domingo sin convenio, solo la primera regla que coincida
-                if (in_array($tipo, $tiposUnicaRegla) && in_array($tipo, $tiposEventoYaProcesados)) {
+                if (in_array($tipo, $tiposUnicaRegla, true) && in_array($tipo, $tiposEventoYaProcesados, true)) {
                     continue;
                 }
 
@@ -322,7 +326,7 @@ class MotorCobrosAutomaticos
                 // Reglas de valor fijo (día suelto, sábado, domingo, ingreso antes de hora)
                 $cobrosAplicables[] = self::buildCobro($regla, floatval($regla['valor_sugerido']), null, null);
 
-                if (in_array($tipo, $tiposUnicaRegla)) {
+                if (in_array($tipo, $tiposUnicaRegla, true)) {
                     $tiposEventoYaProcesados[] = $tipo;
                 }
             }

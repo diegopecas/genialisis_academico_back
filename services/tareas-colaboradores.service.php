@@ -60,7 +60,7 @@ class TareasColaboradores
                 AND tc.id_tenant = :id_tenant
                 ORDER BY tc.id_estado ASC, tc.fecha_limite ASC, tc.fecha_registro DESC
             ");
-            $sentence->bindParam(':id_colaborador', $id_colaborador, PDO::PARAM_INT);
+            $sentence->bindParam(':id_colaborador', $id_colaborador);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             Flight::json($sentence->fetchAll(PDO::FETCH_ASSOC));
@@ -141,7 +141,7 @@ class TareasColaboradores
                 WHERE tc.id = :id
                 AND tc.id_tenant = :id_tenant
             ");
-            $sentence->bindParam(':id', $id, PDO::PARAM_INT);
+            $sentence->bindParam(':id', $id);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             Flight::json($sentence->fetchAll(PDO::FETCH_ASSOC));
@@ -185,18 +185,18 @@ class TareasColaboradores
             $id = Uuid::generar();
             $sentence->bindValue(':id', $id);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $sentence->bindParam(':id_colaborador', $data['id_colaborador'], PDO::PARAM_INT);
-            $sentence->bindParam(':id_estudiante', $id_estudiante, PDO::PARAM_INT);
-            $sentence->bindParam(':id_tipo_tarea', $id_tipo_tarea, PDO::PARAM_INT);
+            $sentence->bindParam(':id_colaborador', $data['id_colaborador']);
+            $sentence->bindParam(':id_estudiante', $id_estudiante);
+            $sentence->bindParam(':id_tipo_tarea', $id_tipo_tarea);
             $sentence->bindParam(':descripcion', $data['descripcion']);
             $sentence->bindParam(':fecha_limite', $fecha_limite);
             $sentence->bindParam(':hora_inicio', $hora_inicio);
             $sentence->bindParam(':hora_fin', $hora_fin);
             $sentence->bindParam(':id_estado', $id_estado, PDO::PARAM_INT);
             $sentence->bindParam(':origen', $origen);
-            $sentence->bindParam(':id_historial_origen', $id_historial_origen, PDO::PARAM_INT);
+            $sentence->bindParam(':id_historial_origen', $id_historial_origen);
             $sentence->bindParam(':observaciones', $observaciones);
-            $sentence->bindParam(':id_usuario_registro', $id_usuario_registro, PDO::PARAM_INT);
+            $sentence->bindParam(':id_usuario_registro', $id_usuario_registro);
 
             $sentence->execute();
             Flight::json(array('id' => $id));
@@ -244,15 +244,15 @@ class TareasColaboradores
                 $idTarea = Uuid::generar();
                 $sentence->bindValue(':id', $idTarea);
                 $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-                $sentence->bindParam(':id_colaborador', $t['id_colaborador'], PDO::PARAM_INT);
-                $sentence->bindParam(':id_estudiante', $id_estudiante, PDO::PARAM_INT);
-                $sentence->bindParam(':id_tipo_tarea', $id_tipo_tarea, PDO::PARAM_INT);
+                $sentence->bindParam(':id_colaborador', $t['id_colaborador']);
+                $sentence->bindParam(':id_estudiante', $id_estudiante);
+                $sentence->bindParam(':id_tipo_tarea', $id_tipo_tarea);
                 $sentence->bindParam(':descripcion', $t['descripcion']);
                 $sentence->bindParam(':fecha_limite', $t['fecha_limite']);
                 $sentence->bindParam(':hora_inicio', $hora_inicio);
                 $sentence->bindParam(':hora_fin', $hora_fin);
                 $sentence->bindParam(':observaciones', $observaciones);
-                $sentence->bindParam(':id_usuario_registro', $id_usuario_registro, PDO::PARAM_INT);
+                $sentence->bindParam(':id_usuario_registro', $id_usuario_registro);
                 $sentence->execute();
                 $count++;
             }
@@ -296,9 +296,9 @@ class TareasColaboradores
             ");
 
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $sentence->bindParam(':id', $data['id'], PDO::PARAM_INT);
-            $sentence->bindParam(':id_estudiante', $id_estudiante, PDO::PARAM_INT);
-            $sentence->bindParam(':id_tipo_tarea', $id_tipo_tarea, PDO::PARAM_INT);
+            $sentence->bindParam(':id', $data['id']);
+            $sentence->bindParam(':id_estudiante', $id_estudiante);
+            $sentence->bindParam(':id_tipo_tarea', $id_tipo_tarea);
             $sentence->bindParam(':descripcion', $data['descripcion']);
             $sentence->bindParam(':fecha_limite', $fecha_limite);
             $sentence->bindParam(':hora_inicio', $hora_inicio);
@@ -338,7 +338,7 @@ class TareasColaboradores
                 AND id_tenant = :id_tenant
             ");
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $sentence->bindParam(':id', $data['id'], PDO::PARAM_INT);
+            $sentence->bindParam(':id', $data['id']);
             $sentence->bindParam(':id_estado', $data['id_estado'], PDO::PARAM_INT);
             $sentence->execute();
 
@@ -358,7 +358,7 @@ class TareasColaboradores
             $data = Flight::request()->data->getData();
 
             $check = $db->prepare("SELECT origen FROM tareas_colaboradores WHERE id = :id AND id_tenant = :id_tenant");
-            $check->bindParam(':id', $data['id'], PDO::PARAM_INT);
+            $check->bindParam(':id', $data['id']);
             $check->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $check->execute();
             $tarea = $check->fetch(PDO::FETCH_ASSOC);
@@ -369,7 +369,7 @@ class TareasColaboradores
             }
 
             $sentence = $db->prepare("DELETE FROM tareas_colaboradores WHERE id = :id AND origen = 'manual' AND id_tenant = :id_tenant");
-            $sentence->bindParam(':id', $data['id'], PDO::PARAM_INT);
+            $sentence->bindParam(':id', $data['id']);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 

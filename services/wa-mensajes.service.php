@@ -25,15 +25,17 @@ class WaMensajes
     public static function getByConversacion($id_conversacion)
     {
         $db = Flight::db();
+        /* El id es UUID: ordenar por id ya no equivale a orden cronologico.
+           Se ordena por fecha_creacion, con el id como desempate estable. */
         $sentence = $db->prepare("
             SELECT * FROM (
                 SELECT * FROM wa_mensajes 
                 WHERE id_conversacion = :id_conversacion 
                 AND id_tenant = :id_tenant
-                ORDER BY id DESC 
+                ORDER BY fecha_creacion DESC, id DESC 
                 LIMIT 30
             ) sub
-            ORDER BY id ASC
+            ORDER BY sub.fecha_creacion ASC, sub.id ASC
         ");
         $sentence->bindParam(':id_conversacion', $id_conversacion);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -47,19 +49,44 @@ class WaMensajes
     public static function getAnteriores($id_conversacion, $antes_de_id)
     {
         $db = Flight::db();
+
+        /* El id es UUID: 'id < :antes_de_id' comparaba alfabeticamente, no por antiguedad.
+           Se resuelve el cursor a su fecha_creacion y se compara por (fecha_creacion, id),
+           asi no se pierden ni se repiten mensajes creados en el mismo segundo.
+           El contrato de la ruta no cambia: el front sigue enviando un id. */
+        $ancla = $db->prepare("
+            SELECT fecha_creacion FROM wa_mensajes 
+            WHERE id = :antes_de_id AND id_tenant = :id_tenant
+        ");
+        $ancla->execute([
+            'antes_de_id' => $antes_de_id,
+            'id_tenant' => TenantContext::id()
+        ]);
+        $fecha_ancla = $ancla->fetchColumn();
+
+        if ($fecha_ancla === false) {
+            Flight::json([]);
+            return;
+        }
+
         $sentence = $db->prepare("
             SELECT * FROM (
                 SELECT * FROM wa_mensajes 
                 WHERE id_conversacion = :id_conversacion 
-                AND id < :antes_de_id
+                AND (
+                    fecha_creacion < :fecha_ancla
+                    OR (fecha_creacion = :fecha_ancla_eq AND id < :antes_de_id)
+                )
                 AND id_tenant = :id_tenant
-                ORDER BY id DESC 
+                ORDER BY fecha_creacion DESC, id DESC 
                 LIMIT 30
             ) sub
-            ORDER BY id ASC
+            ORDER BY sub.fecha_creacion ASC, sub.id ASC
         ");
         $sentence->execute([
             'id_conversacion' => $id_conversacion,
+            'fecha_ancla' => $fecha_ancla,
+            'fecha_ancla_eq' => $fecha_ancla,
             'antes_de_id' => $antes_de_id,
             'id_tenant' => TenantContext::id()
         ]);
@@ -72,15 +99,49 @@ class WaMensajes
     public static function getNuevosDesde($id_conversacion, $desde_id)
     {
         $db = Flight::db();
+
+        /* Mismo criterio que getAnteriores: el id UUID no sirve como cursor cronologico. */
+        $ancla = $db->prepare("
+            SELECT fecha_creacion FROM wa_mensajes 
+            WHERE id = :desde_id AND id_tenant = :id_tenant
+        ");
+        $ancla->execute([
+            'desde_id' => $desde_id,
+            'id_tenant' => TenantContext::id()
+        ]);
+        $fecha_ancla = $ancla->fetchColumn();
+
+        /* Si el cursor no existe (primera carga o id invalido) se devuelve la conversacion completa,
+           que es el comportamiento que tenia el codigo original cuando recibia 0. */
+        if ($fecha_ancla === false) {
+            $sentence = $db->prepare("
+                SELECT * FROM wa_mensajes 
+                WHERE id_conversacion = :id_conversacion 
+                AND id_tenant = :id_tenant
+                ORDER BY fecha_creacion ASC, id ASC
+            ");
+            $sentence->execute([
+                'id_conversacion' => $id_conversacion,
+                'id_tenant' => TenantContext::id()
+            ]);
+            Flight::json($sentence->fetchAll());
+            return;
+        }
+
         $sentence = $db->prepare("
             SELECT * FROM wa_mensajes 
             WHERE id_conversacion = :id_conversacion 
-            AND id > :desde_id
+            AND (
+                fecha_creacion > :fecha_ancla
+                OR (fecha_creacion = :fecha_ancla_eq AND id > :desde_id)
+            )
             AND id_tenant = :id_tenant
-            ORDER BY id ASC
+            ORDER BY fecha_creacion ASC, id ASC
         ");
         $sentence->execute([
             'id_conversacion' => $id_conversacion,
+            'fecha_ancla' => $fecha_ancla,
+            'fecha_ancla_eq' => $fecha_ancla,
             'desde_id' => $desde_id,
             'id_tenant' => TenantContext::id()
         ]);

@@ -454,7 +454,7 @@ class MovimientosProductos
                 WHERE id = :id AND id_tenant = :id_tenant
             ");
                 $stmt->bindParam(':id', $idMovimiento);
-                $stmt->bindParam(':usuario', $usuarioAnulado, PDO::PARAM_INT); // Especificar que es INT
+                $stmt->bindParam(':usuario', $usuarioAnulado); // usuarios.id es UUID (CHAR(36)): se envia como string
                 $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmt->execute();
 
@@ -580,7 +580,7 @@ class MovimientosProductos
                 WHERE id = :id AND id_tenant = :id_tenant
             ");
                 $stmtUpdate->bindParam(':id', $idMovimiento);
-                $stmtUpdate->bindParam(':usuario', $usuarioAnulado, PDO::PARAM_INT);
+                $stmtUpdate->bindParam(':usuario', $usuarioAnulado);
                 $stmtUpdate->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtUpdate->execute();
 
@@ -636,7 +636,7 @@ class MovimientosProductos
             WHERE id = :id AND id_tenant = :id_tenant
         ");
             $stmt->bindParam(':id', $idMovimiento);
-            $stmt->bindParam(':usuario', $usuarioAprobado, PDO::PARAM_INT); // Especificar que es INT
+            $stmt->bindParam(':usuario', $usuarioAprobado); // usuarios.id es UUID (CHAR(36)): se envia como string
             $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
 

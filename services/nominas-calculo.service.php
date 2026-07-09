@@ -380,8 +380,9 @@ class NominasCalculo
             SELECT COALESCE(SUM(ac.minutos_totales * tac.valor_hora / 60), 0) as total
             FROM actividades_colaboradores ac
             INNER JOIN tipos_actividades_colaboradores tac ON tac.id = ac.id_tipo_actividad
+            INNER JOIN categorias_actividades ca ON ca.id = tac.id_categoria AND ca.id_tenant = tac.id_tenant
             WHERE ac.id_colaborador = ?
-              AND tac.id_categoria = 2
+              AND ca.codigo = 'HORA_ADICIONAL'
               AND ac.id_estado IN (2, 5)
               AND ac.fecha_hora_inicio >= ?
               AND ac.fecha_hora_fin <= ?
@@ -398,8 +399,9 @@ class NominasCalculo
             SELECT COUNT(*) as total
             FROM actividades_colaboradores ac
             INNER JOIN tipos_actividades_colaboradores tac ON tac.id = ac.id_tipo_actividad
+            INNER JOIN categorias_actividades ca ON ca.id = tac.id_categoria AND ca.id_tenant = tac.id_tenant
             WHERE ac.id_colaborador = ?
-              AND tac.id_categoria = 3
+              AND ca.codigo = 'VACACIONES'
               AND ac.id_estado IN (2, 5)
               AND ac.fecha_hora_inicio >= ?
               AND ac.fecha_hora_fin <= ?

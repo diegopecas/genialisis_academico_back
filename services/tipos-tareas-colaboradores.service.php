@@ -24,7 +24,7 @@ class TiposTareasColaboradores
         try {
             $db = Flight::db();
             $sentence = $db->prepare("SELECT id, nombre, activo FROM tipos_tareas_colaboradores WHERE id = :id AND id_tenant = :id_tenant");
-            $sentence->bindParam(':id', $id, PDO::PARAM_INT);
+            $sentence->bindParam(':id', $id);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             Flight::json($sentence->fetchAll(PDO::FETCH_ASSOC));

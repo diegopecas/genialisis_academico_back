@@ -137,7 +137,8 @@ class WaEnviarMensaje
         $stmt = $db->prepare("
             SELECT id FROM wa_conversaciones 
             WHERE id_contacto = :contacto AND activa = 1 AND id_tenant = :id_tenant
-            ORDER BY id DESC LIMIT 1
+            /* id es UUID: ordenar por id no daba la conversacion mas reciente. */
+            ORDER BY fecha_creacion DESC, id DESC LIMIT 1
         ");
         $stmt->execute(['contacto' => $idContacto, 'id_tenant' => TenantContext::id()]);
         $conv = $stmt->fetch();

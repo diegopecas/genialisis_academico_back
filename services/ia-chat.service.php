@@ -24,7 +24,7 @@ class IaChat
 
             // 1. Verificar que el usuario esté activo
             $sentence = $db->prepare("SELECT activo FROM usuarios WHERE id_persona = :id_persona AND id_tenant = :id_tenant LIMIT 1");
-            $sentence->bindParam(':id_persona', $id_persona, PDO::PARAM_INT);
+            $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $usuario_row = $sentence->fetch(PDO::FETCH_ASSOC);
@@ -77,7 +77,7 @@ class IaChat
 
             // 7. Armar contexto según permisos del usuario
             $stmtUsuario = $db->prepare("SELECT id, super_admin FROM usuarios WHERE id_persona = :id_persona AND activo = 1 AND id_tenant = :id_tenant LIMIT 1");
-            $stmtUsuario->bindParam(':id_persona', $id_persona, PDO::PARAM_INT);
+            $stmtUsuario->bindParam(':id_persona', $id_persona);
             $stmtUsuario->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtUsuario->execute();
             $usuarioRow = $stmtUsuario->fetch(PDO::FETCH_ASSOC);
@@ -117,7 +117,7 @@ class IaChat
                 WHERE id_persona = :id_persona AND activo = 1 AND id_tenant = :id_tenant 
                 ORDER BY fecha_actualizacion DESC 
                 LIMIT 50");
-            $sentence->bindParam(':id_persona', $id_persona, PDO::PARAM_INT);
+            $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
@@ -138,7 +138,7 @@ class IaChat
                 FROM ia_chat_mensajes 
                 WHERE id_conversacion = :id_conversacion AND id_tenant = :id_tenant 
                 ORDER BY fecha ASC");
-            $sentence->bindParam(':id_conversacion', $id_conversacion, PDO::PARAM_INT);
+            $sentence->bindParam(':id_conversacion', $id_conversacion);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
@@ -156,7 +156,7 @@ class IaChat
             $db = Flight::db();
 
             $sentence = $db->prepare("UPDATE ia_chat_conversaciones SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
-            $sentence->bindParam(':id', $id_conversacion, PDO::PARAM_INT);
+            $sentence->bindParam(':id', $id_conversacion);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
@@ -266,7 +266,7 @@ class IaChat
 
             // 2. Verificar que el usuario esté activo
             $sentence = $db->prepare("SELECT activo FROM usuarios WHERE id_persona = :id_persona AND id_tenant = :id_tenant LIMIT 1");
-            $sentence->bindParam(':id_persona', $id_persona, PDO::PARAM_INT);
+            $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $usuario = $sentence->fetch(PDO::FETCH_ASSOC);
@@ -278,7 +278,7 @@ class IaChat
 
             // 3. Verificar que tenga al menos un permiso activo
             $sentence = $db->prepare("SELECT COUNT(*) as total FROM ia_chat_permisos_usuario WHERE id_persona = :id_persona AND activo = 1 AND id_tenant = :id_tenant");
-            $sentence->bindParam(':id_persona', $id_persona, PDO::PARAM_INT);
+            $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $permisos = $sentence->fetch(PDO::FETCH_ASSOC);
@@ -309,7 +309,7 @@ class IaChat
     {
         // ¿Es docente?
         $sentence = $db->prepare("SELECT id FROM docentes WHERE id_persona = :id_persona AND activo = 1 AND id_tenant = :id_tenant LIMIT 1");
-        $sentence->bindParam(':id_persona', $id_persona, PDO::PARAM_INT);
+        $sentence->bindParam(':id_persona', $id_persona);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         if ($sentence->fetch()) {
@@ -318,7 +318,7 @@ class IaChat
 
         // ¿Es colaborador (admin)?
         $sentence = $db->prepare("SELECT id FROM colaboradores WHERE id_persona = :id_persona AND activo = 1 AND id_tenant = :id_tenant LIMIT 1");
-        $sentence->bindParam(':id_persona', $id_persona, PDO::PARAM_INT);
+        $sentence->bindParam(':id_persona', $id_persona);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         if ($sentence->fetch()) {
@@ -327,7 +327,7 @@ class IaChat
 
         // ¿Es acudiente?
         $sentence = $db->prepare("SELECT id FROM acudientes WHERE id_persona = :id_persona AND activo = 1 AND id_tenant = :id_tenant LIMIT 1");
-        $sentence->bindParam(':id_persona', $id_persona, PDO::PARAM_INT);
+        $sentence->bindParam(':id_persona', $id_persona);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         if ($sentence->fetch()) {
@@ -340,7 +340,7 @@ class IaChat
     private static function obtenerNombrePersona($db, $id_persona)
     {
         $sentence = $db->prepare("SELECT CONCAT_WS(' ', primer_nombre, primer_apellido) as nombre FROM personas WHERE id = :id AND id_tenant = :id_tenant");
-        $sentence->bindParam(':id', $id_persona, PDO::PARAM_INT);
+        $sentence->bindParam(':id', $id_persona);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $row = $sentence->fetch(PDO::FETCH_ASSOC);
@@ -355,7 +355,7 @@ class IaChat
         $id = Uuid::generar();
         $sentence->bindValue(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-        $sentence->bindParam(':id_persona', $id_persona, PDO::PARAM_INT);
+        $sentence->bindParam(':id_persona', $id_persona);
         $sentence->bindParam(':rol', $rol);
         $sentence->bindParam(':titulo', $titulo);
         $sentence->execute();
@@ -369,7 +369,7 @@ class IaChat
         $idMsg = Uuid::generar();
         $sentence->bindValue(':id', $idMsg);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-        $sentence->bindParam(':id_conversacion', $id_conversacion, PDO::PARAM_INT);
+        $sentence->bindParam(':id_conversacion', $id_conversacion);
         $sentence->bindParam(':rol_mensaje', $rol_mensaje);
         $sentence->bindParam(':mensaje', $mensaje);
         $sentence->bindParam(':proveedor', $proveedor);
@@ -380,7 +380,7 @@ class IaChat
     private static function obtenerHistorialReciente($db, $id_conversacion, $limite = 10)
     {
         $sentence = $db->prepare("SELECT rol_mensaje, mensaje FROM ia_chat_mensajes WHERE id_conversacion = :id_conversacion AND id_tenant = :id_tenant ORDER BY fecha DESC LIMIT :limite");
-        $sentence->bindParam(':id_conversacion', $id_conversacion, PDO::PARAM_INT);
+        $sentence->bindParam(':id_conversacion', $id_conversacion);
         $sentence->bindParam(':limite', $limite, PDO::PARAM_INT);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
@@ -478,7 +478,7 @@ class IaChat
                     WHERE ru.id_usuario = :id_usuario
                     AND ru.id_tenant = :id_tenant
                 ");
-                $stmtPermisos->bindParam(':id_usuario', $id_usuario, PDO::PARAM_INT);
+                $stmtPermisos->bindParam(':id_usuario', $id_usuario);
                 $stmtPermisos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtPermisos->execute();
                 $codigos = $stmtPermisos->fetchAll(PDO::FETCH_COLUMN);
@@ -536,7 +536,7 @@ class IaChat
             AND t.activo = 1
             AND p.id_tenant = :id_tenant
         ");
-        $sentence->bindParam(':id_persona', $id_persona, PDO::PARAM_INT);
+        $sentence->bindParam(':id_persona', $id_persona);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         return $sentence->fetchAll(PDO::FETCH_ASSOC);
@@ -556,7 +556,7 @@ class IaChat
             FROM acudientes a 
             WHERE a.id_persona = :id_persona AND a.activo = 1 AND a.id_tenant = :id_tenant
         ");
-        $sentence->bindParam(':id_persona', $id_persona, PDO::PARAM_INT);
+        $sentence->bindParam(':id_persona', $id_persona);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $hijos = $sentence->fetchAll(PDO::FETCH_COLUMN);
@@ -570,7 +570,7 @@ class IaChat
             INNER JOIN estudiantes_x_grupos eg ON dg.id_grupo = eg.id_grupo AND eg.activo = 1
             WHERE d.id_persona = :id_persona AND d.activo = 1 AND d.id_tenant = :id_tenant
         ");
-        $sentence->bindParam(':id_persona', $id_persona, PDO::PARAM_INT);
+        $sentence->bindParam(':id_persona', $id_persona);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $grupo = $sentence->fetchAll(PDO::FETCH_COLUMN);
@@ -578,7 +578,7 @@ class IaChat
 
         // Como admin/colaborador: todos los estudiantes activos
         $sentence = $db->prepare("SELECT id FROM colaboradores WHERE id_persona = :id_persona AND activo = 1 AND id_tenant = :id_tenant LIMIT 1");
-        $sentence->bindParam(':id_persona', $id_persona, PDO::PARAM_INT);
+        $sentence->bindParam(':id_persona', $id_persona);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         if ($sentence->fetch()) {
@@ -607,7 +607,7 @@ class IaChat
             INNER JOIN docentes_x_grupos dg ON d.id = dg.id_docente AND dg.activo = 1
             WHERE d.id_persona = :id_persona AND d.activo = 1 AND d.id_tenant = :id_tenant
         ");
-        $sentence->bindParam(':id_persona', $id_persona, PDO::PARAM_INT);
+        $sentence->bindParam(':id_persona', $id_persona);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         return $sentence->fetchAll(PDO::FETCH_COLUMN);

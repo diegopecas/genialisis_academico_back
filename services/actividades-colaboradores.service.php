@@ -111,7 +111,7 @@ class ActividadesColaboradores
             INNER JOIN tipos_actividades_colaboradores tac ON ac.id_tipo_actividad = tac.id
             INNER JOIN categorias_actividades ca ON tac.id_categoria = ca.id
             WHERE ac.id_colaborador = :id_colaborador 
-            AND ca.id = 1
+            AND ca.codigo = 'PERMISO'
             AND ac.id_estado = 2
             AND ac.id_tenant = :id_tenant
             AND ac.id NOT IN (SELECT id_actividad_colaborador FROM contabilizaciones_detalle WHERE id_actividad_colaborador IS NOT NULL)");
@@ -126,7 +126,7 @@ class ActividadesColaboradores
             INNER JOIN tipos_actividades_colaboradores tac ON ac.id_tipo_actividad = tac.id
             INNER JOIN categorias_actividades ca ON tac.id_categoria = ca.id
             WHERE ac.id_colaborador = :id_colaborador 
-            AND ca.id = 2
+            AND ca.codigo = 'HORA_ADICIONAL'
             AND ac.id_estado = 2
             AND ac.id_tenant = :id_tenant
             AND ac.id NOT IN (SELECT id_actividad_colaborador FROM contabilizaciones_detalle WHERE id_actividad_colaborador IS NOT NULL)");
@@ -392,19 +392,19 @@ class ActividadesColaboradores
             CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', 
                    IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) as nombre_colaborador,
             SUM(CASE 
-                WHEN ca.id = 1 THEN (ac.minutos_totales - COALESCE(aplicados.total, 0))
+                WHEN ca.codigo = 'PERMISO' THEN (ac.minutos_totales - COALESCE(aplicados.total, 0))
                 ELSE 0 
             END) as minutos_permisos,
             SUM(CASE 
-                WHEN ca.id = 2 THEN (ac.minutos_totales - COALESCE(aplicados.total, 0))
+                WHEN ca.codigo = 'HORA_ADICIONAL' THEN (ac.minutos_totales - COALESCE(aplicados.total, 0))
                 ELSE 0 
             END) as minutos_horas,
             SUM(CASE 
-                WHEN ca.id = 2 THEN ((ac.minutos_totales - COALESCE(aplicados.total, 0)) / 60.0 * tac.valor_hora)
+                WHEN ca.codigo = 'HORA_ADICIONAL' THEN ((ac.minutos_totales - COALESCE(aplicados.total, 0)) / 60.0 * tac.valor_hora)
                 ELSE 0 
             END) as valor_horas,
-            COUNT(DISTINCT CASE WHEN ca.id = 1 THEN ac.id END) as cantidad_permisos,
-            COUNT(DISTINCT CASE WHEN ca.id = 2 THEN ac.id END) as cantidad_horas
+            COUNT(DISTINCT CASE WHEN ca.codigo = 'PERMISO' THEN ac.id END) as cantidad_permisos,
+            COUNT(DISTINCT CASE WHEN ca.codigo = 'HORA_ADICIONAL' THEN ac.id END) as cantidad_horas
             FROM colaboradores c
             INNER JOIN personas p ON c.id_persona = p.id
             INNER JOIN actividades_colaboradores ac ON ac.id_colaborador = c.id

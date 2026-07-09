@@ -642,8 +642,8 @@ class Calificaciones
             }
 
             usort($resultado_final, function ($a, $b) {
-                if ($a['orden'] != $b['orden']) {
-                    return $a['orden'] - $b['orden'];
+                if ((int)$a['orden'] != (int)$b['orden']) {
+                    return (int)$a['orden'] - (int)$b['orden'];
                 }
 
                 $cmp = strcmp($a['nombre_completo_estudiante'], $b['nombre_completo_estudiante']);
@@ -656,7 +656,9 @@ class Calificaciones
                     return $cmp;
                 }
 
-                return $a['id_tarea_x_sprint'] - $b['id_tarea_x_sprint'];
+                /* id_tarea_x_sprint es UUID (CHAR(36)) tras la migracion INT -> UUID.
+                   Restar dos strings lanza TypeError en PHP 8; se compara como texto. */
+                return strcmp($a['id_tarea_x_sprint'], $b['id_tarea_x_sprint']);
             });
 
             Flight::json($resultado_final);

@@ -181,11 +181,21 @@ class TrackingBle
             LEFT JOIN (
                 SELECT t1.id_beacon, t1.id_area_fisica, t1.rssi, t1.fecha_evento, t1.id_tipo_evento
                 FROM tracking_ble t1
+                /* MAX(id) devolvia el UUID mayor alfabeticamente, no el evento mas reciente.
+                   Se ancla por MAX(fecha_evento) y se desempata por el mayor id de esa fecha. */
                 INNER JOIN (
-                    SELECT id_beacon, MAX(id) as max_id
+                    SELECT id_beacon, MAX(fecha_evento) AS max_fecha
                     FROM tracking_ble
                     GROUP BY id_beacon
-                ) t2 ON t1.id = t2.max_id
+                ) t2 ON t1.id_beacon = t2.id_beacon
+                    AND t1.fecha_evento = t2.max_fecha
+                INNER JOIN (
+                    SELECT id_beacon, fecha_evento, MAX(id) AS max_id
+                    FROM tracking_ble
+                    GROUP BY id_beacon, fecha_evento
+                ) t3 ON t1.id_beacon = t3.id_beacon
+                    AND t1.fecha_evento = t3.fecha_evento
+                    AND t1.id = t3.max_id
             ) ultimo ON b.id = ultimo.id_beacon
             LEFT JOIN areas_fisicas af ON ultimo.id_area_fisica = af.id
             LEFT JOIN tipos_eventos_tracking tet ON ultimo.id_tipo_evento = tet.id
@@ -219,11 +229,21 @@ class TrackingBle
             INNER JOIN (
                 SELECT t1.id_beacon, t1.id_area_fisica, t1.rssi, t1.fecha_evento, t1.id_tipo_evento
                 FROM tracking_ble t1
+                /* MAX(id) devolvia el UUID mayor alfabeticamente, no el evento mas reciente.
+                   Se ancla por MAX(fecha_evento) y se desempata por el mayor id de esa fecha. */
                 INNER JOIN (
-                    SELECT id_beacon, MAX(id) as max_id
+                    SELECT id_beacon, MAX(fecha_evento) AS max_fecha
                     FROM tracking_ble
                     GROUP BY id_beacon
-                ) t2 ON t1.id = t2.max_id
+                ) t2 ON t1.id_beacon = t2.id_beacon
+                    AND t1.fecha_evento = t2.max_fecha
+                INNER JOIN (
+                    SELECT id_beacon, fecha_evento, MAX(id) AS max_id
+                    FROM tracking_ble
+                    GROUP BY id_beacon, fecha_evento
+                ) t3 ON t1.id_beacon = t3.id_beacon
+                    AND t1.fecha_evento = t3.fecha_evento
+                    AND t1.id = t3.max_id
             ) ultimo ON b.id = ultimo.id_beacon
             LEFT JOIN tipos_eventos_tracking tet ON ultimo.id_tipo_evento = tet.id
             WHERE ultimo.id_area_fisica = :id_area 
@@ -286,11 +306,21 @@ class TrackingBle
             LEFT JOIN (
                 SELECT t1.id_beacon, t1.id_area_fisica, tet.nombre as evento
                 FROM tracking_ble t1
+                /* MAX(id) devolvia el UUID mayor alfabeticamente, no el evento mas reciente.
+                   Se ancla por MAX(fecha_evento) y se desempata por el mayor id de esa fecha. */
                 INNER JOIN (
-                    SELECT id_beacon, MAX(id) as max_id
+                    SELECT id_beacon, MAX(fecha_evento) AS max_fecha
                     FROM tracking_ble
                     GROUP BY id_beacon
-                ) t2 ON t1.id = t2.max_id
+                ) t2 ON t1.id_beacon = t2.id_beacon
+                    AND t1.fecha_evento = t2.max_fecha
+                INNER JOIN (
+                    SELECT id_beacon, fecha_evento, MAX(id) AS max_id
+                    FROM tracking_ble
+                    GROUP BY id_beacon, fecha_evento
+                ) t3 ON t1.id_beacon = t3.id_beacon
+                    AND t1.fecha_evento = t3.fecha_evento
+                    AND t1.id = t3.max_id
                 INNER JOIN tipos_eventos_tracking tet ON t1.id_tipo_evento = tet.id
                 INNER JOIN beacons_ble b ON t1.id_beacon = b.id AND b.activo = 1
                 WHERE tet.nombre != 'SALIDA'

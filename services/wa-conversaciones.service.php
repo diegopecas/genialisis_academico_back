@@ -54,14 +54,24 @@ class WaConversaciones
             FROM wa_conversaciones wconv
             INNER JOIN wa_contactos wc ON wconv.id_contacto = wc.id
             LEFT JOIN personas p ON wc.id_persona = p.id
+            /* MAX(id) devolvia el UUID mayor alfabeticamente, no el mensaje mas reciente.
+               Se ancla por MAX(fecha_creacion) y se desempata por el mayor id de esa fecha. */
             LEFT JOIN (
                 SELECT wm1.id_conversacion, wm1.contenido, wm1.tipo, wm1.direccion, wm1.fecha_creacion, wm1.estado
                 FROM wa_mensajes wm1
                 INNER JOIN (
-                    SELECT id_conversacion, MAX(id) AS max_id
+                    SELECT id_conversacion, MAX(fecha_creacion) AS max_fecha
                     FROM wa_mensajes
                     GROUP BY id_conversacion
-                ) wm2 ON wm1.id = wm2.max_id
+                ) wm2 ON wm1.id_conversacion = wm2.id_conversacion
+                     AND wm1.fecha_creacion = wm2.max_fecha
+                INNER JOIN (
+                    SELECT wmx.id_conversacion, wmx.fecha_creacion, MAX(wmx.id) AS max_id
+                    FROM wa_mensajes wmx
+                    GROUP BY wmx.id_conversacion, wmx.fecha_creacion
+                ) wm3 ON wm1.id_conversacion = wm3.id_conversacion
+                     AND wm1.fecha_creacion = wm3.fecha_creacion
+                     AND wm1.id = wm3.max_id
             ) ult ON wconv.id = ult.id_conversacion
             LEFT JOIN (
                 SELECT id_conversacion, COUNT(*) AS no_leidos
@@ -178,7 +188,8 @@ class WaConversaciones
             WHERE id_contacto = :contacto 
             AND activa = 1
             AND id_tenant = :id_tenant
-            ORDER BY id DESC 
+            /* id es UUID: ordenar por id no daba la conversacion mas reciente. */
+            ORDER BY fecha_creacion DESC, id DESC 
             LIMIT 1
         ");
         $sentence->bindParam(':contacto', $id_contacto);
