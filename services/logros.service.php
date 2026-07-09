@@ -222,14 +222,19 @@ class Logros
     public static function getByGrupo($id_grupo)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT l.*, g.nombre as nombre_grupo, aa.nombre as nombre_area_academica
+        // La relación grupo->logro pasa por grados_x_grupo (logros no tiene id_grupo).
+        $sentence = $db->prepare("SELECT DISTINCT l.*, g.nombre as nombre_grupo, aa.nombre as nombre_area_academica
                                   FROM logros l
-                                  LEFT JOIN grupos g ON l.id_grupo = g.id
+                                  INNER JOIN grados_x_grupo gxg ON l.id_grado = gxg.id_grado
+                                  INNER JOIN grupos g ON gxg.id_grupo = g.id
                                   LEFT JOIN areas_academicas aa ON l.id_area_academica = aa.id
-                                  WHERE l.id_grupo = :id_grupo AND l.id_tenant = :id_tenant
-                                  ORDER BY l.orden");
+                                  WHERE gxg.id_grupo = :id_grupo
+                                  AND gxg.id_tenant = :id_tenant_gxg
+                                  AND l.id_tenant = :id_tenant_l
+                                  ORDER BY l.nombre");
         $sentence->bindParam(':id_grupo', $id_grupo);
-        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_gxg', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_l', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
@@ -243,7 +248,7 @@ class Logros
                                   LEFT JOIN grados gr ON l.id_grado = gr.id
                                   LEFT JOIN areas_academicas aa ON l.id_area_academica = aa.id
                                   WHERE l.id_area_academica = :id_area_academica AND l.id_tenant = :id_tenant
-                                  ORDER BY l.orden");
+                                  ORDER BY l.nombre");
         $sentence->bindParam(':id_area_academica', $id_area_academica);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
@@ -254,16 +259,20 @@ class Logros
     public static function getByGrupoAndArea($id_grupo, $id_area_academica)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT l.*, g.nombre as nombre_grupo, aa.nombre as nombre_area_academica
+        // La relación grupo->logro pasa por grados_x_grupo (logros no tiene id_grupo).
+        $sentence = $db->prepare("SELECT DISTINCT l.*, g.nombre as nombre_grupo, aa.nombre as nombre_area_academica
                                   FROM logros l
-                                  LEFT JOIN grupos g ON l.id_grupo = g.id
+                                  INNER JOIN grados_x_grupo gxg ON l.id_grado = gxg.id_grado
+                                  INNER JOIN grupos g ON gxg.id_grupo = g.id
                                   LEFT JOIN areas_academicas aa ON l.id_area_academica = aa.id
-                                  WHERE l.id_grupo = :id_grupo 
+                                  WHERE gxg.id_grupo = :id_grupo 
                                   AND l.id_area_academica = :id_area_academica
-                                  AND l.id_tenant = :id_tenant
-                                  ORDER BY l.orden");
+                                  AND gxg.id_tenant = :id_tenant_gxg
+                                  AND l.id_tenant = :id_tenant_l
+                                  ORDER BY l.nombre");
         $sentence->bindParam(':id_grupo', $id_grupo);
-        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_gxg', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_l', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_area_academica', $id_area_academica);
         $sentence->execute();
         $response = $sentence->fetchAll();
@@ -291,11 +300,15 @@ class Logros
             LEFT JOIN esferas_desarrollo ed ON l.id_esfera_desarrollo = ed.id
             WHERE gxg.id_grupo = :id_grupo
             AND l.id_area_academica = :id_area_academica
-            AND l.id_tenant = :id_tenant
+            AND l.id_tenant = :id_tenant_l
+            AND gxg.id_tenant = :id_tenant_gxg
+            AND il.id_tenant = :id_tenant_il
             ORDER BY l.nombre, il.nombre
         ");
         $sentence->bindParam(':id_grupo', $id_grupo);
-        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_l', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_gxg', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_il', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_area_academica', $id_area_academica);
         $sentence->execute();
         $rows = $sentence->fetchAll(PDO::FETCH_ASSOC);

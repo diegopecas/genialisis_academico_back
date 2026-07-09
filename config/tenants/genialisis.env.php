@@ -2,7 +2,7 @@
 
 define('DB_HOST', '132.148.181.209');
 define('DB_NAME', 'g_genialisis_prod');
-define('DB_USERNAME', 'usr_g_genialisis_prod');
+define('DB_USERNAME', 'usr_g_genialisis_qa');
 define('DB_PASSWORD', 'u^789,Cjf$h1?)&]');
 
 define('DB_CHARSET', 'utf8mb4');

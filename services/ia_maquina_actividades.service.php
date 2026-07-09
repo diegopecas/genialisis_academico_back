@@ -228,6 +228,13 @@ PROMPT;
                     }
                 }
                 $act['indicadores'] = $indicadoresEnriquecidos;
+                // La IA puede devolver ids inventados o truncados. Solo se dejan pasar los
+                // que existen realmente entre los indicadores del grupo/area consultados.
+                $act['indicadores_ids'] = array_column($indicadoresEnriquecidos, 'id');
+                // id_ambiente e id_tipo_actividad_academica tambien son llaves foraneas:
+                // si la IA los inventa se anulan y los resuelve el grabado (tipo por defecto).
+                $act['id_ambiente'] = self::idValidoONull($db, 'ambientes', $act['id_ambiente'] ?? null);
+                $act['id_tipo_actividad_academica'] = self::idValidoONull($db, 'tipos_actividades_academicas', $act['id_tipo_actividad_academica'] ?? null);
             }
             unset($act);
 
@@ -270,6 +277,15 @@ PROMPT;
                 return;
             }
 
+            $errores = self::validarCatalogosActividades($db, $data['actividades']);
+            if (!empty($errores)) {
+                error_log("grabarActividades: catalogos invalidos: " . json_encode($errores));
+                Flight::json(array_merge([
+                    "error" => "Hay datos que ya no existen (indicadores, ambiente o tipo de actividad). Recargue la pantalla y vuelva a seleccionarlos."
+                ], $errores), 400);
+                return;
+            }
+
             $db->beginTransaction();
 
             $resultados = [];
@@ -293,6 +309,10 @@ PROMPT;
 
                 $idTipo = !empty($act['id_tipo_actividad_academica']) ? $act['id_tipo_actividad_academica'] : $idTipoDefault;
                 $idAmbiente = !empty($act['id_ambiente']) ? $act['id_ambiente'] : null;
+
+                if (empty($idTipo)) {
+                    throw new Exception("No se pudo determinar el tipo de actividad y no existe el tipo por defecto (GRUPAL)");
+                }
 
                 $idActividad = Uuid::generar();
                 $stmtActividad = $db->prepare("
@@ -385,6 +405,116 @@ PROMPT;
             error_log("Error en IaMaquinaActividades::grabarActividades: " . $e->getMessage());
             Flight::json(["error" => "Error al grabar actividades: " . $e->getMessage()], 500);
         }
+    }
+
+    /** Tablas sobre las que se permite verificar existencia de ids. */
+    private static $catalogosVerificables = [
+        'indicadores_logros',
+        'ambientes',
+        'tipos_actividades_academicas'
+    ];
+
+    /**
+     * De la lista de ids recibida, devuelve solo los que existen en la tabla indicada
+     * dentro del tenant activo. La tabla debe estar en la lista blanca.
+     */
+    private static function idsExistentes($db, $tabla, array $ids)
+    {
+        if (!in_array($tabla, self::$catalogosVerificables, true)) {
+            throw new Exception("Catalogo no verificable: $tabla");
+        }
+
+        $ids = array_values(array_unique(array_filter(
+            array_map('strval', $ids),
+            function ($v) { return $v !== ''; }
+        )));
+
+        if (empty($ids)) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $db->prepare("SELECT id FROM $tabla WHERE id IN ($placeholders) AND id_tenant = ?");
+        $posicion = 1;
+        foreach ($ids as $id) {
+            $stmt->bindValue($posicion++, $id);
+        }
+        $stmt->bindValue($posicion, TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+
+        return array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'id');
+    }
+
+    /**
+     * Devuelve el id si existe en el catalogo dentro del tenant, o null si no. Se usa
+     * para limpiar los ids que devuelve la IA antes de mostrarlos al usuario.
+     */
+    private static function idValidoONull($db, $tabla, $id)
+    {
+        if (empty($id)) {
+            return null;
+        }
+
+        $encontrados = self::idsExistentes($db, $tabla, [$id]);
+
+        return !empty($encontrados) ? $encontrados[0] : null;
+    }
+
+    /**
+     * Devuelve los ids del payload que NO existen en el catalogo indicado para el tenant
+     * activo. Se usa para rechazar la grabacion antes de tocar la BD, en vez de dejar que
+     * reviente la llave foranea.
+     */
+    private static function idsInexistentes($db, $tabla, array $ids)
+    {
+        $ids = array_values(array_unique(array_filter(
+            array_map('strval', $ids),
+            function ($v) { return $v !== ''; }
+        )));
+
+        return array_values(array_diff($ids, self::idsExistentes($db, $tabla, $ids)));
+    }
+
+    /**
+     * Valida ids de indicadores, ambientes y tipos de actividad de un payload de
+     * actividades. Devuelve un arreglo de errores vacio si todo existe.
+     */
+    private static function validarCatalogosActividades($db, array $actividades)
+    {
+        $idsIndicadores = [];
+        $idsAmbientes = [];
+        $idsTipos = [];
+
+        foreach ($actividades as $act) {
+            foreach (($act['indicadores_ids'] ?? []) as $idIndicador) {
+                $idsIndicadores[] = $idIndicador;
+            }
+            if (!empty($act['id_ambiente'])) {
+                $idsAmbientes[] = $act['id_ambiente'];
+            }
+            if (!empty($act['id_tipo_actividad_academica'])) {
+                $idsTipos[] = $act['id_tipo_actividad_academica'];
+            }
+        }
+
+        $errores = [];
+
+        $indicadoresInvalidos = self::idsInexistentes($db, 'indicadores_logros', $idsIndicadores);
+        if (!empty($indicadoresInvalidos)) {
+            $errores['indicadores_invalidos'] = $indicadoresInvalidos;
+        }
+
+        $ambientesInvalidos = self::idsInexistentes($db, 'ambientes', $idsAmbientes);
+        if (!empty($ambientesInvalidos)) {
+            $errores['ambientes_invalidos'] = $ambientesInvalidos;
+        }
+
+        $tiposInvalidos = self::idsInexistentes($db, 'tipos_actividades_academicas', $idsTipos);
+        if (!empty($tiposInvalidos)) {
+            $errores['tipos_actividad_invalidos'] = $tiposInvalidos;
+        }
+
+        return $errores;
     }
 
     private static function obtenerConfiguracion($db)
@@ -561,6 +691,11 @@ PROMPT;
             foreach ($logrosIndicadores as $li) {
                 $indicadoresTexto .= "INDICADOR ID:{$li['indicador_id']} \"{$li['indicador_nombre']}\" (Logro: {$li['logro_nombre']})\n";
             }
+            // Sin indicadores no se le pide al modelo que elija ninguno: pedirle un campo
+            // obligatorio sin insumos lo lleva a inventarse ids.
+            if ($indicadoresTexto === "") {
+                $indicadoresTexto = "Ninguno. Devuelve indicadores_ids como lista vacia [].";
+            }
 
             $ambientesTexto = '';
             if (!empty($ambientes)) {
@@ -657,6 +792,12 @@ PROMPT;
                 }
             }
             $sugerencia['indicadores'] = $indicadoresEnriquecidos;
+            // La IA puede devolver ids inventados o truncados. Solo se dejan pasar los
+            // que existen realmente entre los indicadores del grupo/area consultados.
+            $sugerencia['indicadores_ids'] = array_column($indicadoresEnriquecidos, 'id');
+            // id_ambiente e id_tipo_actividad_academica tambien son llaves foraneas.
+            $sugerencia['id_ambiente'] = self::idValidoONull($db, 'ambientes', $sugerencia['id_ambiente'] ?? null);
+            $sugerencia['id_tipo_actividad_academica'] = self::idValidoONull($db, 'tipos_actividades_academicas', $sugerencia['id_tipo_actividad_academica'] ?? null);
 
             Flight::json([
                 "success" => true,
@@ -1046,9 +1187,9 @@ PROMPT;
                     'nivel_uno' => $act['nivel_uno'] ?? '',
                     'nivel_dos' => $act['nivel_dos'] ?? '',
                     'minutos_duracion' => $act['minutos_duracion'] ?? 45,
-                    'id_tipo_actividad_academica' => !empty($act['id_tipo_actividad_academica']) ? $act['id_tipo_actividad_academica'] : ($id_tipo_actividad ? $id_tipo_actividad : null),
+                    'id_tipo_actividad_academica' => self::idValidoONull($db, 'tipos_actividades_academicas', !empty($act['id_tipo_actividad_academica']) ? $act['id_tipo_actividad_academica'] : $id_tipo_actividad),
                     'materiales_sugeridos' => $act['materiales_sugeridos'] ?? [],
-                    'id_ambiente' => !empty($act['id_ambiente']) ? $act['id_ambiente'] : null,
+                    'id_ambiente' => self::idValidoONull($db, 'ambientes', $act['id_ambiente'] ?? null),
                     'indicadores_ids' => $idsIndicadores,
                     'indicadores' => $indicadoresEnriquecidos
                 ];
@@ -1091,6 +1232,15 @@ PROMPT;
                 return;
             }
 
+            $errores = self::validarCatalogosActividades($db, $data['actividades']);
+            if (!empty($errores)) {
+                error_log("grabarActividadesEvaluacion: catalogos invalidos: " . json_encode($errores));
+                Flight::json(array_merge([
+                    "error" => "Hay datos que ya no existen (indicadores, ambiente o tipo de actividad). Recargue la pantalla y vuelva a seleccionarlos."
+                ], $errores), 400);
+                return;
+            }
+
             $db->beginTransaction();
 
             // Obtener el orden_ejecucion máximo actual en el sprint para continuar la numeración
@@ -1127,6 +1277,10 @@ PROMPT;
 
                 $idTipo = !empty($act['id_tipo_actividad_academica']) ? $act['id_tipo_actividad_academica'] : $idTipoDefault;
                 $idAmbiente = !empty($act['id_ambiente']) ? $act['id_ambiente'] : null;
+
+                if (empty($idTipo)) {
+                    throw new Exception("No se pudo determinar el tipo de actividad y no existe el tipo por defecto (GRUPAL)");
+                }
 
                 // 1. Insertar actividad académica
                 $idActividad = Uuid::generar();

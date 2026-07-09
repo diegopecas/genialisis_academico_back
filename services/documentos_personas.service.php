@@ -273,7 +273,9 @@ class DocumentosPersonas
             $db = Flight::db();
 
             $id_persona = Flight::request()->data['id_persona'];
-            $id_tipo_documento = Flight::request()->data['id_tipo_documento'];
+            $id_tipo_documento = isset(Flight::request()->data['id_tipo_documento'])
+                ? Flight::request()->data['id_tipo_documento']
+                : null;
             // Opcional: código del tipo de documento. Si viene, tiene prioridad sobre
             // el id (el código es estable entre tenants y migraciones). Se resuelve su UUID.
             $codigo_tipo_documento = isset(Flight::request()->data['codigo_tipo_documento'])
@@ -311,6 +313,27 @@ class DocumentosPersonas
                 }
 
                 $id_tipo_documento = $tipoDocumento['id'];
+            } else {
+                // Sin código: se valida que el id recibido exista en el tenant antes de
+                // insertar, para responder 400 en vez de fallar por la llave foránea.
+                if ($id_tipo_documento === null || $id_tipo_documento === '') {
+                    Flight::json(array('error' => 'Debe enviar id_tipo_documento o codigo_tipo_documento'), 400);
+                    return;
+                }
+
+                $stmtTipoId = $db->prepare("
+                    SELECT id FROM tipos_documentos 
+                    WHERE id = :id AND id_tenant = :id_tenant 
+                    LIMIT 1
+                ");
+                $stmtTipoId->bindParam(':id', $id_tipo_documento);
+                $stmtTipoId->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmtTipoId->execute();
+
+                if (!$stmtTipoId->fetch()) {
+                    Flight::json(array('error' => 'Tipo de documento no encontrado para el id: ' . $id_tipo_documento), 400);
+                    return;
+                }
             }
 
             // Validar que se subió archivo
