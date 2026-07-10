@@ -4,7 +4,7 @@ class Acudientes
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo FROM acudientes WHERE id_tenant = :id_tenant");
+        $sentence = $db->prepare("SELECT id, id_estudiante, id_persona, id_tipo_acudiente, empresa, cargo, telefono_oficina, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo FROM acudientes WHERE id_tenant = :id_tenant");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
@@ -14,7 +14,7 @@ class Acudientes
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo FROM acudientes WHERE id = :id AND id_tenant = :id_tenant");
+        $sentence = $db->prepare("SELECT id, id_estudiante, id_persona, id_tipo_acudiente, empresa, cargo, telefono_oficina, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo FROM acudientes WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
@@ -66,19 +66,25 @@ class Acudientes
             $id_estudiante = Flight::request()->data['id_estudiante'];
             $id_persona = Flight::request()->data['id_persona'];
             $id_tipo_acudiente = Flight::request()->data['id_tipo_acudiente'];
+            $empresa = Flight::request()->data['empresa'] ?? null;
+            $cargo = Flight::request()->data['cargo'] ?? null;
+            $telefono_oficina = Flight::request()->data['telefono_oficina'] ?? null;
             $es_responsable_pago = Flight::request()->data['es_responsable_pago'];
             $autorizado_recoger = Flight::request()->data['autorizado_recoger'];
             $autorizado_sistema = Flight::request()->data['autorizado_sistema'];
             $activo = Flight::request()->data['activo'];
 
             $idNew = Uuid::generar();
-            $sentence = $db->prepare("INSERT INTO acudientes(id, id_tenant, id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo) 
-                                 VALUES (:id, :id_tenant, :id_estudiante, :id_persona, :id_tipo_acudiente, :es_responsable_pago, :autorizado_recoger, :autorizado_sistema, :activo)");
+            $sentence = $db->prepare("INSERT INTO acudientes(id, id_tenant, id_estudiante, id_persona, id_tipo_acudiente, empresa, cargo, telefono_oficina, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo) 
+                                 VALUES (:id, :id_tenant, :id_estudiante, :id_persona, :id_tipo_acudiente, :empresa, :cargo, :telefono_oficina, :es_responsable_pago, :autorizado_recoger, :autorizado_sistema, :activo)");
             $sentence->bindValue(':id', $idNew);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_estudiante', $id_estudiante);
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindParam(':id_tipo_acudiente', $id_tipo_acudiente);
+            $sentence->bindParam(':empresa', $empresa);
+            $sentence->bindParam(':cargo', $cargo);
+            $sentence->bindParam(':telefono_oficina', $telefono_oficina);
             $sentence->bindParam(':es_responsable_pago', $es_responsable_pago);
             $sentence->bindParam(':autorizado_recoger', $autorizado_recoger);
             $sentence->bindParam(':autorizado_sistema', $autorizado_sistema);
@@ -108,6 +114,9 @@ class Acudientes
             $id_estudiante = Flight::request()->data['id_estudiante'];
             $id_persona = Flight::request()->data['id_persona'];
             $id_tipo_acudiente = Flight::request()->data['id_tipo_acudiente'];
+            $empresa = Flight::request()->data['empresa'] ?? null;
+            $cargo = Flight::request()->data['cargo'] ?? null;
+            $telefono_oficina = Flight::request()->data['telefono_oficina'] ?? null;
             $es_responsable_pago = Flight::request()->data['es_responsable_pago'];
             $autorizado_recoger = Flight::request()->data['autorizado_recoger'];
             $autorizado_sistema = Flight::request()->data['autorizado_sistema'];
@@ -117,6 +126,9 @@ class Acudientes
                                 id_estudiante = :id_estudiante, 
                                 id_persona = :id_persona, 
                                 id_tipo_acudiente = :id_tipo_acudiente, 
+                                empresa = :empresa,
+                                cargo = :cargo,
+                                telefono_oficina = :telefono_oficina,
                                 es_responsable_pago = :es_responsable_pago,
                                 autorizado_recoger = :autorizado_recoger,
                                 autorizado_sistema = :autorizado_sistema,
@@ -127,6 +139,9 @@ class Acudientes
             $sentence->bindParam(':id_estudiante', $id_estudiante);
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindParam(':id_tipo_acudiente', $id_tipo_acudiente);
+            $sentence->bindParam(':empresa', $empresa);
+            $sentence->bindParam(':cargo', $cargo);
+            $sentence->bindParam(':telefono_oficina', $telefono_oficina);
             $sentence->bindParam(':es_responsable_pago', $es_responsable_pago);
             $sentence->bindParam(':autorizado_recoger', $autorizado_recoger);
             $sentence->bindParam(':autorizado_sistema', $autorizado_sistema);
