@@ -23,6 +23,10 @@ class JWTService
     // 24 horas = 86400 segundos
     private static $expireTime = 86400;
 
+    // Tiempo de expiración del token efímero de descarga (en segundos)
+    // 5 minutos = 300 segundos. Cubre el render de <img> y reabrir el modal.
+    private static $expireTimeDescarga = 300;
+
     /**
      * Obtiene la clave secreta para firmar/validar tokens desde la
      * configuracion no versionada (config/jwt.env.php). Falla cerrado: si la
@@ -258,5 +262,98 @@ class JWTService
         }
 
         return $userData;
+    }
+
+    /**
+     * Genera un token efímero (5 min) para descargar UN documento.
+     * No es un token de sesion: solo sirve para el documento y tenant
+     * indicados, y solo lo acepta la ruta de descarga (que se valida a si
+     * misma). Asi, aunque se filtre en la URL, no da acceso a nada mas.
+     *
+     * @param string $idDocumento id del documento autorizado
+     * @param string $tenant      codigo del tenant
+     * @return string Token JWT efímero
+     */
+    public static function generarTokenDescarga($idDocumento, $tenant)
+    {
+        $issuedAt = time();
+
+        $payload = [
+            'iat' => $issuedAt,
+            'exp' => $issuedAt + self::$expireTimeDescarga,
+            'data' => [
+                'tipo'   => 'descarga',
+                'doc'    => $idDocumento,
+                'tenant' => $tenant
+            ]
+        ];
+
+        return JWT::encode($payload, self::getSecretKey(), self::$algorithm);
+    }
+
+    /**
+     * Valida un token efímero de descarga: firma correcta, no expirado, del
+     * tipo 'descarga', y amarrado exactamente a ese documento y tenant.
+     *
+     * @param string $token       Token recibido en ?token=
+     * @param string $idDocumento id del documento solicitado
+     * @param string $tenant      codigo del tenant del request
+     * @return bool true si es valido para ese documento y tenant
+     */
+    public static function validarTokenDescarga($token, $idDocumento, $tenant)
+    {
+        try {
+            if (empty($token)) {
+                return false;
+            }
+
+            $decoded = JWT::decode($token, new Key(self::getSecretKey(), self::$algorithm));
+            $data = isset($decoded->data) ? $decoded->data : null;
+
+            if (!$data) {
+                return false;
+            }
+
+            if (!isset($data->tipo) || $data->tipo !== 'descarga') {
+                return false;
+            }
+
+            if (!isset($data->doc) || $data->doc !== $idDocumento) {
+                return false;
+            }
+
+            if (!isset($data->tenant) || $data->tenant !== $tenant) {
+                return false;
+            }
+
+            return true;
+        } catch (\Firebase\JWT\ExpiredException $e) {
+            return false;
+        } catch (\Firebase\JWT\SignatureInvalidException $e) {
+            return false;
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Middleware: exige un token efímero de descarga valido para el documento
+     * y tenant indicados. Lee el token de ?token= y corta con 401 si no sirve.
+     *
+     * @param string $idDocumento id del documento solicitado
+     * @param string $tenant      codigo del tenant del request
+     * @return void
+     */
+    public static function requerirTokenDescarga($idDocumento, $tenant)
+    {
+        $token = isset($_GET['token']) ? $_GET['token'] : null;
+
+        if (!self::validarTokenDescarga($token, $idDocumento, $tenant)) {
+            Flight::halt(401, json_encode([
+                'error' => 'Token de descarga invalido o expirado',
+                'code'  => 'INVALID_DOWNLOAD_TOKEN'
+            ]));
+            exit;
+        }
     }
 }

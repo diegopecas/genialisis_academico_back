@@ -387,6 +387,15 @@ Flight::before('start', function (&$params, &$output) {
         return;
     }
 
+    // La descarga de documentos NO usa el token de sesion: se autentica con un
+    // token efímero propio (?token=) que el handler valida contra el documento
+    // y el tenant. Por eso se salta aqui la autenticacion de sesion. El prefijo
+    // termina en '/download/', asi que NO afecta a '/download-token/', que si
+    // exige sesion para emitir el token.
+    if (strpos($ruta, '/documentos-personas/download/') === 0) {
+        return;
+    }
+
     // Resto: token valido y que el tenant del token coincida con el del request.
     $userData = JWTService::requerirTenant(TenantContext::codigo());
 

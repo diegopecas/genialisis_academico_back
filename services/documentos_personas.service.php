@@ -411,9 +411,51 @@ class DocumentosPersonas
         }
     }
 
+    // Emite un token efímero (5 min) para descargar un documento. La sesion ya
+    // fue validada por el hook central; aqui solo se verifica que el documento
+    // exista y pertenezca al tenant antes de firmar el token.
+    public static function generarTokenDescarga($id)
+    {
+        try {
+            $db = Flight::db();
+
+            $sentence = $db->prepare("
+                SELECT id
+                FROM documentos_personas
+                WHERE id = :id AND activo = 1
+                AND id_tenant = :id_tenant
+            ");
+            $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->execute();
+            $documento = $sentence->fetch();
+
+            if (!$documento) {
+                Flight::json(array('error' => 'Documento no encontrado'), 404);
+                return;
+            }
+
+            $token = JWTService::generarTokenDescarga($id, TenantContext::codigo());
+            Flight::json(array('token' => $token));
+        } catch (Exception $e) {
+            error_log("Error en DocumentosPersonas::generarTokenDescarga: " . $e->getMessage());
+            Flight::json(array('error' => $e->getMessage()), 500);
+        }
+    }
+
     public static function download($id)
     {
         try {
+            // Esta ruta se salta la autenticacion de sesion del hook central y
+            // se valida a si misma, aceptando dos formas:
+            //  - ?token= : token efímero de descarga (para <img src="">).
+            //  - sin ?token= : token de sesion por header (descarga blob).
+            if (isset($_GET['token'])) {
+                JWTService::requerirTokenDescarga($id, TenantContext::codigo());
+            } else {
+                JWTService::requerirTenant(TenantContext::codigo());
+            }
+
             $db = Flight::db();
 
             $sentence = $db->prepare("
