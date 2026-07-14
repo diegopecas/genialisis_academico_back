@@ -50,9 +50,11 @@ class JWTService
      * 
      * @param array $userData Datos del usuario (id, id_persona, usuario, etc.)
      * @param array $permisos Array de códigos de permisos del usuario (ej: ['menu.estudiantes', 'admin.productos.crear']) o ['*'] si es super_admin
+     * @param string|null $tenant Codigo del tenant
+     * @param array $extra Claims adicionales firmados (ej: ['portal' => 'padres', 'hd_v' => '1.0'])
      * @return string Token JWT
      */
-    public static function generarToken($userData, $permisos = [], $tenant = null)
+    public static function generarToken($userData, $permisos = [], $tenant = null, $extra = [])
     {
         $issuedAt = time();
         $expire = $issuedAt + self::$expireTime;
@@ -60,7 +62,7 @@ class JWTService
         $payload = [
             'iat' => $issuedAt,           // Tiempo de emisión
             'exp' => $expire,              // Tiempo de expiración
-            'data' => [
+            'data' => array_merge([
                 'id' => $userData['id'],
                 'id_persona' => $userData['id_persona'],
                 'usuario' => $userData['usuario'],
@@ -69,10 +71,31 @@ class JWTService
                 'super_admin' => $userData['super_admin'] ?? 0,
                 'tenant' => $tenant,
                 'permisos' => $permisos
-            ]
+            ], $extra)
         ];
 
         return JWT::encode($payload, self::getSecretKey(), self::$algorithm);
+    }
+
+    /**
+     * Portales validos. 'institucional' es el valor por defecto: los tokens
+     * emitidos antes de este cambio no traen el claim y no deben bloquearse.
+     */
+    const PORTAL_PADRES = 'padres';
+    const PORTAL_INSTITUCIONAL = 'institucional';
+
+    /**
+     * Normaliza el portal recibido del cliente. Cualquier valor desconocido
+     * cae a 'institucional' (no bloqueado), nunca a 'padres'.
+     *
+     * @param string|null $portal
+     * @return string
+     */
+    public static function normalizarPortal($portal)
+    {
+        return $portal === self::PORTAL_PADRES
+            ? self::PORTAL_PADRES
+            : self::PORTAL_INSTITUCIONAL;
     }
 
     /**

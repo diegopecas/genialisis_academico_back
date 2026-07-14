@@ -199,7 +199,10 @@ function convertirNumerosEnArray(&$array) {
         if (is_array($value)) {
             convertirNumerosEnArray($value);
         } elseif (is_string($value) && is_numeric($value)) {
-            $camposString = ['telefono', 'celular', 'documento', 'ruc', 'codigo_postal', 'nit', 'clave', 'fecha'];
+            // Las versiones son strings ('1.0' != 1.0). Sin esto, json_encode
+            // devuelve 1 y cualquier comparacion de version se rompe.
+            $camposString = ['telefono', 'celular', 'documento', 'ruc', 'codigo_postal', 'nit', 'clave', 'fecha',
+                             'version', 'version_actual', 'version_politica', 'hd_v'];
             
             if (!in_array($key, $camposString)) {
                 $value = strpos($value, '.') !== false ? (float)$value : (int)$value;
@@ -385,7 +388,57 @@ Flight::before('start', function (&$params, &$output) {
     }
 
     // Resto: token valido y que el tenant del token coincida con el del request.
-    JWTService::requerirTenant(TenantContext::codigo());
+    $userData = JWTService::requerirTenant(TenantContext::codigo());
+
+    // -----------------------------------------------------------------
+    // HABEAS DATA - barrera real. El claim hd_ok viaja firmado dentro del
+    // token, asi que no se puede falsificar desde el cliente y no cuesta
+    // una consulta por request.
+    //
+    // Los tokens emitidos antes de este cambio no traen 'portal': se leen
+    // como 'institucional' y no se bloquean. Nadie pierde la sesion en el
+    // despliegue. Un usuario de padres con token viejo queda sin bloquear
+    // hasta que expire (24h); el guard del front cubre ese caso.
+    // -----------------------------------------------------------------
+    $rutasHabeasData = [
+        '/autorizaciones-habeas-data',
+        '/autorizaciones-habeas-data/verificar',
+        '/autorizaciones-habeas-data/plantilla',
+    ];
+
+    if (in_array($ruta, $rutasHabeasData, true)) {
+        return;
+    }
+
+    // Rutas de bootstrap: la app las necesita para arrancar (nombre, logo,
+    // NIT de la institucion). No son datos personales y corren antes del
+    // login, asi que no deben exigir habeas data. Sin esto, una sesion a
+    // medias o el atras/adelante del navegador rompen el arranque con un 403.
+    $rutasBootstrap = [
+        '/configuracion-global/multiples',
+    ];
+
+    if (in_array($ruta, $rutasBootstrap, true)) {
+        return;
+    }
+
+    $portalToken = isset($userData->portal) ? $userData->portal : JWTService::PORTAL_INSTITUCIONAL;
+
+    // Solo se exige en el portal de padres. Cuando exista la politica de
+    // colaboradores, agregar aqui JWTService::PORTAL_INSTITUCIONAL.
+    $portalesBloqueados = [JWTService::PORTAL_PADRES];
+
+    if (in_array($portalToken, $portalesBloqueados, true)) {
+        $hdOk = isset($userData->hd_ok) ? $userData->hd_ok : false;
+
+        if ($hdOk !== true) {
+            Flight::halt(403, json_encode([
+                'error' => 'Debe aceptar la política de tratamiento de datos',
+                'code'  => 'HABEAS_DATA_REQUIRED'
+            ]));
+            exit;
+        }
+    }
 });
 
 Flight::start();

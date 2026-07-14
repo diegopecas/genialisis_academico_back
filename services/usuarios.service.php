@@ -159,6 +159,8 @@ class Usuarios
             $db = Flight::db();
             $usuario = Flight::request()->data['usuario'];
             $clave = Flight::request()->data['clave'];
+            // Desde que app se autentica. Valor desconocido o ausente => institucional.
+            $portal = JWTService::normalizarPortal(Flight::request()->data['portal'] ?? null);
 
             $checkUser = $db->prepare("SELECT id, usuario, clave, activo FROM usuarios WHERE usuario = :usuario AND id_tenant = :id_tenant");
             $checkUser->bindParam(':usuario', $usuario);
@@ -236,7 +238,18 @@ class Usuarios
                     $permisos = self::obtenerPermisosUsuario($response[0]['id']);
                 }
 
-                $token = JWTService::generarToken($response[0], $permisos, TenantContext::codigo());
+                // hd_ok: pasaporte firmado. True si el portal no exige politica
+                // o si el usuario ya acepto la version vigente. El middleware lo
+                // lee sin tocar la BD. hd_v queda solo como dato informativo.
+                $hdOk = AutorizacionesHabeasData::estaAutorizado($response[0]['id'], $portal);
+                $hdVersion = AutorizacionesHabeasData::versionAceptada($response[0]['id'], $portal);
+
+                $token = JWTService::generarToken(
+                    $response[0],
+                    $permisos,
+                    TenantContext::codigo(),
+                    ['portal' => $portal, 'hd_ok' => $hdOk, 'hd_v' => $hdVersion]
+                );
                 $response[0]['token'] = $token;
                 $response[0]['permisos'] = $permisos;
             }
