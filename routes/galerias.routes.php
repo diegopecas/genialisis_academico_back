@@ -25,6 +25,9 @@ Flight::route('DELETE /subgalerias', [Subgalerias::class, 'delete']);
 
 // IMÁGENES DE GALERÍA
 Flight::route('GET /galeria-imagenes', [GaleriaImagenes::class, 'getAll']);
+// OJO: debe ir ANTES de 'GET /galeria-imagenes/@id', si no getById la captura
+// y recibe 'token' como id.
+Flight::route('GET /galeria-imagenes/token', [GaleriaImagenes::class, 'generarTokenImagenes']);
 Flight::route('GET /galeria-imagenes/@id', [GaleriaImagenes::class, 'getById']);
 Flight::route('GET /galeria-imagenes/galeria/@id_galeria', [GaleriaImagenes::class, 'getByGaleria']);
 Flight::route('GET /galeria-imagenes/subgaleria/@id_subgaleria', [GaleriaImagenes::class, 'getBySubgaleria']);

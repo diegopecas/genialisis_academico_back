@@ -116,6 +116,16 @@ class JWTService
             }
 
             $decoded = JWT::decode($token, new Key(self::getSecretKey(), self::$algorithm));
+
+            // Un token efímero de recurso (?token= en <img src="">) NO es un
+            // token de sesion: se distingue por el claim 'tipo'. Sin este
+            // rechazo pasaria por requerirAutenticacion/requerirTenant (que
+            // solo comparan el tenant) y daria acceso a toda la API, que es
+            // justo lo que este mecanismo busca evitar.
+            if (isset($decoded->data->tipo)) {
+                return null;
+            }
+
             return $decoded->data;
         } catch (\Firebase\JWT\ExpiredException $e) {
             // Token expirado
@@ -265,16 +275,24 @@ class JWTService
     }
 
     /**
-     * Genera un token efímero (5 min) para descargar UN documento.
-     * No es un token de sesion: solo sirve para el documento y tenant
-     * indicados, y solo lo acepta la ruta de descarga (que se valida a si
-     * misma). Asi, aunque se filtre en la URL, no da acceso a nada mas.
+     * Genera un token efímero (5 min) para acceder a UN recurso protegido.
+     * No es un token de sesion: solo sirve para el tipo de recurso y tenant
+     * indicados, y solo lo aceptan las rutas que lo validan explicitamente.
+     * Asi, aunque se filtre en la URL, no da acceso a nada mas.
      *
-     * @param string $idDocumento id del documento autorizado
-     * @param string $tenant      codigo del tenant
+     * Se usa donde el token NO puede viajar en el header Authorization, es
+     * decir en URLs que consume el navegador directamente (<img src="">).
+     * Para descargas via HttpClient se sigue usando el token de sesion.
+     *
+     * @param string      $tipo       tipo de recurso: 'documento' | 'imagen'
+     * @param string|null $idRecurso  id del recurso autorizado. Si es null, el
+     *                                token sirve para cualquier recurso de ese
+     *                                tipo dentro del tenant (galerias: evita
+     *                                pedir un token por cada miniatura).
+     * @param string      $tenant     codigo del tenant
      * @return string Token JWT efímero
      */
-    public static function generarTokenDescarga($idDocumento, $tenant)
+    public static function generarTokenRecurso($tipo, $idRecurso, $tenant)
     {
         $issuedAt = time();
 
@@ -282,8 +300,8 @@ class JWTService
             'iat' => $issuedAt,
             'exp' => $issuedAt + self::$expireTimeDescarga,
             'data' => [
-                'tipo'   => 'descarga',
-                'doc'    => $idDocumento,
+                'tipo'   => $tipo,
+                'rec'    => $idRecurso,
                 'tenant' => $tenant
             ]
         ];
@@ -292,15 +310,19 @@ class JWTService
     }
 
     /**
-     * Valida un token efímero de descarga: firma correcta, no expirado, del
-     * tipo 'descarga', y amarrado exactamente a ese documento y tenant.
+     * Valida un token efímero de recurso: firma correcta, no expirado, del tipo
+     * esperado, del mismo tenant, y para ese recurso.
      *
-     * @param string $token       Token recibido en ?token=
-     * @param string $idDocumento id del documento solicitado
-     * @param string $tenant      codigo del tenant del request
-     * @return bool true si es valido para ese documento y tenant
+     * Si el token se emitio con rec = null, vale para cualquier recurso de ese
+     * tipo en el tenant. Si se emitio con un id, debe coincidir exactamente.
+     *
+     * @param string      $token      Token recibido en ?token=
+     * @param string      $tipo       tipo de recurso esperado
+     * @param string|null $idRecurso  id del recurso solicitado
+     * @param string      $tenant     codigo del tenant del request
+     * @return bool true si el token autoriza ese recurso
      */
-    public static function validarTokenDescarga($token, $idDocumento, $tenant)
+    public static function validarTokenRecurso($token, $tipo, $idRecurso, $tenant)
     {
         try {
             if (empty($token)) {
@@ -314,15 +336,18 @@ class JWTService
                 return false;
             }
 
-            if (!isset($data->tipo) || $data->tipo !== 'descarga') {
-                return false;
-            }
-
-            if (!isset($data->doc) || $data->doc !== $idDocumento) {
+            // El tipo evita que un token de imagenes sirva para documentos.
+            if (!isset($data->tipo) || $data->tipo !== $tipo) {
                 return false;
             }
 
             if (!isset($data->tenant) || $data->tenant !== $tenant) {
+                return false;
+            }
+
+            // rec null = token de alcance tenant para ese tipo de recurso.
+            $rec = isset($data->rec) ? $data->rec : null;
+            if ($rec !== null && $rec !== $idRecurso) {
                 return false;
             }
 
@@ -337,23 +362,33 @@ class JWTService
     }
 
     /**
-     * Middleware: exige un token efímero de descarga valido para el documento
-     * y tenant indicados. Lee el token de ?token= y corta con 401 si no sirve.
+     * Middleware: exige un token efímero valido para el recurso indicado.
+     * Lee el token de ?token= y corta con 401 si no sirve.
      *
-     * @param string $idDocumento id del documento solicitado
-     * @param string $tenant      codigo del tenant del request
+     * @param string      $tipo       tipo de recurso esperado
+     * @param string|null $idRecurso  id del recurso solicitado
+     * @param string      $tenant     codigo del tenant del request
      * @return void
      */
-    public static function requerirTokenDescarga($idDocumento, $tenant)
+    public static function requerirTokenRecurso($tipo, $idRecurso, $tenant)
     {
         $token = isset($_GET['token']) ? $_GET['token'] : null;
 
-        if (!self::validarTokenDescarga($token, $idDocumento, $tenant)) {
+        if (!self::validarTokenRecurso($token, $tipo, $idRecurso, $tenant)) {
             Flight::halt(401, json_encode([
-                'error' => 'Token de descarga invalido o expirado',
-                'code'  => 'INVALID_DOWNLOAD_TOKEN'
+                'error' => 'Token de acceso invalido o expirado',
+                'code'  => 'INVALID_RESOURCE_TOKEN'
             ]));
             exit;
         }
+    }
+
+    /**
+     * Tiempo de vida (segundos) del token efímero. El front lo usa para saber
+     * cuando renovarlo antes de que expire.
+     */
+    public static function getExpiracionTokenRecurso()
+    {
+        return self::$expireTimeDescarga;
     }
 }

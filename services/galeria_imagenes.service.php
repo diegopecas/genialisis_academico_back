@@ -366,13 +366,53 @@ class GaleriaImagenes
     // =====================================================
 
     /**
+     * Emite un token efímero para ver imagenes del tenant.
+     * GET /galeria-imagenes/token
+     *
+     * La sesion ya fue validada por el hook central. El token se emite con
+     * alcance de tenant (no por imagen) porque las URLs de <img src=""> se
+     * arman de forma sincrona en el front: pedir un token por imagen
+     * significaria una peticion por cada miniatura de la galeria.
+     *
+     * Alcance del token: solo sirve para servir imagenes de este tenant y
+     * caduca en pocos minutos, a diferencia del token de sesion que daba
+     * acceso a todo el sistema durante 24 horas.
+     */
+    public static function generarTokenImagenes()
+    {
+        try {
+            $token = JWTService::generarTokenRecurso(
+                'imagen',
+                null,
+                self::getTenantFromRequest()
+            );
+
+            Flight::json(array(
+                'token'      => $token,
+                'expira_en'  => JWTService::getExpiracionTokenRecurso()
+            ));
+        } catch (Exception $e) {
+            error_log("Error en GaleriaImagenes::generarTokenImagenes: " . $e->getMessage());
+            Flight::json(array('error' => $e->getMessage()), 500);
+        }
+    }
+
+    /**
      * Servir imagen protegida por GUID
      * GET /galeria-imagenes/servir/{guid}?token=xxx&tenant=xxx&size=thumb
      */
     public static function servirImagen($guid)
     {
-        // 1. Validar JWT (solo que el token sea válido)
-        JWTService::requerirAutenticacion();
+        // 1. Autenticacion. Se aceptan dos formas:
+        //    - ?token= : token efímero de imagenes (necesario en <img src="">,
+        //      que no puede enviar el header Authorization).
+        //    - sin ?token= : token de sesion por header (descarga blob via
+        //      HttpClient, donde el token no necesita ir en la URL).
+        if (isset($_GET['token'])) {
+            JWTService::requerirTokenRecurso('imagen', $guid, self::getTenantFromRequest());
+        } else {
+            JWTService::requerirAutenticacion();
+        }
         
         $db = Flight::db();
         

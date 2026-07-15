@@ -396,6 +396,13 @@ Flight::before('start', function (&$params, &$output) {
         return;
     }
 
+    // Servir imagenes de galeria: igual que la descarga de documentos, el
+    // handler se autentica solo (token efímero por ?token= para <img src="">,
+    // o token de sesion por header para la descarga blob).
+    if (strpos($ruta, '/galeria-imagenes/servir/') === 0) {
+        return;
+    }
+
     // Resto: token valido y que el tenant del token coincida con el del request.
     $userData = JWTService::requerirTenant(TenantContext::codigo());
 
