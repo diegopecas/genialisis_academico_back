@@ -433,9 +433,14 @@ Flight::before('start', function (&$params, &$output) {
 
     $portalToken = isset($userData->portal) ? $userData->portal : JWTService::PORTAL_INSTITUCIONAL;
 
-    // Solo se exige en el portal de padres. Cuando exista la politica de
-    // colaboradores, agregar aqui JWTService::PORTAL_INSTITUCIONAL.
-    $portalesBloqueados = [JWTService::PORTAL_PADRES];
+    // Portales sujetos al bloqueo. Que un portal este aqui NO significa que
+    // se exija: el backend solo bloquea si ese tenant tiene la politica
+    // publicada y su flag habeas_data_activo_* encendido (ver seExige()).
+    // Un tenant sin plantilla de colaboradores no bloquea a nadie.
+    $portalesBloqueados = [
+        JWTService::PORTAL_PADRES,
+        JWTService::PORTAL_INSTITUCIONAL,
+    ];
 
     if (in_array($portalToken, $portalesBloqueados, true)) {
         $hdOk = isset($userData->hd_ok) ? $userData->hd_ok : false;

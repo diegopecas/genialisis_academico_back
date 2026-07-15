@@ -445,7 +445,7 @@ class WebAuthn
             $stmtUpdate->bindParam(':id', $credencial['cred_id']);
             $stmtUpdate->execute();
 
-            $response = self::obtenerDatosCompletoUsuario($db, $credencial['id_usuario'], TenantContext::codigo());
+            $response = self::obtenerDatosCompletoUsuario($db, $credencial['id_usuario'], TenantContext::codigo(), true);
             Flight::json($response);
 
         } catch (Exception $e) {
@@ -617,7 +617,14 @@ class WebAuthn
     // ================================================================
     // Utilidad: Obtener datos completos + JWT de un usuario
     // ================================================================
-    private static function obtenerDatosCompletoUsuario($db, $idUsuario, $tenantCodigo = null)
+    /**
+     * @param string|null $portal Portal desde el que se autentica. Si es null se
+     *                            lee del body; un valor desconocido cae a
+     *                            'institucional' (no bloqueado) via normalizarPortal.
+     * @param bool $conContextoTenant true cuando TenantContext esta cargado y por
+     *                            tanto se puede consultar el estado de habeas data.
+     */
+    private static function obtenerDatosCompletoUsuario($db, $idUsuario, $tenantCodigo = null, $conContextoTenant = false)
     {
         $stmtUser = $db->prepare("
             SELECT 
@@ -648,7 +655,19 @@ class WebAuthn
             } else {
                 $permisos = self::obtenerPermisosUsuarioFromDb($db, $response[0]['id']);
             }
-            $token = JWTService::generarToken($response[0], $permisos, $tenantCodigo);
+            $portal = JWTService::normalizarPortal(Flight::request()->data['portal'] ?? null);
+
+            // hd_ok solo se puede calcular con TenantContext cargado (la ruta
+            // /auth/webauthn corre sin tenant, ver index.php). Sin contexto no
+            // se emite el claim y el backend no bloquea: ese camino queda
+            // cubierto por la verificacion que el front hace al entrar.
+            $extra = ['portal' => $portal];
+            if ($conContextoTenant) {
+                $extra['hd_ok'] = AutorizacionesHabeasData::estaAutorizado($response[0]['id'], $portal);
+                $extra['hd_v'] = AutorizacionesHabeasData::versionAceptada($response[0]['id'], $portal);
+            }
+
+            $token = JWTService::generarToken($response[0], $permisos, $tenantCodigo, $extra);
             $response[0]['token'] = $token;
             $response[0]['permisos'] = $permisos;
         }

@@ -7,7 +7,7 @@ class AutorizacionesHabeasData
     private static function claveVersion($portal)
     {
         return $portal === JWTService::PORTAL_PADRES
-            ? 'habeas_data_version_actual'
+            ? 'habeas_data_version_actual_acudientes'
             : 'habeas_data_version_actual_colaboradores';
     }
 
@@ -17,8 +17,45 @@ class AutorizacionesHabeasData
     private static function clavePlantilla($portal)
     {
         return $portal === JWTService::PORTAL_PADRES
-            ? 'politica_habeas_data'
+            ? 'politica_habeas_data_acudientes'
             : 'politica_habeas_data_colaboradores';
+    }
+
+    /**
+     * Clave del interruptor de activacion por portal.
+     */
+    private static function claveActivo($portal)
+    {
+        return $portal === JWTService::PORTAL_PADRES
+            ? 'habeas_data_activo_acudientes'
+            : 'habeas_data_activo_colaboradores';
+    }
+
+    /**
+     * Interruptor explicito de activacion por portal.
+     *
+     * Solo apaga: si la clave existe y vale 'false' (o '0'), el habeas data
+     * queda desactivado para ese portal aunque haya plantilla publicada. Si la
+     * clave no existe, o vale cualquier otra cosa, se considera activo y manda
+     * la logica normal (version + plantilla). Asi los tenants ya configurados
+     * no cambian de comportamiento hasta que se cree el flag en 'false'.
+     */
+    private static function estaActivo($portal)
+    {
+        $db = Flight::db();
+        $stmt = $db->prepare("SELECT valor_texto FROM configuracion_global
+                               WHERE clave = :clave AND id_tenant = :id_tenant LIMIT 1");
+        $stmt->bindValue(':clave', self::claveActivo($portal));
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+        $row = $stmt->fetch();
+
+        if (!$row) {
+            return true; // ausencia de flag = activo
+        }
+
+        $valor = strtolower(trim((string) $row['valor_texto']));
+        return !($valor === 'false' || $valor === '0');
     }
 
     /**
@@ -110,6 +147,11 @@ class AutorizacionesHabeasData
      */
     public static function seExige($portal)
     {
+        // Interruptor explicito: si esta apagado, no se exige aunque haya plantilla.
+        if (!self::estaActivo($portal)) {
+            return false;
+        }
+
         $version = self::versionVigente($portal);
         if ($version === null) {
             return false;
