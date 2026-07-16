@@ -9,6 +9,9 @@ class GaleriaImagenes
         'webp' => 'image/webp'
     ];
 
+    // Calidad al reescribir un JPEG rotado.
+    private static $jpegQuality = 90;
+
     private static $sizes = [
         'thumb' => [
             'width' => 300,
@@ -86,6 +89,20 @@ class GaleriaImagenes
         }
         
         // Eliminar archivos de caché (thumb, medium, large)
+        self::eliminarCacheImagen($idImagen);
+    }
+
+    /**
+     * Borra las versiones redimensionadas de una imagen (thumb, medium, large).
+     *
+     * Se regeneran solas en el siguiente request. Es obligatorio llamarla cada
+     * vez que cambian los píxeles del original: enviarArchivoRedimensionado()
+     * reusa el archivo de caché si existe, sin comparar fechas, así que un
+     * caché viejo se queda para siempre.
+     */
+    private static function eliminarCacheImagen($idImagen)
+    {
+        $cachePath = self::getCachePath();
         foreach (self::$sizes as $size => $config) {
             $cacheFile = $cachePath . $size . '/' . $idImagen . '_' . $size . '.jpg';
             if (file_exists($cacheFile)) {
@@ -301,6 +318,172 @@ class GaleriaImagenes
         } else {
             Flight::json(['deleted' => false, 'id' => $id, 'error' => 'Imagen no encontrada']);
         }
+    }
+
+    /**
+     * Rota las imágenes indicadas y borra su caché.
+     *
+     * POST /galeria-imagenes/rotar  { ids: [...], grados: 90|180|270 }
+     *
+     * Gira los píxeles del original en disco. No hay columna de rotación a
+     * propósito: si el ángulo viviera en la BD habría que aplicarlo en todos
+     * los consumidores (galería, portal de padres, normalización a Instagram) y
+     * al que se le olvide muestra la foto torcida en silencio. Con el archivo
+     * derecho, todos coinciden sin saber nada.
+     *
+     * Los videos se ignoran: GD no los procesa.
+     */
+    public static function rotar()
+    {
+        $db = Flight::db();
+        $data = Flight::request()->data;
+
+        $ids = isset($data['ids']) ? $data['ids'] : [];
+        $grados = isset($data['grados']) ? (int)$data['grados'] : 90;
+
+        if (!is_array($ids) || count($ids) === 0) {
+            Flight::json(['error' => 'No se recibieron imágenes para rotar'], 400);
+            return;
+        }
+
+        if (!in_array($grados, [90, 180, 270], true)) {
+            Flight::json(['error' => 'Los grados deben ser 90, 180 o 270'], 400);
+            return;
+        }
+
+        if (!function_exists('imagerotate')) {
+            Flight::json(['error' => 'La extensión GD no está disponible en el servidor'], 500);
+            return;
+        }
+
+        // Traer solo las imágenes del tenant que existen y no son video.
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $db->prepare("
+            SELECT id, url, tipo_media
+            FROM galeria_imagenes
+            WHERE id IN ({$placeholders}) AND id_tenant = ?
+        ");
+        $params = array_values($ids);
+        $params[] = TenantContext::id();
+        $stmt->execute($params);
+        $imagenes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        if (count($imagenes) === 0) {
+            Flight::json(['error' => 'No se encontraron las imágenes indicadas'], 404);
+            return;
+        }
+
+        $rotadas = [];
+        $errores = [];
+
+        foreach ($imagenes as $imagen) {
+            if ($imagen['tipo_media'] === 'video') {
+                $errores[] = ['id' => $imagen['id'], 'error' => 'Los videos no se pueden rotar'];
+                continue;
+            }
+
+            $resultado = self::rotarArchivo($imagen['url'], $grados);
+            if ($resultado === true) {
+                self::eliminarCacheImagen($imagen['id']);
+                $rotadas[] = $imagen['id'];
+            } else {
+                $errores[] = ['id' => $imagen['id'], 'error' => $resultado];
+            }
+        }
+
+        // Éxito parcial: se informa qué se rotó y qué no, sin ocultar los fallos.
+        Flight::json([
+            'success' => count($rotadas) > 0,
+            'rotadas' => $rotadas,
+            'total_rotadas' => count($rotadas),
+            'errores' => $errores
+        ]);
+    }
+
+    /**
+     * Gira el archivo físico en disco y lo reescribe en su mismo formato.
+     *
+     * @param string $rutaRelativa
+     * @param int    $grados  90, 180 o 270 en sentido horario
+     * @return true|string  true si salió bien, o el mensaje de error
+     */
+    private static function rotarArchivo($rutaRelativa, $grados)
+    {
+        $rutaRelativa = str_replace(['../', '..\\', '..'], '', $rutaRelativa);
+        $rutaCompleta = self::getBasePath() . $rutaRelativa;
+
+        if (!file_exists($rutaCompleta)) {
+            return 'Archivo no encontrado';
+        }
+
+        $info = @getimagesize($rutaCompleta);
+        if (!$info) {
+            return 'El archivo no es una imagen válida';
+        }
+
+        switch ($info[2]) {
+            case IMAGETYPE_JPEG:
+                $img = @imagecreatefromjpeg($rutaCompleta);
+                break;
+            case IMAGETYPE_PNG:
+                $img = @imagecreatefrompng($rutaCompleta);
+                break;
+            case IMAGETYPE_GIF:
+                $img = @imagecreatefromgif($rutaCompleta);
+                break;
+            case IMAGETYPE_WEBP:
+                $img = function_exists('imagecreatefromwebp') ? @imagecreatefromwebp($rutaCompleta) : false;
+                break;
+            default:
+                return 'Formato de imagen no soportado';
+        }
+
+        if (!$img) {
+            return 'No se pudo abrir la imagen';
+        }
+
+        // imagerotate gira antihorario; los grados que llegan son horarios.
+        $rotada = @imagerotate($img, -$grados, 0);
+        if (!$rotada) {
+            imagedestroy($img);
+            return 'No se pudo rotar la imagen';
+        }
+
+        // PNG, GIF y WEBP pueden traer transparencia: al rotar aparecen zonas
+        // nuevas que hay que dejar transparentes en vez de negras.
+        if (in_array($info[2], [IMAGETYPE_PNG, IMAGETYPE_GIF, IMAGETYPE_WEBP], true)) {
+            imagealphablending($rotada, false);
+            imagesavealpha($rotada, true);
+        }
+
+        switch ($info[2]) {
+            case IMAGETYPE_JPEG:
+                $ok = imagejpeg($rotada, $rutaCompleta, self::$jpegQuality);
+                break;
+            case IMAGETYPE_PNG:
+                $ok = imagepng($rotada, $rutaCompleta);
+                break;
+            case IMAGETYPE_GIF:
+                $ok = imagegif($rotada, $rutaCompleta);
+                break;
+            case IMAGETYPE_WEBP:
+                $ok = imagewebp($rotada, $rutaCompleta, self::$jpegQuality);
+                break;
+            default:
+                $ok = false;
+        }
+
+        imagedestroy($img);
+        imagedestroy($rotada);
+
+        if (!$ok) {
+            return 'No se pudo guardar la imagen rotada';
+        }
+
+        // El ETag de enviarArchivo() se calcula con filemtime, así que al
+        // reescribir el archivo cambia solo y el navegador revalida.
+        clearstatcache(true, $rutaCompleta);
+        return true;
     }
 
     public static function deleteByGaleria($id_galeria)

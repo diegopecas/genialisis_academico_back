@@ -37,6 +37,7 @@ Flight::route('POST /galeria-imagenes', [GaleriaImagenes::class, 'new']);
 Flight::route('POST /galeria-imagenes/bulk', [GaleriaImagenes::class, 'newBulk']);
 Flight::route('PUT /galeria-imagenes', [GaleriaImagenes::class, 'replace']);
 Flight::route('DELETE /galeria-imagenes', [GaleriaImagenes::class, 'delete']);
+Flight::route('POST /galeria-imagenes/rotar', [GaleriaImagenes::class, 'rotar']);
 Flight::route('DELETE /galeria-imagenes/bulk', [GaleriaImagenes::class, 'deleteBulk']);
 Flight::route('DELETE /galeria-imagenes/galeria/@id_galeria', [GaleriaImagenes::class, 'deleteByGaleria']);
 Flight::route('DELETE /galeria-imagenes/subgaleria/@id_subgaleria', [GaleriaImagenes::class, 'deleteBySubgaleria']);
@@ -52,3 +53,4 @@ Flight::route('DELETE /galerias-x-grupos/galeria/@id_galeria', [GaleriasXGrupos:
 
 // UPLOAD DE IMÁGENES DE GALERÍAS
 Flight::route('POST /upload/galeria-imagen', [Upload::class, 'uploadGaleriaImagen']);
+Flight::route('GET /upload/limites-galeria', [Upload::class, 'getLimitesGaleria']);

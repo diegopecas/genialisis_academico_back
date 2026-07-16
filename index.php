@@ -14,6 +14,9 @@ date_default_timezone_set('America/Bogota');
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Headers: X-Tenant, x-tenant, X-API-KEY, X-Silent, X-Skip-Tenant, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Request-Method, Authorization");
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE, PATCH");
+// Sin esto el navegador oculta Content-Disposition al JS y las descargas blob
+// pierden el nombre real del archivo (bajan con el nombre por defecto, sin extension).
+header("Access-Control-Expose-Headers: Content-Disposition");
 header("Allow: GET, POST, OPTIONS, PUT, DELETE, PATCH");
 
 $method = $_SERVER['REQUEST_METHOD'];
