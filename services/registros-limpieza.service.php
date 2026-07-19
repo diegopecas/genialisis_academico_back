@@ -1518,4 +1518,176 @@ class RegistrosLimpieza
 
         $acumulado[$id_area][$key]['cantidad'] += $cantidad;
     }
+
+    /**
+     * Devuelve los registros de limpieza que están en estado Realizado (3) y por tanto
+     * pendientes de supervisión, vengan del registro rápido o del flujo normal.
+     * Filtros opcionales por rango de fechas y por proceso.
+     * Usado por la pantalla de Supervisión de Aseo.
+     */
+    public static function getPendientesSupervision()
+    {
+        $db = Flight::db();
+
+        $fecha_desde = Flight::request()->query['fecha_desde'] ??
+            Flight::request()->query->fecha_desde ??
+            $_GET['fecha_desde'] ??
+            null;
+
+        $fecha_hasta = Flight::request()->query['fecha_hasta'] ??
+            Flight::request()->query->fecha_hasta ??
+            $_GET['fecha_hasta'] ??
+            null;
+
+        $id_proceso = Flight::request()->query['id_proceso'] ??
+            Flight::request()->query->id_proceso ??
+            $_GET['id_proceso'] ??
+            null;
+
+        $sql = "
+            SELECT
+                rl.id,
+                rl.fecha,
+                rl.hora_inicio,
+                rl.hora_fin,
+                rl.observaciones,
+                af.id as id_area_fisica,
+                af.nombre as area,
+                af.ubicacion,
+                tp.id as id_tipo_proceso_limpieza,
+                tp.nombre as proceso,
+                rl.id_usuario_ejecutor,
+                TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre,
+                                    p.primer_apellido, p.segundo_apellido)) as ejecutor,
+                (SELECT COUNT(*) FROM registros_limpieza_detalle
+                  WHERE id_registro_limpieza = rl.id) as total_elementos,
+                (SELECT IFNULL(SUM(cantidad_consumida), 0) FROM registros_limpieza_consumos
+                  WHERE id_registro_limpieza = rl.id) as total_consumido
+            FROM registros_limpieza rl
+            INNER JOIN areas_fisicas af ON rl.id_area_fisica = af.id
+            INNER JOIN tipos_proceso_limpieza tp ON rl.id_tipo_proceso_limpieza = tp.id
+            LEFT JOIN usuarios u ON rl.id_usuario_ejecutor = u.id
+            LEFT JOIN personas p ON u.id_persona = p.id
+            WHERE rl.id_estado = 3
+                AND rl.id_tenant = :id_tenant
+        ";
+
+        // Los filtros son opcionales: sin ellos salen todos los pendientes
+        if ($fecha_desde) {
+            $sql .= " AND rl.fecha >= :fecha_desde";
+        }
+        if ($fecha_hasta) {
+            $sql .= " AND rl.fecha <= :fecha_hasta";
+        }
+        if ($id_proceso) {
+            $sql .= " AND rl.id_tipo_proceso_limpieza = :id_proceso";
+        }
+
+        $sql .= " ORDER BY rl.fecha DESC, tp.nombre, af.nombre";
+
+        $sentence = $db->prepare($sql);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+
+        if ($fecha_desde) {
+            $sentence->bindParam(':fecha_desde', $fecha_desde);
+        }
+        if ($fecha_hasta) {
+            $sentence->bindParam(':fecha_hasta', $fecha_hasta);
+        }
+        if ($id_proceso) {
+            $sentence->bindParam(':id_proceso', $id_proceso);
+        }
+
+        $sentence->execute();
+
+        Flight::json($sentence->fetchAll());
+    }
+
+    /**
+     * Pasa a estado Supervisado (4) todos los registros indicados, en una sola
+     * transacción. Solo afecta los que estén en estado Realizado (3); los demás se
+     * ignoran y se reportan como omitidos.
+     * Usado por la pantalla de Supervisión de Aseo.
+     */
+    public static function supervisarLote()
+    {
+        $db = Flight::db();
+
+        try {
+            $db->beginTransaction();
+
+            $ids = Flight::request()->data['ids'] ?? array();
+            $id_usuario_supervisor = Flight::request()->data['id_usuario_supervisor'] ?? null;
+            $observaciones = Flight::request()->data['observaciones'] ?? null;
+
+            if (!is_array($ids) || count($ids) == 0) {
+                throw new Exception('Debe seleccionar al menos un registro');
+            }
+            if (!$id_usuario_supervisor) {
+                throw new Exception('Debe indicar el usuario supervisor');
+            }
+
+            $observaciones = is_string($observaciones) ? trim($observaciones) : null;
+            $placeholders = implode(',', array_fill(0, count($ids), '?'));
+
+            // La observación solo se concatena si trae texto, para no dejar el sufijo colgando
+            if ($observaciones) {
+                $sql = "
+                    UPDATE registros_limpieza
+                    SET id_estado = 4, -- Supervisado
+                        id_usuario_supervisor = ?,
+                        observaciones = CONCAT(IFNULL(observaciones, ''), ' | Supervisión: ', ?)
+                    WHERE id IN ($placeholders)
+                        AND id_estado = 3
+                        AND id_tenant = ?
+                ";
+                $params = array_merge(
+                    [$id_usuario_supervisor, $observaciones],
+                    array_values($ids),
+                    [TenantContext::id()]
+                );
+            } else {
+                $sql = "
+                    UPDATE registros_limpieza
+                    SET id_estado = 4, -- Supervisado
+                        id_usuario_supervisor = ?
+                    WHERE id IN ($placeholders)
+                        AND id_estado = 3
+                        AND id_tenant = ?
+                ";
+                $params = array_merge(
+                    [$id_usuario_supervisor],
+                    array_values($ids),
+                    [TenantContext::id()]
+                );
+            }
+
+            $sentence = $db->prepare($sql);
+            $sentence->execute($params);
+            $supervisados = $sentence->rowCount();
+
+            if ($supervisados == 0) {
+                throw new Exception('Ninguno de los registros seleccionados estaba pendiente de supervisión');
+            }
+
+            $db->commit();
+
+            $response = array(
+                'success' => true,
+                'total_supervisados' => $supervisados
+            );
+
+            // Un registro se omite si alguien más ya lo supervisó o lo canceló entre tanto
+            $omitidos = count($ids) - $supervisados;
+            if ($omitidos > 0) {
+                $response['omitidos'] = $omitidos;
+            }
+
+            Flight::json($response);
+        } catch (Exception $e) {
+            $db->rollBack();
+            error_log("Error en RegistrosLimpieza::supervisarLote: " . $e->getMessage());
+            Flight::json(array('error' => $e->getMessage()), 500);
+        }
+    }
 }
