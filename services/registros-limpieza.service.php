@@ -986,8 +986,9 @@ class RegistrosLimpieza
 
     /**
      * Crea en una sola transacción los registros de limpieza de todas las áreas
-     * seleccionadas, ya en estado Realizado, y descuenta el inventario con un
-     * único movimiento consolidado.
+     * seleccionadas y descuenta el inventario con un único movimiento consolidado.
+     * Si viene supervisor los registros quedan en estado Supervisado (4); si no,
+     * en Realizado (3).
      * Usado por la pantalla de Registro Rápido de Aseo.
      */
     public static function crearRapido()
@@ -1003,7 +1004,11 @@ class RegistrosLimpieza
             $hora_fin = Flight::request()->data['hora_fin'] ?? null;
             $observaciones = Flight::request()->data['observaciones'] ?? null;
             $id_usuario_ejecutor = Flight::request()->data['id_usuario_ejecutor'] ?? null;
+            $id_usuario_supervisor = Flight::request()->data['id_usuario_supervisor'] ?? null;
             $areas = Flight::request()->data['areas'] ?? array();
+
+            // Con supervisor el registro nace supervisado; sin supervisor queda pendiente de supervisión
+            $id_estado = $id_usuario_supervisor ? 4 : 3;
 
             if (!$id_proceso) {
                 throw new Exception('Debe indicar el tipo de proceso de limpieza');
@@ -1054,7 +1059,8 @@ class RegistrosLimpieza
                         observaciones,
                         id_area_fisica,
                         id_tipo_proceso_limpieza,
-                        id_usuario_ejecutor
+                        id_usuario_ejecutor,
+                        id_usuario_supervisor
                     ) VALUES (
                         :id,
                         :id_tenant,
@@ -1062,11 +1068,12 @@ class RegistrosLimpieza
                         :fecha_programada,
                         :hora_inicio,
                         :hora_fin,
-                        3, -- Realizado
+                        :id_estado,
                         :observaciones,
                         :id_area_fisica,
                         :id_tipo_proceso_limpieza,
-                        :id_usuario_ejecutor
+                        :id_usuario_ejecutor,
+                        :id_usuario_supervisor
                     )
                 ");
 
@@ -1077,10 +1084,12 @@ class RegistrosLimpieza
                 $sentence->bindParam(':fecha_programada', $fecha);
                 $sentence->bindParam(':hora_inicio', $hora_inicio);
                 $sentence->bindParam(':hora_fin', $hora_fin);
+                $sentence->bindValue(':id_estado', $id_estado, PDO::PARAM_INT);
                 $sentence->bindParam(':observaciones', $observaciones);
                 $sentence->bindParam(':id_area_fisica', $id_area);
                 $sentence->bindParam(':id_tipo_proceso_limpieza', $id_proceso);
                 $sentence->bindParam(':id_usuario_ejecutor', $id_usuario_ejecutor);
+                $sentence->bindParam(':id_usuario_supervisor', $id_usuario_supervisor);
                 $sentence->execute();
 
                 $ids_registros[] = $id_registro;
@@ -1308,7 +1317,8 @@ class RegistrosLimpieza
                 'success' => true,
                 'ids' => $ids_registros,
                 'total_registros' => count($ids_registros),
-                'id_movimiento' => $id_movimiento
+                'id_movimiento' => $id_movimiento,
+                'id_estado' => $id_estado
             );
 
             if (count($productos_ajustados) > 0) {
