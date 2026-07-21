@@ -14,6 +14,13 @@ Flight::route('POST /registros-limpieza/supervisar', ['RegistrosLimpieza', 'supe
 Flight::route('POST /registros-limpieza/supervisar-lote', ['RegistrosLimpieza', 'supervisarLote']);
 Flight::route('POST /registros-limpieza/cancelar', ['RegistrosLimpieza', 'cancelar']);
 
+// CONSUMO GENERAL POR ÁREA Y PROCESO
+Flight::route('GET /registros-limpieza/consumo-general', ['AreasFisicasXProcesosLimpiezaConsumo', 'getPorAreaProceso']);
+Flight::route('GET /registros-limpieza/consumo-general/productos', ['AreasFisicasXProcesosLimpiezaConsumo', 'getProductosDisponibles']);
+Flight::route('POST /registros-limpieza/consumo-general', ['AreasFisicasXProcesosLimpiezaConsumo', 'new']);
+Flight::route('PUT /registros-limpieza/consumo-general', ['AreasFisicasXProcesosLimpiezaConsumo', 'update']);
+Flight::route('DELETE /registros-limpieza/consumo-general', ['AreasFisicasXProcesosLimpiezaConsumo', 'delete']);
+
 // ESTADOS DE REGISTRO DE LIMPIEZA
 Flight::route('GET /estados-registro-limpieza', ['EstadosRegistroLimpieza', 'getAll']);
 Flight::route('GET /estados-registro-limpieza/@id', ['EstadosRegistroLimpieza', 'getById']);

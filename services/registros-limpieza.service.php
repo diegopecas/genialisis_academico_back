@@ -1494,6 +1494,80 @@ class RegistrosLimpieza
             }
         }
 
+        // Respaldo: las áreas que quedaron sin productos por elementos toman el
+        // consumo general configurado (areas_fisicas_x_procesos_limpieza_consumo).
+        // La granularidad por elementos manda; el consumo general solo cubre lo que
+        // el cálculo por elementos dejó vacío.
+        $areas_sin_consumo = array();
+        foreach ($ids_areas as $id_area) {
+            if (count($resultado[$id_area]['productos']) == 0) {
+                $areas_sin_consumo[] = $id_area;
+            }
+        }
+
+        if (count($areas_sin_consumo) > 0) {
+            $general = self::obtenerConsumoGeneral($db, $id_proceso, $areas_sin_consumo);
+            foreach ($general as $id_area => $productos) {
+                $resultado[$id_area]['productos'] = $productos;
+            }
+        }
+
+        return $resultado;
+    }
+
+    /**
+     * Consumo general fijo por área/proceso para las áreas indicadas.
+     * Devuelve las cantidades con la misma forma que el cálculo por elementos, para
+     * que crearRapido y getRapidoPreview las traten igual sin distinguir el origen.
+     * Mapa id_area => [ productos ].
+     */
+    private static function obtenerConsumoGeneral($db, $id_proceso, array $ids_areas)
+    {
+        $resultado = array();
+        foreach ($ids_areas as $id_area) {
+            $resultado[$id_area] = array();
+        }
+
+        if (count($ids_areas) == 0) {
+            return $resultado;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($ids_areas), '?'));
+
+        $sentence = $db->prepare("
+            SELECT
+                c.id_area_fisica,
+                c.id_producto_limpieza,
+                p.id as id_producto,
+                p.nombre,
+                p.stock_actual,
+                c.cantidad,
+                c.id_unidad_medida,
+                um.abreviatura
+            FROM areas_fisicas_x_procesos_limpieza_consumo c
+            INNER JOIN productos_limpieza pl ON c.id_producto_limpieza = pl.id
+            INNER JOIN productos p ON pl.id_producto = p.id
+            INNER JOIN unidades_medida um ON c.id_unidad_medida = um.id
+            WHERE c.id_tipo_proceso_limpieza = ?
+                AND c.activo = 1
+                AND p.activo = 1
+                AND c.id_tenant = ?
+                AND c.id_area_fisica IN ($placeholders)
+        ");
+        $sentence->execute(array_merge([$id_proceso, TenantContext::id()], $ids_areas));
+
+        foreach ($sentence->fetchAll() as $fila) {
+            $resultado[$fila['id_area_fisica']][] = array(
+                'id_producto_limpieza' => $fila['id_producto_limpieza'],
+                'id_producto' => $fila['id_producto'],
+                'nombre' => $fila['nombre'],
+                'stock_actual' => (float) $fila['stock_actual'],
+                'id_unidad_medida' => $fila['id_unidad_medida'],
+                'abreviatura' => $fila['abreviatura'],
+                'cantidad' => round((float) $fila['cantidad'], 1)
+            );
+        }
+
         return $resultado;
     }
 
