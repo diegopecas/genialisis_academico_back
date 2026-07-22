@@ -58,6 +58,7 @@ class AreasFisicas
         $descripcion = Flight::request()->data['descripcion'] ?? null;
         $ubicacion = Flight::request()->data['ubicacion'] ?? null;
         $capacidad = Flight::request()->data['capacidad'] ?? null;
+        $mobiliario_general = Flight::request()->data['mobiliario_general'] ?? null;
 
         $sentence = $db->prepare("
             INSERT INTO areas_fisicas(
@@ -67,6 +68,7 @@ class AreasFisicas
                 descripcion,
                 ubicacion,
                 capacidad,
+                mobiliario_general,
                 activo,
                 fecha_registro
             ) VALUES (
@@ -76,6 +78,7 @@ class AreasFisicas
                 :descripcion,
                 :ubicacion,
                 :capacidad,
+                :mobiliario_general,
                 1,
                 NOW()
             )
@@ -88,6 +91,7 @@ class AreasFisicas
         $sentence->bindParam(':descripcion', $descripcion);
         $sentence->bindParam(':ubicacion', $ubicacion);
         $sentence->bindParam(':capacidad', $capacidad);
+        $sentence->bindParam(':mobiliario_general', $mobiliario_general);
         $sentence->execute();
 
         $id = $idArea;
@@ -103,6 +107,7 @@ class AreasFisicas
         $descripcion = Flight::request()->data['descripcion'] ?? null;
         $ubicacion = Flight::request()->data['ubicacion'] ?? null;
         $capacidad = Flight::request()->data['capacidad'] ?? null;
+        $mobiliario_general = Flight::request()->data['mobiliario_general'] ?? null;
         $activo = Flight::request()->data['activo'] ?? 1;
 
         $sentence = $db->prepare("
@@ -111,6 +116,7 @@ class AreasFisicas
                 descripcion = :descripcion,
                 ubicacion = :ubicacion,
                 capacidad = :capacidad,
+                mobiliario_general = :mobiliario_general,
                 activo = :activo
             WHERE id = :id AND id_tenant = :id_tenant
         ");
@@ -119,6 +125,7 @@ class AreasFisicas
         $sentence->bindParam(':descripcion', $descripcion);
         $sentence->bindParam(':ubicacion', $ubicacion);
         $sentence->bindParam(':capacidad', $capacidad);
+        $sentence->bindParam(':mobiliario_general', $mobiliario_general);
         $sentence->bindParam(':activo', $activo);
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);

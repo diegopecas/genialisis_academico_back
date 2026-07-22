@@ -1823,6 +1823,7 @@ class RegistrosLimpieza
                 af.id as id_area_fisica,
                 af.nombre as area,
                 af.ubicacion,
+                af.mobiliario_general,
                 tp.nombre as proceso,
                 er.nombre as estado,
                 TRIM(CONCAT_WS(' ', pe.primer_nombre, pe.segundo_nombre,
