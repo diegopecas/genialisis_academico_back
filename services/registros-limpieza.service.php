@@ -896,27 +896,33 @@ class RegistrosLimpieza
         );
         $columnaHoy = $columnasDia[(int) date('N')];
 
-        // Áreas configuradas y activas para el proceso, en orden de prioridad
+        // Todas las áreas activas. Las que tienen configuración para el proceso traen
+        // su tiempo/prioridad/día; las que no, quedan con valores por defecto (LEFT JOIN).
+        // Así se puede registrar aseo en cualquier área sin configurarla antes.
         $sentence = $db->prepare("
             SELECT
                 af.id,
                 af.nombre,
                 af.descripcion,
                 af.ubicacion,
-                axp.prioridad,
-                axp.tiempo_estimado_minutos,
+                COALESCE(axp.prioridad, 999) as prioridad,
+                COALESCE(axp.tiempo_estimado_minutos, 0) as tiempo_estimado_minutos,
                 axp.hora_sugerida,
-                axp.$columnaHoy as aplica_hoy
-            FROM areas_fisicas_x_procesos_limpieza axp
-            INNER JOIN areas_fisicas af ON axp.id_area_fisica = af.id
-            WHERE axp.id_tipo_proceso_limpieza = :id_proceso
+                COALESCE(axp.$columnaHoy, 0) as aplica_hoy,
+                CASE WHEN axp.id_area_fisica IS NULL THEN 0 ELSE 1 END as tiene_config
+            FROM areas_fisicas af
+            LEFT JOIN areas_fisicas_x_procesos_limpieza axp
+                ON axp.id_area_fisica = af.id
+                AND axp.id_tipo_proceso_limpieza = :id_proceso
                 AND axp.activo = 1
-                AND af.activo = 1
                 AND axp.id_tenant = :id_tenant
-            ORDER BY axp.prioridad ASC, af.nombre ASC
+            WHERE af.activo = 1
+                AND af.id_tenant = :id_tenant2
+            ORDER BY COALESCE(axp.prioridad, 999) ASC, af.nombre ASC
         ");
         $sentence->bindParam(':id_proceso', $id_proceso);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant2', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $areas = $sentence->fetchAll();
 
@@ -967,11 +973,15 @@ class RegistrosLimpieza
             $area['aplica_hoy'] = ((int) $area['aplica_hoy']) === 1;
             $area['prioridad'] = (int) $area['prioridad'];
             $area['tiempo_estimado_minutos'] = (int) ($area['tiempo_estimado_minutos'] ?? 0);
+            $area['tiene_config'] = ((int) $area['tiene_config']) === 1;
             $area['total_elementos'] = count($datos['elementos']);
             $area['total_mobiliario'] = count($datos['mobiliario']);
             $area['productos'] = $datos['productos'];
 
-            // Si el proceso nunca se ha registrado, se premarcan las áreas que aplican hoy
+            // Premarcado: si el proceso ya se registró, se premarcan las áreas de ese
+            // último registro (sin importar si tienen config). Si nunca se ha registrado,
+            // se premarcan solo las que aplican hoy por configuración. Un área sin config
+            // e inédita aparece desmarcada, para marcarla a propósito.
             $area['preseleccionada'] = $ultima_fecha
                 ? isset($areas_ultima[$area['id']])
                 : $area['aplica_hoy'];
@@ -1763,5 +1773,253 @@ class RegistrosLimpieza
             error_log("Error en RegistrosLimpieza::supervisarLote: " . $e->getMessage());
             Flight::json(array('error' => $e->getMessage()), 500);
         }
+    }
+
+    /**
+     * Devuelve los registros de aseo de un rango de fechas y un proceso, con el
+     * mobiliario aseado agrupado por tipo y el consumo total, para el reporte de
+     * cumplimiento. Filtros: fecha_desde, fecha_hasta, id_proceso (requeridos);
+     * id_area (opcional, para una sola área).
+     * Usado por la pantalla de Reporte de Aseo.
+     */
+    public static function getReporteAseo()
+    {
+        $db = Flight::db();
+
+        $fecha_desde = Flight::request()->query['fecha_desde'] ??
+            Flight::request()->query->fecha_desde ??
+            $_GET['fecha_desde'] ??
+            null;
+
+        $fecha_hasta = Flight::request()->query['fecha_hasta'] ??
+            Flight::request()->query->fecha_hasta ??
+            $_GET['fecha_hasta'] ??
+            null;
+
+        $id_proceso = Flight::request()->query['id_proceso'] ??
+            Flight::request()->query->id_proceso ??
+            $_GET['id_proceso'] ??
+            null;
+
+        $id_area = Flight::request()->query['id_area'] ??
+            Flight::request()->query->id_area ??
+            $_GET['id_area'] ??
+            null;
+
+        if (!$fecha_desde || !$fecha_hasta || !$id_proceso) {
+            Flight::json(array('error' => 'Faltan parámetros requeridos (fecha_desde, fecha_hasta, id_proceso)'), 400);
+            return;
+        }
+
+        // Registros del rango + proceso, ya realizados o supervisados
+        $sql = "
+            SELECT
+                rl.id,
+                rl.fecha,
+                rl.hora_inicio,
+                rl.hora_fin,
+                rl.id_estado,
+                rl.observaciones,
+                af.id as id_area_fisica,
+                af.nombre as area,
+                af.ubicacion,
+                tp.nombre as proceso,
+                er.nombre as estado,
+                TRIM(CONCAT_WS(' ', pe.primer_nombre, pe.segundo_nombre,
+                                    pe.primer_apellido, pe.segundo_apellido)) as ejecutor,
+                TRIM(CONCAT_WS(' ', ps.primer_nombre, ps.segundo_nombre,
+                                    ps.primer_apellido, ps.segundo_apellido)) as supervisor
+            FROM registros_limpieza rl
+            INNER JOIN areas_fisicas af ON rl.id_area_fisica = af.id
+            INNER JOIN tipos_proceso_limpieza tp ON rl.id_tipo_proceso_limpieza = tp.id
+            LEFT JOIN estados_registro_limpieza er ON rl.id_estado = er.id
+            LEFT JOIN usuarios ue_user ON rl.id_usuario_ejecutor = ue_user.id
+            LEFT JOIN personas pe ON ue_user.id_persona = pe.id
+            LEFT JOIN usuarios us_user ON rl.id_usuario_supervisor = us_user.id
+            LEFT JOIN personas ps ON us_user.id_persona = ps.id
+            WHERE rl.id_tipo_proceso_limpieza = :id_proceso
+                AND rl.fecha BETWEEN :fecha_desde AND :fecha_hasta
+                AND rl.id_estado IN (3, 4)
+                AND rl.id_tenant = :id_tenant
+        ";
+        if ($id_area) {
+            $sql .= " AND rl.id_area_fisica = :id_area";
+        }
+        $sql .= " ORDER BY af.nombre, rl.fecha";
+
+        $sentence = $db->prepare($sql);
+        $sentence->bindParam(':id_proceso', $id_proceso);
+        $sentence->bindParam(':fecha_desde', $fecha_desde);
+        $sentence->bindParam(':fecha_hasta', $fecha_hasta);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        if ($id_area) {
+            $sentence->bindParam(':id_area', $id_area);
+        }
+        $sentence->execute();
+        $registros = $sentence->fetchAll();
+
+        if (count($registros) == 0) {
+            Flight::json(array('registros' => array(), 'productos_usados' => array()));
+            return;
+        }
+
+        $ids = array_column($registros, 'id');
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+
+        // Mobiliario aseado por registro, con su tipo. Se cuenta cuántos ítems de
+        // cada tipo entraron en cada registro.
+        $sentence = $db->prepare("
+            SELECT
+                rld.id_registro_limpieza,
+                COALESCE(tpm.nombre, 'Sin clasificar') as tipo,
+                p.nombre as mueble,
+                pmxa.cantidad
+            FROM registros_limpieza_detalle rld
+            INNER JOIN productos_mobiliario pm ON rld.id_producto_mobiliario = pm.id
+            INNER JOIN productos p ON pm.id_producto = p.id
+            LEFT JOIN tipos_producto_mobiliario tpm ON pm.id_tipo_producto_mobiliario = tpm.id
+            LEFT JOIN productos_mobiliario_x_areas_fisicas pmxa
+                ON pmxa.id_producto_mobiliario = pm.id
+            WHERE rld.id_producto_mobiliario IS NOT NULL
+                AND rld.id_registro_limpieza IN ($placeholders)
+            ORDER BY tpm.nombre, p.nombre
+        ");
+        $sentence->execute($ids);
+
+        $mobiliario_por_registro = array();
+        foreach ($sentence->fetchAll() as $fila) {
+            $id_reg = $fila['id_registro_limpieza'];
+            if (!isset($mobiliario_por_registro[$id_reg])) {
+                $mobiliario_por_registro[$id_reg] = array();
+            }
+            $mobiliario_por_registro[$id_reg][] = array(
+                'tipo' => $fila['tipo'],
+                'mueble' => $fila['mueble'],
+                'cantidad' => $fila['cantidad'] !== null ? (int) $fila['cantidad'] : 1
+            );
+        }
+
+        // Consumo de productos por registro (con modo de uso, para el encabezado)
+        $sentence = $db->prepare("
+            SELECT
+                rlc.id_registro_limpieza,
+                pl.id as id_producto_limpieza,
+                p.nombre as producto,
+                pl.modo_uso,
+                rlc.cantidad_consumida,
+                um.abreviatura
+            FROM registros_limpieza_consumos rlc
+            INNER JOIN productos_limpieza pl ON rlc.id_producto_limpieza = pl.id
+            INNER JOIN productos p ON pl.id_producto = p.id
+            LEFT JOIN unidades_medida um ON rlc.id_unidad_medida = um.id
+            WHERE rlc.id_registro_limpieza IN ($placeholders)
+            ORDER BY p.nombre
+        ");
+        $sentence->execute($ids);
+
+        $consumo_por_registro = array();
+        $productos_usados = array(); // Consolidado global: producto => modo_uso (sin cantidades)
+        foreach ($sentence->fetchAll() as $fila) {
+            $id_reg = $fila['id_registro_limpieza'];
+            if (!isset($consumo_por_registro[$id_reg])) {
+                $consumo_por_registro[$id_reg] = array();
+            }
+            $consumo_por_registro[$id_reg][] = array(
+                'producto' => $fila['producto'],
+                'cantidad' => (float) $fila['cantidad_consumida'],
+                'abreviatura' => $fila['abreviatura']
+            );
+
+            // El consolidado guarda cada producto una sola vez, con su modo de uso
+            if (!isset($productos_usados[$fila['id_producto_limpieza']])) {
+                $productos_usados[$fila['id_producto_limpieza']] = array(
+                    'producto' => $fila['producto'],
+                    'modo_uso' => $fila['modo_uso']
+                );
+            }
+        }
+
+        // Se arma la respuesta agrupando el mobiliario por tipo (conteo por tipo)
+        foreach ($registros as &$registro) {
+            $items = $mobiliario_por_registro[$registro['id']] ?? array();
+
+            $por_tipo = array();
+            foreach ($items as $item) {
+                if (!isset($por_tipo[$item['tipo']])) {
+                    $por_tipo[$item['tipo']] = 0;
+                }
+                $por_tipo[$item['tipo']]++;
+            }
+
+            $resumen_tipos = array();
+            foreach ($por_tipo as $tipo => $conteo) {
+                $resumen_tipos[] = array('tipo' => $tipo, 'conteo' => $conteo);
+            }
+
+            $registro['mobiliario'] = $items;
+            $registro['resumen_tipos'] = $resumen_tipos;
+            $registro['consumos'] = $consumo_por_registro[$registro['id']] ?? array();
+        }
+        unset($registro);
+
+        // Se devuelve la lista de registros + el consolidado de productos usados
+        // (con modo de uso, sin cantidades) para mostrarlo en el encabezado del reporte.
+        Flight::json(array(
+            'registros' => $registros,
+            'productos_usados' => array_values($productos_usados)
+        ));
+    }
+
+    /**
+     * Devuelve los productos (distintos, con su modo de uso, SIN cantidades) que se
+     * usarían al asear las áreas indicadas en un proceso. Reutiliza el mismo cálculo
+     * que el registro rápido, pero consolida por producto y agrega el modo de uso.
+     * Usado por el modal "Productos y modo de uso" del registro rápido.
+     */
+    public static function getProductosModoUso()
+    {
+        $db = Flight::db();
+
+        $id_proceso = Flight::request()->data['id_proceso'] ?? null;
+        $areas = Flight::request()->data['areas'] ?? array();
+
+        if (!$id_proceso || !is_array($areas) || count($areas) == 0) {
+            Flight::json(array('error' => 'Debe indicar el proceso y al menos un área'), 400);
+            return;
+        }
+
+        // Mismo cálculo que usa el registro rápido (elementos + mobiliario + respaldo)
+        $resultado = self::calcularAreasProceso($db, $id_proceso, $areas);
+
+        // Consolidar los productos distintos usados en todas las áreas
+        $ids_productos = array();
+        foreach ($resultado as $area) {
+            foreach (($area['productos'] ?? array()) as $prod) {
+                $ids_productos[$prod['id_producto_limpieza']] = $prod['nombre'];
+            }
+        }
+
+        if (count($ids_productos) == 0) {
+            Flight::json(array());
+            return;
+        }
+
+        // Traer el modo de uso de cada producto de limpieza
+        $ids = array_keys($ids_productos);
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+
+        $sentence = $db->prepare("
+            SELECT
+                pl.id as id_producto_limpieza,
+                p.nombre as producto,
+                pl.modo_uso
+            FROM productos_limpieza pl
+            INNER JOIN productos p ON pl.id_producto = p.id
+            WHERE pl.id IN ($placeholders)
+            ORDER BY p.nombre
+        ");
+        $sentence->execute($ids);
+
+        Flight::json($sentence->fetchAll());
     }
 }
