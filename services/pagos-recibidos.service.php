@@ -1209,107 +1209,66 @@ class PagosRecibidos
                 return;
             }
 
+            // Configuración de IA del tenant: se cargan todas las claves en un solo arreglo.
             $db = Flight::db();
-            $stmt = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = 'gemini_api_key' AND id_tenant = :id_tenant LIMIT 1");
-            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $stmt->execute();
-            $config = $stmt->fetch();
+            $stmtConfig = $db->prepare("SELECT clave, valor FROM ia_configuracion WHERE id_tenant = :id_tenant");
+            $stmtConfig->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtConfig->execute();
+            $config = array();
+            foreach ($stmtConfig->fetchAll(PDO::FETCH_ASSOC) as $filaConfig) {
+                $config[$filaConfig['clave']] = $filaConfig['valor'];
+            }
 
-            if (!$config || empty($config['valor'])) {
+            if (empty($config['gemini_api_key'])) {
                 Flight::json(array('error' => 'API Key de Gemini no configurada en ia_configuracion'), 500);
                 return;
             }
 
-            $apiKey = $config['valor'];
-
-            $stmtEstado = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = 'estado_servicio' AND id_tenant = :id_tenant LIMIT 1");
-            $stmtEstado->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $stmtEstado->execute();
-            $estado = $stmtEstado->fetch();
-
-            if ($estado && $estado['valor'] !== 'activo') {
+            if (isset($config['estado_servicio']) && $config['estado_servicio'] !== 'activo') {
                 Flight::json(array('error' => 'El servicio de IA se encuentra pausado o en mantenimiento'), 503);
                 return;
             }
 
+            // Preparar el archivo para la IA.
             $contenidoArchivo = file_get_contents($archivo['tmp_name']);
             $base64 = base64_encode($contenidoArchivo);
-            $mimeType = ($extension === 'pdf') ? 'application/pdf' : 'image/' . ($extension === 'jpg' ? 'jpeg' : $extension);
+            $esPdf = ($extension === 'pdf');
+            $mimeType = $esPdf ? 'application/pdf' : 'image/' . ($extension === 'jpg' ? 'jpeg' : $extension);
 
+            // Se pide el monto como TEXTO literal (tal como está impreso). El número
+            // entero se calcula en el backend (normalizarMontoColombiano), para no
+            // depender de que la IA convierta bien el formato colombiano.
             $prompt = "Analiza este comprobante de pago bancario colombiano y extrae ÚNICAMENTE los siguientes datos en formato JSON estricto. "
                 . "No incluyas explicaciones ni texto adicional, SOLO el JSON:\n\n"
                 . "{\n"
-                . "  \"valor\": (número entero, solo dígitos, sin puntos ni comas),\n"
+                . "  \"monto_texto\": (string con el monto TAL CUAL aparece impreso en el comprobante, conservando sus puntos y comas, por ejemplo \"35.000,00\" o \"1.200.000\"),\n"
                 . "  \"referencia\": (string con el número de referencia, aprobación o comprobante),\n"
                 . "  \"fecha\": (string en formato YYYY-MM-DD),\n"
                 . "  \"banco\": (string con el nombre de la entidad o banco emisor del comprobante, por ejemplo: Nequi, Bancolombia, Daviplata, etc.)\n"
                 . "}\n\n"
                 . "Si no puedes identificar algún campo, usa null para ese campo.\n"
-                . "IMPORTANTE sobre el valor:\n"
-                . "- Este es un comprobante colombiano donde el PUNTO es separador de MILES y la COMA es separador de decimales.\n"
-                . "- Ejemplo: '$150.000,00' significa CIENTO CINCUENTA MIL pesos = 150000\n"
-                . "- Ejemplo: '$1.200.000,00' significa UN MILLÓN DOSCIENTOS MIL pesos = 1200000\n"
-                . "- Elimina los puntos de miles y los decimales, retorna solo el número entero.\n"
-                . "- El valor debe ser un número entero sin separadores.\n"
+                . "IMPORTANTE sobre el monto_texto:\n"
+                . "- NO calcules ni conviertas el número: devuélvelo exactamente como está impreso, incluyendo los puntos y las comas.\n"
+                . "- Ejemplo: si el comprobante muestra '$ 35.000,00', devuelve \"35.000,00\".\n"
+                . "- Ejemplo: si el comprobante muestra '$1.200.000', devuelve \"1.200.000\".\n"
+                . "- Devuelve solo el número con sus separadores, sin el símbolo de peso ni texto adicional.\n"
                 . "IMPORTANTE sobre el banco:\n"
                 . "- Devuelve el nombre de la entidad financiera que emitió el comprobante (la app o banco de origen).";
 
-            $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" . $apiKey;
+            // La cadena de proveedores (Gemini -> OpenRouter -> Groq) y los reintentos
+            // los maneja IaVision; acá solo interpretamos el texto que devuelva.
+            $resultado = IaVision::extraerDeImagen($config, $base64, $mimeType, $prompt, $esPdf);
 
-            $payload = array(
-                'contents' => array(
-                    array(
-                        'parts' => array(
-                            array(
-                                'inlineData' => array(
-                                    'mimeType' => $mimeType,
-                                    'data' => $base64
-                                )
-                            ),
-                            array(
-                                'text' => $prompt
-                            )
-                        )
-                    )
-                ),
-                'generationConfig' => array(
-                    'temperature' => 0.1,
-                    'maxOutputTokens' => 500
-                )
-            );
+            // Registro de uso por proveedor (best-effort; nunca rompe la lectura).
+            IaVision::registrarUso($db, TenantContext::id(), $resultado);
 
-            $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, $url);
-            curl_setopt($ch, CURLOPT_POST, true);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
-            curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json'));
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-
-            $response = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $curlError = curl_error($ch);
-            curl_close($ch);
-
-            if ($curlError) {
-                Flight::json(array('error' => 'Error de conexión con el servicio de IA: ' . $curlError), 500);
+            if (!$resultado['success']) {
+                Flight::json(array('error' => 'No se pudo analizar el comprobante con ningún proveedor de IA: ' . $resultado['error']), 503);
                 return;
             }
 
-            if ($httpCode !== 200) {
-                error_log("Error HTTP Gemini: " . $httpCode . " - " . $response);
-                Flight::json(array('error' => 'Error en el servicio de IA (HTTP ' . $httpCode . ')'), 500);
-                return;
-            }
-
-            $respuestaGemini = json_decode($response, true);
-
-            if (!$respuestaGemini || !isset($respuestaGemini['candidates'][0]['content']['parts'][0]['text'])) {
-                Flight::json(array('error' => 'No se pudo interpretar la respuesta de la IA'), 500);
-                return;
-            }
-
-            $textoRespuesta = $respuestaGemini['candidates'][0]['content']['parts'][0]['text'];
+            // Limpiar posibles cercos de código markdown y decodificar el JSON.
+            $textoRespuesta = $resultado['texto'];
             $textoRespuesta = preg_replace('/```json\s*/', '', $textoRespuesta);
             $textoRespuesta = preg_replace('/```\s*/', '', $textoRespuesta);
             $textoRespuesta = trim($textoRespuesta);
@@ -1324,21 +1283,15 @@ class PagosRecibidos
                 return;
             }
 
+            // Registrar uso: contador de mensajes y acumulado de tokens consumidos.
             $stmtContador = $db->prepare("UPDATE ia_configuracion SET valor = valor + 1, fecha_actualizacion = NOW() WHERE clave = 'mensajes_generados_hoy' AND id_tenant = :id_tenant");
             $stmtContador->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtContador->execute();
 
-            // Leer tokens consumidos de la respuesta de Gemini
-            $tokensInput = 0;
-            $tokensOutput = 0;
-            $tokensTotal = 0;
-            if (isset($respuestaGemini['usageMetadata'])) {
-                $tokensInput = isset($respuestaGemini['usageMetadata']['promptTokenCount']) ? intval($respuestaGemini['usageMetadata']['promptTokenCount']) : 0;
-                $tokensOutput = isset($respuestaGemini['usageMetadata']['candidatesTokenCount']) ? intval($respuestaGemini['usageMetadata']['candidatesTokenCount']) : 0;
-                $tokensTotal = $tokensInput + $tokensOutput;
-            }
+            $tokensInput = $resultado['tokens']['input'];
+            $tokensOutput = $resultado['tokens']['output'];
+            $tokensTotal = $resultado['tokens']['total'];
 
-            // Acumular tokens consumidos
             if ($tokensTotal > 0) {
                 $stmtTokens = $db->prepare("UPDATE ia_configuracion SET valor = valor + :tokens, fecha_actualizacion = NOW() WHERE clave = 'tokens_consumidos_hoy' AND id_tenant = :id_tenant");
                 $stmtTokens->bindParam(':tokens', $tokensTotal);
@@ -1346,10 +1299,22 @@ class PagosRecibidos
                 $stmtTokens->execute();
             }
 
+            // El monto se normaliza en el backend a partir del texto literal del
+            // comprobante (formato colombiano, sin centavos), no del cálculo de la IA.
+            $montoTexto = isset($datosExtraidos['monto_texto']) ? $datosExtraidos['monto_texto'] : null;
+            $valorNormalizado = self::normalizarMontoColombiano($montoTexto);
+
+            // Compatibilidad: si la IA no devolvió monto_texto usable, intentar con un
+            // posible campo 'valor' (respuestas de versiones anteriores del prompt).
+            if ($valorNormalizado === null && isset($datosExtraidos['valor'])) {
+                $valorNormalizado = self::normalizarMontoColombiano($datosExtraidos['valor']);
+            }
+
             Flight::json(array(
                 'success' => true,
+                'proveedor' => $resultado['proveedor'],
                 'datos' => array(
-                    'valor' => isset($datosExtraidos['valor']) ? intval($datosExtraidos['valor']) : null,
+                    'valor' => $valorNormalizado,
                     'referencia' => isset($datosExtraidos['referencia']) ? trim($datosExtraidos['referencia']) : null,
                     'fecha' => isset($datosExtraidos['fecha']) ? $datosExtraidos['fecha'] : null,
                     'banco' => isset($datosExtraidos['banco']) ? trim($datosExtraidos['banco']) : null
@@ -1364,6 +1329,48 @@ class PagosRecibidos
             error_log("Error en analizarComprobante: " . $e->getMessage());
             Flight::json(array('error' => 'Error interno al procesar el comprobante: ' . $e->getMessage()), 500);
         }
+    }
+
+    /**
+     * Normaliza un monto en formato colombiano a un entero de pesos.
+     * Convención colombiana: el PUNTO es separador de miles y la COMA es separador
+     * de decimales. En Colombia no se manejan centavos, así que todo lo que aparezca
+     * después de la coma (los centavos) se descarta.
+     *
+     * Ejemplos:
+     *   "35.000,00"   -> 35000
+     *   "$ 35.000,00" -> 35000
+     *   "1.200.000"   -> 1200000
+     *   "35000"       -> 35000
+     *
+     * @param mixed $texto Monto tal como viene del comprobante (string, int o null)
+     * @return int|null   Entero de pesos, o null si no hay dígitos válidos
+     */
+    private static function normalizarMontoColombiano($texto)
+    {
+        if ($texto === null) {
+            return null;
+        }
+
+        // Dejar solo dígitos, puntos y comas (quita '$', espacios, letras, etc.)
+        $limpio = preg_replace('/[^0-9.,]/', '', (string)$texto);
+        if ($limpio === '') {
+            return null;
+        }
+
+        // Si hay coma (separador decimal), descartar los centavos: cortar en la primera coma.
+        $posComa = strpos($limpio, ',');
+        if ($posComa !== false) {
+            $limpio = substr($limpio, 0, $posComa);
+        }
+
+        // Quitar los puntos de miles y cualquier residuo no numérico.
+        $soloDigitos = preg_replace('/[^0-9]/', '', $limpio);
+        if ($soloDigitos === '') {
+            return null;
+        }
+
+        return intval($soloDigitos);
     }
 
     /**
