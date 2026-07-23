@@ -1624,6 +1624,7 @@ class PagosRecibidos
      *
      * Respuesta: {
      *   referencia_existente: [ {id, fecha, valor_recibido, id_tipo_pago, tipo_pago, nombre_estudiante}, ... ],
+     *   total_referencia:     suma de valor_recibido de referencia_existente,
      *   posible_duplicado:    [ {id, fecha, valor_recibido, id_tipo_pago, tipo_pago, nombre_estudiante}, ... ]
      * }
      *
@@ -1735,8 +1736,18 @@ class PagosRecibidos
                 unset($rowD);
             }
 
+            // Total ya registrado con esa referencia. Sirve para validar que la
+            // suma de pagos de un mismo comprobante no exceda su valor (un
+            // comprobante puede repartirse entre varios estudiantes).
+            // Se calcula sobre el resultado ya consultado: no agrega consultas.
+            $totalReferencia = 0;
+            foreach ($referenciaExistente as $rowT) {
+                $totalReferencia += floatval($rowT['valor_recibido']);
+            }
+
             Flight::json(array(
                 'referencia_existente' => $referenciaExistente,
+                'total_referencia' => $totalReferencia,
                 'posible_duplicado' => $posibleDuplicado
             ));
         } catch (Exception $e) {
