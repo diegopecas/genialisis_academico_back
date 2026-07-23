@@ -2313,4 +2313,389 @@ class RegistrosLimpieza
         $sentence->execute();
         return $sentence->fetchAll();
     }
+
+    /**
+     * Lista los registros de aseo que caen en un filtro, para editarlos o eliminarlos
+     * en lote. Filtra por rango de fechas (obligatorio) y, opcionalmente, por proceso,
+     * área y estado.
+     */
+    public static function getEdicionMasivaPreview()
+    {
+        $db = Flight::db();
+
+        $fecha_desde = Flight::request()->query['fecha_desde'] ?? $_GET['fecha_desde'] ?? null;
+        $fecha_hasta = Flight::request()->query['fecha_hasta'] ?? $_GET['fecha_hasta'] ?? null;
+        $id_proceso = Flight::request()->query['id_proceso'] ?? $_GET['id_proceso'] ?? null;
+        $id_area = Flight::request()->query['id_area'] ?? $_GET['id_area'] ?? null;
+        $id_estado = Flight::request()->query['id_estado'] ?? $_GET['id_estado'] ?? null;
+
+        if (!$fecha_desde || !$fecha_hasta) {
+            Flight::json(array('error' => 'Debe indicar el rango de fechas'), 400);
+            return;
+        }
+        if ($fecha_desde > $fecha_hasta) {
+            Flight::json(array('error' => 'La fecha inicial no puede ser mayor que la final'), 400);
+            return;
+        }
+
+        $where = " WHERE rl.id_tenant = :id_tenant AND rl.fecha BETWEEN :desde AND :hasta ";
+        if ($id_proceso) {
+            $where .= " AND rl.id_tipo_proceso_limpieza = :id_proceso ";
+        }
+        if ($id_area) {
+            $where .= " AND rl.id_area_fisica = :id_area ";
+        }
+        if ($id_estado) {
+            $where .= " AND rl.id_estado = :id_estado ";
+        }
+
+        $sentence = $db->prepare("
+            SELECT
+                rl.id,
+                rl.fecha,
+                rl.hora_inicio,
+                rl.hora_fin,
+                rl.id_estado,
+                rl.observaciones,
+                af.nombre as area,
+                tpl.nombre as proceso,
+                erl.nombre as estado,
+                TRIM(CONCAT_WS(' ', ue.primer_nombre, ue.primer_apellido)) as ejecutor,
+                TRIM(CONCAT_WS(' ', us.primer_nombre, us.primer_apellido)) as supervisor,
+                (SELECT COALESCE(SUM(cantidad_consumida), 0)
+                   FROM registros_limpieza_consumos
+                  WHERE id_registro_limpieza = rl.id) as total_consumido
+            FROM registros_limpieza rl
+            INNER JOIN areas_fisicas af ON rl.id_area_fisica = af.id
+            INNER JOIN tipos_proceso_limpieza tpl ON rl.id_tipo_proceso_limpieza = tpl.id
+            INNER JOIN estados_registro_limpieza erl ON rl.id_estado = erl.id
+            LEFT JOIN usuarios ue_user ON rl.id_usuario_ejecutor = ue_user.id
+            LEFT JOIN personas ue ON ue_user.id_persona = ue.id
+            LEFT JOIN usuarios us_user ON rl.id_usuario_supervisor = us_user.id
+            LEFT JOIN personas us ON us_user.id_persona = us.id
+            $where
+            ORDER BY rl.fecha DESC, af.nombre ASC
+        ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindParam(':desde', $fecha_desde);
+        $sentence->bindParam(':hasta', $fecha_hasta);
+        if ($id_proceso) {
+            $sentence->bindParam(':id_proceso', $id_proceso);
+        }
+        if ($id_area) {
+            $sentence->bindParam(':id_area', $id_area);
+        }
+        if ($id_estado) {
+            $sentence->bindValue(':id_estado', $id_estado, PDO::PARAM_INT);
+        }
+        $sentence->execute();
+
+        Flight::json($sentence->fetchAll());
+    }
+
+    /**
+     * Edita en lote los registros indicados. Solo se actualizan los campos que vengan
+     * en 'cambios'; los que no se envían quedan intactos.
+     * No toca el inventario ni los consumos: cambiar quién ejecutó, la fecha o la hora
+     * no altera lo que se gastó.
+     */
+    public static function editarLote()
+    {
+        $db = Flight::db();
+
+        try {
+            $db->beginTransaction();
+
+            $ids = Flight::request()->data['ids'] ?? array();
+            $cambios = Flight::request()->data['cambios'] ?? array();
+
+            if (!is_array($ids) || count($ids) == 0) {
+                throw new Exception('Debe seleccionar al menos un registro');
+            }
+            if (!is_array($cambios) || count($cambios) == 0) {
+                throw new Exception('Debe indicar al menos un cambio a aplicar');
+            }
+
+            // Campos permitidos en la edición masiva
+            $permitidos = array(
+                'fecha', 'hora_inicio', 'hora_fin',
+                'id_estado', 'id_usuario_ejecutor', 'id_usuario_supervisor'
+            );
+
+            $sets = array();
+            $valores = array();
+            foreach ($permitidos as $campo) {
+                if (array_key_exists($campo, $cambios)) {
+                    $sets[] = "$campo = :$campo";
+                    $valores[$campo] = $cambios[$campo] !== '' ? $cambios[$campo] : null;
+                }
+            }
+
+            if (count($sets) == 0) {
+                throw new Exception('Ninguno de los campos enviados se puede editar en lote');
+            }
+
+            // Marcadores con nombre para el IN (PDO no permite mezclar :nombre con ?)
+            $marcadores = array();
+            $ids_valores = array();
+            foreach (array_values($ids) as $i => $id) {
+                $marcadores[] = ':id' . $i;
+                $ids_valores[':id' . $i] = $id;
+            }
+            $placeholders = implode(',', $marcadores);
+
+            // Si se marca como Supervisado hay que tener supervisor: el del lote o el que ya tenga cada registro
+            if (isset($valores['id_estado']) && (int) $valores['id_estado'] === 4
+                && empty($valores['id_usuario_supervisor'])) {
+
+                $verifica = $db->prepare("
+                    SELECT COUNT(*) as sin_supervisor
+                    FROM registros_limpieza
+                    WHERE id_tenant = :id_tenant
+                        AND id_usuario_supervisor IS NULL
+                        AND id IN ($placeholders)
+                ");
+                $verifica->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                foreach ($ids_valores as $marcador => $valor) {
+                    $verifica->bindValue($marcador, $valor);
+                }
+                $verifica->execute();
+                $fila = $verifica->fetch();
+
+                if ((int) $fila['sin_supervisor'] > 0) {
+                    throw new Exception('Hay ' . $fila['sin_supervisor'] . ' registro(s) sin supervisor. '
+                        . 'Para marcarlos como Supervisado debe indicar también quién supervisó.');
+                }
+            }
+
+            $sql = "UPDATE registros_limpieza SET " . implode(', ', $sets)
+                 . " WHERE id_tenant = :id_tenant AND id IN ($placeholders)";
+
+            $sentence = $db->prepare($sql);
+            foreach ($valores as $campo => $valor) {
+                $sentence->bindValue(':' . $campo, $valor);
+            }
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            foreach ($ids_valores as $marcador => $valor) {
+                $sentence->bindValue($marcador, $valor);
+            }
+            $sentence->execute();
+
+            $db->commit();
+
+            Flight::json(array(
+                'success' => true,
+                'total_editados' => $sentence->rowCount()
+            ));
+        } catch (Exception $e) {
+            $db->rollBack();
+            error_log("Error en RegistrosLimpieza::editarLote: " . $e->getMessage());
+            Flight::json(array('error' => $e->getMessage()), 400);
+        }
+    }
+
+    /**
+     * Elimina en lote los registros indicados y devuelve al inventario lo que habían
+     * descontado. El movimiento original no se toca (queda como histórico): se genera
+     * un movimiento de entrada compensatorio con lo devuelto.
+     *
+     * Solo se devuelve el consumo que efectivamente movió inventario, es decir el que
+     * tiene id_movimiento_inventario. El consumo registrado cuando no había existencias
+     * no descontó nada, así que tampoco se devuelve.
+     */
+    public static function eliminarLote()
+    {
+        $db = Flight::db();
+
+        try {
+            $db->beginTransaction();
+
+            $ids = Flight::request()->data['ids'] ?? array();
+            $id_usuario = Flight::request()->data['id_usuario'] ?? null;
+
+            if (!is_array($ids) || count($ids) == 0) {
+                throw new Exception('Debe seleccionar al menos un registro');
+            }
+
+            // Marcadores con nombre para el IN
+            $marcadores = array();
+            $ids_valores = array();
+            foreach (array_values($ids) as $i => $id) {
+                $marcadores[] = ':id' . $i;
+                $ids_valores[':id' . $i] = $id;
+            }
+            $placeholders = implode(',', $marcadores);
+
+            // Consumo a devolver, consolidado por producto
+            $sentence = $db->prepare("
+                SELECT
+                    rlc.id_producto_limpieza,
+                    SUM(rlc.cantidad_consumida) as cantidad,
+                    p.nombre,
+                    p.stock_actual,
+                    p.precio_unitario
+                FROM registros_limpieza_consumos rlc
+                INNER JOIN productos p ON rlc.id_producto_limpieza = p.id
+                WHERE rlc.id_tenant = :id_tenant
+                    AND rlc.id_movimiento_inventario IS NOT NULL
+                    AND rlc.id_registro_limpieza IN ($placeholders)
+                GROUP BY rlc.id_producto_limpieza, p.nombre, p.stock_actual, p.precio_unitario
+            ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            foreach ($ids_valores as $marcador => $valor) {
+                $sentence->bindValue($marcador, $valor);
+            }
+            $sentence->execute();
+            $a_devolver = $sentence->fetchAll();
+
+            $productos_devueltos = array();
+
+            if (count($a_devolver) > 0) {
+                // Concepto dedicado para que la entrada quede identificable en inventario
+                $sentence = $db->prepare("
+                    SELECT id
+                    FROM conceptos_movimiento
+                    WHERE nombre = 'Entrada por Anulación de Aseo' AND id_tenant = :id_tenant
+                    LIMIT 1
+                ");
+                $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $sentence->execute();
+                $concepto = $sentence->fetch();
+
+                if (!$concepto) {
+                    throw new Exception("No existe el concepto de movimiento 'Entrada por Anulación de Aseo'. "
+                        . "Ejecute el script 12-concepto-anulacion-aseo.sql en esta base de datos.");
+                }
+
+                $observaciones_movimiento = 'Anulación de ' . count($ids) . ' registro(s) de aseo';
+
+                $sentence = $db->prepare("
+                    INSERT INTO movimientos_productos (
+                        id,
+                        id_tenant,
+                        fecha_movimiento,
+                        id_concepto_movimiento,
+                        id_estado,
+                        observaciones,
+                        id_usuario_registro
+                    ) VALUES (
+                        :id,
+                        :id_tenant,
+                        NOW(),
+                        :id_concepto_movimiento,
+                        3, -- Aprobado
+                        :observaciones,
+                        :id_usuario
+                    )
+                ");
+                $id_movimiento = Uuid::generar();
+                $sentence->bindValue(':id', $id_movimiento);
+                $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $sentence->bindParam(':id_concepto_movimiento', $concepto['id']);
+                $sentence->bindParam(':observaciones', $observaciones_movimiento);
+                $sentence->bindParam(':id_usuario', $id_usuario);
+                $sentence->execute();
+
+                foreach ($a_devolver as $item) {
+                    $cantidad = round($item['cantidad'], 2);
+                    if ($cantidad <= 0) {
+                        continue;
+                    }
+
+                    $sentence = $db->prepare("
+                        INSERT INTO movimientos_productos_detalle (
+                            id,
+                            id_tenant,
+                            id_movimiento,
+                            id_producto,
+                            cantidad,
+                            stock_anterior,
+                            precio_unitario
+                        ) VALUES (
+                            :id,
+                            :id_tenant,
+                            :id_movimiento,
+                            :id_producto,
+                            :cantidad,
+                            :stock_anterior,
+                            :precio_unitario
+                        )
+                    ");
+                    $sentence->bindValue(':id', Uuid::generar());
+                    $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $sentence->bindParam(':id_movimiento', $id_movimiento);
+                    $sentence->bindParam(':id_producto', $item['id_producto_limpieza']);
+                    $sentence->bindParam(':cantidad', $cantidad);
+                    $sentence->bindParam(':stock_anterior', $item['stock_actual']);
+                    $sentence->bindParam(':precio_unitario', $item['precio_unitario']);
+                    $sentence->execute();
+
+                    // Devolver la cantidad al stock
+                    $sentence = $db->prepare("
+                        UPDATE productos
+                        SET stock_anterior = stock_actual,
+                            stock_actual = stock_actual + :cantidad,
+                            id_ultimo_movimiento = :id_movimiento,
+                            fecha_ultimo_movimiento = NOW()
+                        WHERE id = :id_producto AND id_tenant = :id_tenant
+                    ");
+                    $sentence->bindParam(':cantidad', $cantidad);
+                    $sentence->bindParam(':id_movimiento', $id_movimiento);
+                    $sentence->bindParam(':id_producto', $item['id_producto_limpieza']);
+                    $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $sentence->execute();
+
+                    $productos_devueltos[] = array(
+                        'producto' => $item['nombre'],
+                        'cantidad' => $cantidad
+                    );
+                }
+            }
+
+            // Borrar consumos, detalle y por último los registros
+            $sentence = $db->prepare("
+                DELETE FROM registros_limpieza_consumos
+                WHERE id_tenant = :id_tenant AND id_registro_limpieza IN ($placeholders)
+            ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            foreach ($ids_valores as $marcador => $valor) {
+                $sentence->bindValue($marcador, $valor);
+            }
+            $sentence->execute();
+
+            $sentence = $db->prepare("
+                DELETE FROM registros_limpieza_detalle
+                WHERE id_tenant = :id_tenant AND id_registro_limpieza IN ($placeholders)
+            ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            foreach ($ids_valores as $marcador => $valor) {
+                $sentence->bindValue($marcador, $valor);
+            }
+            $sentence->execute();
+
+            $sentence = $db->prepare("
+                DELETE FROM registros_limpieza
+                WHERE id_tenant = :id_tenant AND id IN ($placeholders)
+            ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            foreach ($ids_valores as $marcador => $valor) {
+                $sentence->bindValue($marcador, $valor);
+            }
+            $sentence->execute();
+
+            $total_eliminados = $sentence->rowCount();
+
+            $db->commit();
+
+            Flight::json(array(
+                'success' => true,
+                'total_eliminados' => $total_eliminados,
+                'productos_devueltos' => $productos_devueltos
+            ));
+        } catch (Exception $e) {
+            $db->rollBack();
+            error_log("Error en RegistrosLimpieza::eliminarLote: " . $e->getMessage());
+            Flight::json(array('error' => $e->getMessage()), 400);
+        }
+    }
 }
