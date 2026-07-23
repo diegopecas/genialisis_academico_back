@@ -5,6 +5,8 @@ Flight::route('GET /registros-limpieza/elementos-proceso', ['RegistrosLimpieza',
 Flight::route('GET /registros-limpieza/rapido-preview', ['RegistrosLimpieza', 'getRapidoPreview']);
 Flight::route('GET /registros-limpieza/pendientes-supervision', ['RegistrosLimpieza', 'getPendientesSupervision']);
 Flight::route('GET /registros-limpieza/reporte-aseo', ['RegistrosLimpieza', 'getReporteAseo']);
+Flight::route('GET /registros-limpieza/masivo-preview', ['RegistrosLimpieza', 'getMasivoPreview']);
+Flight::route('POST /registros-limpieza/masivo', ['RegistrosLimpieza', 'crearMasivo']);
 // CONSUMO GENERAL POR ÁREA Y PROCESO (antes de /@id para que Flight no lo tome como id)
 Flight::route('GET /registros-limpieza/consumo-general', ['AreasFisicasXProcesosLimpiezaConsumo', 'getPorAreaProceso']);
 Flight::route('GET /registros-limpieza/consumo-general/productos', ['AreasFisicasXProcesosLimpiezaConsumo', 'getProductosDisponibles']);

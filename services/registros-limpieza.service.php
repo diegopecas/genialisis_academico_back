@@ -2023,4 +2023,294 @@ class RegistrosLimpieza
 
         Flight::json($sentence->fetchAll());
     }
+
+    /**
+     * Previsualiza el registro masivo: dado un proceso y un rango de fechas, calcula
+     * para cada área configurada cuántos días laborales del rango coinciden con sus
+     * días marcados. NO crea nada, solo informa qué se generaría.
+     * Áreas sin días marcados quedan fuera (se informan aparte).
+     */
+    public static function getMasivoPreview()
+    {
+        $db = Flight::db();
+
+        $id_proceso = Flight::request()->query['id_proceso'] ?? $_GET['id_proceso'] ?? null;
+        $fecha_desde = Flight::request()->query['fecha_desde'] ?? $_GET['fecha_desde'] ?? null;
+        $fecha_hasta = Flight::request()->query['fecha_hasta'] ?? $_GET['fecha_hasta'] ?? null;
+
+        if (!$id_proceso || !$fecha_desde || !$fecha_hasta) {
+            Flight::json(array('error' => 'Faltan parámetros (id_proceso, fecha_desde, fecha_hasta)'), 400);
+            return;
+        }
+        if ($fecha_desde > $fecha_hasta) {
+            Flight::json(array('error' => 'La fecha inicial no puede ser mayor que la final'), 400);
+            return;
+        }
+
+        // Días laborales del rango (id_tipo_dia = 1 = Laboral), con su día de semana
+        $dias_laborales = self::obtenerDiasLaborales($db, $fecha_desde, $fecha_hasta);
+
+        // Áreas configuradas y activas para el proceso, con sus días marcados
+        $areas = self::obtenerAreasConDias($db, $id_proceso);
+
+        $columnasDia = array(1 => 'lunes', 2 => 'martes', 3 => 'miercoles', 4 => 'jueves',
+                             5 => 'viernes', 6 => 'sabado', 7 => 'domingo');
+
+        $resultado = array();
+        $total_registros = 0;
+
+        foreach ($areas as $area) {
+            // Días de la semana marcados para el área
+            $dias_marcados = array();
+            foreach ($columnasDia as $num => $col) {
+                if ((int) $area[$col] === 1) {
+                    $dias_marcados[] = $num;
+                }
+            }
+
+            // Cuántos días laborales del rango caen en los días marcados
+            $dias_aplicables = 0;
+            if (count($dias_marcados) > 0) {
+                foreach ($dias_laborales as $dl) {
+                    if (in_array((int) $dl['id_dia_semana'], $dias_marcados)) {
+                        $dias_aplicables++;
+                    }
+                }
+            }
+
+            $resultado[] = array(
+                'id_area_fisica' => $area['id_area_fisica'],
+                'area' => $area['area'],
+                'dias_marcados' => count($dias_marcados),
+                'dias_aplicables' => $dias_aplicables,
+                'sin_dias' => count($dias_marcados) === 0
+            );
+            $total_registros += $dias_aplicables;
+        }
+
+        Flight::json(array(
+            'areas' => $resultado,
+            'total_dias_laborales' => count($dias_laborales),
+            'total_registros' => $total_registros
+        ));
+    }
+
+    /**
+     * Crea en lote los registros de aseo de un rango de fechas. Por cada área
+     * seleccionada y cada día laboral del rango que coincida con sus días marcados,
+     * genera un registro (con detalle y consumo) igual que el registro rápido.
+     * Todo en una transacción.
+     */
+    public static function crearMasivo()
+    {
+        $db = Flight::db();
+
+        try {
+            $db->beginTransaction();
+
+            $id_proceso = Flight::request()->data['id_tipo_proceso_limpieza'] ?? null;
+            $fecha_desde = Flight::request()->data['fecha_desde'] ?? null;
+            $fecha_hasta = Flight::request()->data['fecha_hasta'] ?? null;
+            $hora_inicio = Flight::request()->data['hora_inicio'] ?? null;
+            $hora_fin = Flight::request()->data['hora_fin'] ?? null;
+            $observaciones = Flight::request()->data['observaciones'] ?? null;
+            $id_usuario_ejecutor = Flight::request()->data['id_usuario_ejecutor'] ?? null;
+            $id_usuario_supervisor = Flight::request()->data['id_usuario_supervisor'] ?? null;
+            $areas = Flight::request()->data['areas'] ?? array();
+
+            $id_estado = $id_usuario_supervisor ? 4 : 3;
+
+            if (!$id_proceso) {
+                throw new Exception('Debe indicar el tipo de proceso de limpieza');
+            }
+            if (!$fecha_desde || !$fecha_hasta) {
+                throw new Exception('Debe indicar el rango de fechas');
+            }
+            if ($fecha_desde > $fecha_hasta) {
+                throw new Exception('La fecha inicial no puede ser mayor que la final');
+            }
+            if (!is_array($areas) || count($areas) == 0) {
+                throw new Exception('Debe seleccionar al menos un área');
+            }
+
+            // Áreas válidas (configuradas para el proceso) con sus días marcados
+            $areas_config = self::obtenerAreasConDias($db, $id_proceso);
+            $mapa_areas = array();
+            foreach ($areas_config as $a) {
+                $mapa_areas[$a['id_area_fisica']] = $a;
+            }
+
+            // Días laborales del rango
+            $dias_laborales = self::obtenerDiasLaborales($db, $fecha_desde, $fecha_hasta);
+
+            $columnasDia = array(1 => 'lunes', 2 => 'martes', 3 => 'miercoles', 4 => 'jueves',
+                                 5 => 'viernes', 6 => 'sabado', 7 => 'domingo');
+
+            // Consumo por área (se calcula una vez por área, se reutiliza cada día)
+            $ids_areas_validas = array_values(array_intersect(array_keys($mapa_areas), $areas));
+            if (count($ids_areas_validas) == 0) {
+                throw new Exception('Ninguna de las áreas seleccionadas está configurada para este proceso');
+            }
+            $calculo = self::calcularAreasProceso($db, $id_proceso, $ids_areas_validas);
+
+            $total_creados = 0;
+            $areas_sin_dias = array();
+
+            foreach ($ids_areas_validas as $id_area) {
+                $area = $mapa_areas[$id_area];
+
+                // Días de semana marcados del área
+                $dias_marcados = array();
+                foreach ($columnasDia as $num => $col) {
+                    if ((int) $area[$col] === 1) {
+                        $dias_marcados[] = $num;
+                    }
+                }
+                if (count($dias_marcados) === 0) {
+                    $areas_sin_dias[] = $area['area'];
+                    continue;
+                }
+
+                $datos = $calculo[$id_area] ?? array('elementos' => [], 'mobiliario' => [], 'productos' => []);
+
+                // Un registro por cada día laboral que caiga en los días marcados
+                foreach ($dias_laborales as $dl) {
+                    if (!in_array((int) $dl['id_dia_semana'], $dias_marcados)) {
+                        continue;
+                    }
+                    $fecha = $dl['fecha'];
+
+                    // Registro principal
+                    $sentence = $db->prepare("
+                        INSERT INTO registros_limpieza (
+                            id, id_tenant, fecha, fecha_programada,
+                            hora_inicio, hora_fin, id_estado, observaciones,
+                            id_area_fisica, id_tipo_proceso_limpieza,
+                            id_usuario_ejecutor, id_usuario_supervisor
+                        ) VALUES (
+                            :id, :id_tenant, :fecha, :fecha_programada,
+                            :hora_inicio, :hora_fin, :id_estado, :observaciones,
+                            :id_area_fisica, :id_tipo_proceso_limpieza,
+                            :id_usuario_ejecutor, :id_usuario_supervisor
+                        )
+                    ");
+                    $id_registro = Uuid::generar();
+                    $sentence->bindValue(':id', $id_registro);
+                    $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $sentence->bindParam(':fecha', $fecha);
+                    $sentence->bindParam(':fecha_programada', $fecha);
+                    $sentence->bindParam(':hora_inicio', $hora_inicio);
+                    $sentence->bindParam(':hora_fin', $hora_fin);
+                    $sentence->bindValue(':id_estado', $id_estado, PDO::PARAM_INT);
+                    $sentence->bindParam(':observaciones', $observaciones);
+                    $sentence->bindParam(':id_area_fisica', $id_area);
+                    $sentence->bindParam(':id_tipo_proceso_limpieza', $id_proceso);
+                    $sentence->bindParam(':id_usuario_ejecutor', $id_usuario_ejecutor);
+                    $sentence->bindParam(':id_usuario_supervisor', $id_usuario_supervisor);
+                    $sentence->execute();
+
+                    // Detalle: elementos y mobiliario
+                    foreach ($datos['elementos'] as $elemento) {
+                        $s2 = $db->prepare("
+                            INSERT INTO registros_limpieza_detalle
+                                (id, id_tenant, id_registro_limpieza, id_elemento_fisico, id_producto_mobiliario)
+                            VALUES (:id, :id_tenant, :id_registro_limpieza, :id_elemento_fisico, NULL)
+                        ");
+                        $s2->bindValue(':id', Uuid::generar());
+                        $s2->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                        $s2->bindParam(':id_registro_limpieza', $id_registro);
+                        $s2->bindParam(':id_elemento_fisico', $elemento['id']);
+                        $s2->execute();
+                    }
+                    foreach ($datos['mobiliario'] as $mobiliario) {
+                        $s2 = $db->prepare("
+                            INSERT INTO registros_limpieza_detalle
+                                (id, id_tenant, id_registro_limpieza, id_elemento_fisico, id_producto_mobiliario)
+                            VALUES (:id, :id_tenant, :id_registro_limpieza, NULL, :id_producto_mobiliario)
+                        ");
+                        $s2->bindValue(':id', Uuid::generar());
+                        $s2->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                        $s2->bindParam(':id_registro_limpieza', $id_registro);
+                        $s2->bindParam(':id_producto_mobiliario', $mobiliario['id']);
+                        $s2->execute();
+                    }
+
+                    // Consumos
+                    foreach ($datos['productos'] as $producto) {
+                        $s2 = $db->prepare("
+                            INSERT INTO registros_limpieza_consumos
+                                (id, id_tenant, id_registro_limpieza, id_producto_limpieza,
+                                 cantidad_consumida, id_unidad_medida)
+                            VALUES (:id, :id_tenant, :id_registro_limpieza, :id_producto_limpieza,
+                                 :cantidad_consumida, :id_unidad_medida)
+                        ");
+                        $s2->bindValue(':id', Uuid::generar());
+                        $s2->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                        $s2->bindParam(':id_registro_limpieza', $id_registro);
+                        $s2->bindParam(':id_producto_limpieza', $producto['id_producto_limpieza']);
+                        $s2->bindParam(':cantidad_consumida', $producto['cantidad']);
+                        $s2->bindParam(':id_unidad_medida', $producto['id_unidad_medida']);
+                        $s2->execute();
+                    }
+
+                    $total_creados++;
+                }
+            }
+
+            $db->commit();
+
+            Flight::json(array(
+                'success' => true,
+                'total_creados' => $total_creados,
+                'areas_sin_dias' => $areas_sin_dias
+            ));
+        } catch (Exception $e) {
+            $db->rollBack();
+            error_log("Error en RegistrosLimpieza::crearMasivo: " . $e->getMessage());
+            Flight::json(array('error' => $e->getMessage()), 400);
+        }
+    }
+
+    /**
+     * Días laborales (id_tipo_dia = 1) de un rango, con su día de semana.
+     */
+    private static function obtenerDiasLaborales($db, $fecha_desde, $fecha_hasta)
+    {
+        $sentence = $db->prepare("
+            SELECT fecha, id_dia_semana
+            FROM calendarios
+            WHERE fecha BETWEEN :desde AND :hasta
+                AND id_tipo_dia = 1
+            ORDER BY fecha
+        ");
+        $sentence->bindParam(':desde', $fecha_desde);
+        $sentence->bindParam(':hasta', $fecha_hasta);
+        $sentence->execute();
+        return $sentence->fetchAll();
+    }
+
+    /**
+     * Áreas activas configuradas para el proceso, con sus días de semana marcados.
+     */
+    private static function obtenerAreasConDias($db, $id_proceso)
+    {
+        $sentence = $db->prepare("
+            SELECT
+                af.id as id_area_fisica,
+                af.nombre as area,
+                axp.lunes, axp.martes, axp.miercoles, axp.jueves,
+                axp.viernes, axp.sabado, axp.domingo
+            FROM areas_fisicas_x_procesos_limpieza axp
+            INNER JOIN areas_fisicas af ON axp.id_area_fisica = af.id
+            WHERE axp.id_tipo_proceso_limpieza = :id_proceso
+                AND axp.activo = 1
+                AND af.activo = 1
+                AND axp.id_tenant = :id_tenant
+            ORDER BY af.nombre
+        ");
+        $sentence->bindParam(':id_proceso', $id_proceso);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        return $sentence->fetchAll();
+    }
 }
