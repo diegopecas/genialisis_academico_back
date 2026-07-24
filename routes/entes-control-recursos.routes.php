@@ -12,6 +12,8 @@ Flight::route('DELETE /catalogo-reportes', [CatalogoReportes::class, 'delete']);
 
 // RECURSOS POR ENTE DE CONTROL
 Flight::route('GET /entes-control-recursos/@idEnteControl', [EntesControlRecursos::class, 'getByEnte']);
+Flight::route('GET /entes-control-recursos/@idEnteControl/disponibles', [EntesControlRecursos::class, 'getDisponibles']);
+Flight::route('POST /entes-control-recursos/sincronizar', [EntesControlRecursos::class, 'sincronizar']);
 Flight::route('GET /entes-control-recursos/@idEnteControl/resolver', [EntesControlRecursos::class, 'resolver']);
 Flight::route('POST /entes-control-recursos', [EntesControlRecursos::class, 'new']);
 Flight::route('DELETE /entes-control-recursos', [EntesControlRecursos::class, 'delete']);

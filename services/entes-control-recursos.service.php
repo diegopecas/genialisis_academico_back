@@ -283,4 +283,192 @@ class EntesControlRecursos
             Flight::json(array('error' => 'Ocurrió un error al resolver los recursos del ente'), 500);
         }
     }
+
+    // ------------------------------------------------------------------
+    // DISPONIBLES: todo lo que se le PUEDE asignar a un ente, en una sola
+    // llamada. Documentos (desde tipos_personas_documentos) + reportes
+    // marcados. Cada item trae 'asignado' según lo que ya tenga el ente.
+    // ------------------------------------------------------------------
+    public static function getDisponibles($idEnteControl)
+    {
+        try {
+            $db = Flight::db();
+            $idTenant = TenantContext::id();
+
+            // Documentos posibles: pares tipo_persona / tipo_documento
+            $docs = $db->prepare("
+                SELECT tp.id     AS id_tipo_persona,
+                       tp.codigo AS codigo_tipo_persona,
+                       tp.nombre AS nombre_tipo_persona,
+                       td.id     AS id_tipo_documento,
+                       td.nombre AS nombre_tipo_documento,
+                       tpd.orden
+                FROM tipos_personas_documentos tpd
+                INNER JOIN tipos_personas   tp ON tp.id = tpd.id_tipo_persona
+                INNER JOIN tipos_documentos td ON td.id = tpd.id_tipo_documento
+                WHERE tpd.id_tenant = :id_tenant
+                ORDER BY tp.nombre ASC, tpd.orden ASC, td.nombre ASC
+            ");
+            $docs->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $docs->execute();
+            $documentos = $docs->fetchAll();
+
+            // Reportes marcados como expuestos a entes de control
+            $reps = $db->prepare("
+                SELECT cr.id     AS id_reporte,
+                       cr.nombre AS nombre_reporte,
+                       cr.ruta   AS ruta_reporte,
+                       tr.nombre AS nombre_tipo_reporte
+                FROM catalogo_reportes cr
+                LEFT JOIN tipos_reportes tr ON tr.id = cr.id_tipo_reporte
+                WHERE cr.id_tenant = :id_tenant
+                  AND cr.activo = 1
+                  AND cr.reporte_ente_control = 1
+                ORDER BY cr.orden ASC, cr.nombre ASC
+            ");
+            $reps->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $reps->execute();
+            $reportes = $reps->fetchAll();
+
+            // Lo que el ente ya tiene asignado, para marcar
+            $asig = $db->prepare("
+                SELECT tipo_recurso, id_tipo_persona, id_tipo_documento, id_reporte
+                FROM entes_control_recursos
+                WHERE id_ente_control = :id_ente_control
+                  AND id_tenant = :id_tenant
+                  AND activo = 1
+            ");
+            $asig->bindParam(':id_ente_control', $idEnteControl);
+            $asig->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $asig->execute();
+
+            $setDoc = array();
+            $setRep = array();
+            foreach ($asig->fetchAll() as $a) {
+                if ($a['tipo_recurso'] === 'documento') {
+                    $setDoc[$a['id_tipo_persona'] . '|' . $a['id_tipo_documento']] = true;
+                } else if ($a['tipo_recurso'] === 'reporte') {
+                    $setRep[$a['id_reporte']] = true;
+                }
+            }
+
+            foreach ($documentos as &$d) {
+                $d['asignado'] = isset($setDoc[$d['id_tipo_persona'] . '|' . $d['id_tipo_documento']]);
+            }
+            unset($d);
+            foreach ($reportes as &$r) {
+                $r['asignado'] = isset($setRep[$r['id_reporte']]);
+            }
+            unset($r);
+
+            Flight::json(array(
+                'documentos' => $documentos,
+                'reportes'   => $reportes
+            ));
+        } catch (Exception $e) {
+            error_log("Error en EntesControlRecursos::getDisponibles: " . $e->getMessage());
+            Flight::json(array('error' => 'Ocurrió un error al obtener los recursos disponibles'), 500);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // SINCRONIZAR: recibe el arreglo completo de la selección y deja la
+    // configuración del ente EXACTAMENTE igual al arreglo. Una sola llamada,
+    // en transacción: borra lo que sobra, inserta lo que falta.
+    // ------------------------------------------------------------------
+    public static function sincronizar()
+    {
+        try {
+            $userData = JWTService::requerirAutenticacion();
+            PermisosService::validar($userData, 'administracion.datos_maestros');
+
+            $db = Flight::db();
+            $idTenant = TenantContext::id();
+
+            $idEnteControl = Flight::request()->data['id_ente_control'] ?? null;
+            $recursos = Flight::request()->data['recursos'] ?? array();
+
+            if (!$idEnteControl) {
+                Flight::json(array('error' => 'Falta id_ente_control'), 400);
+                return;
+            }
+            if (!is_array($recursos)) {
+                Flight::json(array('error' => 'recursos debe ser un arreglo'), 400);
+                return;
+            }
+
+            $db->beginTransaction();
+
+            // 1) Borrar la configuración actual del ente
+            $del = $db->prepare("
+                DELETE FROM entes_control_recursos
+                WHERE id_ente_control = :id_ente_control AND id_tenant = :id_tenant
+            ");
+            $del->bindParam(':id_ente_control', $idEnteControl);
+            $del->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $del->execute();
+
+            // 2) Insertar la selección recibida (deduplicada)
+            $ins = $db->prepare("
+                INSERT INTO entes_control_recursos
+                    (id, id_tenant, id_ente_control, tipo_recurso,
+                     id_tipo_persona, id_tipo_documento, id_reporte, activo)
+                VALUES
+                    (:id, :id_tenant, :id_ente_control, :tipo_recurso,
+                     :id_tipo_persona, :id_tipo_documento, :id_reporte, 1)
+            ");
+
+            $vistos = array();
+            $insertados = 0;
+
+            foreach ($recursos as $r) {
+                $tipo = $r['tipo_recurso'] ?? null;
+
+                if ($tipo === 'documento') {
+                    $idTP = $r['id_tipo_persona'] ?? null;
+                    $idTD = $r['id_tipo_documento'] ?? null;
+                    if (!$idTP || !$idTD) { continue; }
+                    $clave = 'd|' . $idTP . '|' . $idTD;
+                    if (isset($vistos[$clave])) { continue; }
+                    $vistos[$clave] = true;
+
+                    $ins->execute(array(
+                        ':id'                => Uuid::generar(),
+                        ':id_tenant'         => $idTenant,
+                        ':id_ente_control'   => $idEnteControl,
+                        ':tipo_recurso'      => 'documento',
+                        ':id_tipo_persona'   => $idTP,
+                        ':id_tipo_documento' => $idTD,
+                        ':id_reporte'        => null
+                    ));
+                    $insertados++;
+
+                } else if ($tipo === 'reporte') {
+                    $idRep = $r['id_reporte'] ?? null;
+                    if (!$idRep) { continue; }
+                    $clave = 'r|' . $idRep;
+                    if (isset($vistos[$clave])) { continue; }
+                    $vistos[$clave] = true;
+
+                    $ins->execute(array(
+                        ':id'                => Uuid::generar(),
+                        ':id_tenant'         => $idTenant,
+                        ':id_ente_control'   => $idEnteControl,
+                        ':tipo_recurso'      => 'reporte',
+                        ':id_tipo_persona'   => null,
+                        ':id_tipo_documento' => null,
+                        ':id_reporte'        => $idRep
+                    ));
+                    $insertados++;
+                }
+            }
+
+            $db->commit();
+            Flight::json(array('mensaje' => 'Recursos actualizados', 'total' => $insertados));
+        } catch (Exception $e) {
+            if (Flight::db()->inTransaction()) { Flight::db()->rollBack(); }
+            error_log("Error en EntesControlRecursos::sincronizar: " . $e->getMessage());
+            Flight::json(array('error' => $e->getMessage()), 500);
+        }
+    }
 }
