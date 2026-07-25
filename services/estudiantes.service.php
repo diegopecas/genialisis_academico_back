@@ -1293,4 +1293,479 @@ class Estudiantes
             Flight::json(array('error' => 'Error al obtener el reporte para recordatorios: ' . $e->getMessage()), 500);
         }
     }
+
+    /**
+     * Lee la foto/archivo de un registro civil colombiano con IA y devuelve los
+     * datos del niño y de sus padres en JSON, para prellenar el registro rápido.
+     * NO crea nada en la BD: solo lee y devuelve. El usuario revisa y completa
+     * en el asistente antes de guardar (registroRapidoCompleto).
+     *
+     * POST /estudiantes/analizar-registro-civil  (multipart, campo 'registro_civil')
+     *
+     * La cadena de proveedores, reintentos y registro de uso los maneja IaVision;
+     * aquí solo se arma el prompt e interpreta el texto (mismo patrón que
+     * Pagos::analizarComprobante).
+     */
+    public static function analizarRegistroCivil()
+    {
+        $userData = JWTService::requerirAutenticacion();
+        PermisosService::validar($userData, 'estudiantes.administrar');
+
+        try {
+            if (!isset($_FILES['registro_civil']) || $_FILES['registro_civil']['error'] !== UPLOAD_ERR_OK) {
+                Flight::json(array('error' => 'No se recibió el archivo o hubo un error al subirlo'), 400);
+                return;
+            }
+
+            $archivo = $_FILES['registro_civil'];
+            $extension = strtolower(pathinfo($archivo['name'], PATHINFO_EXTENSION));
+
+            $extensiones_permitidas = ['pdf', 'jpg', 'jpeg', 'png'];
+            if (!in_array($extension, $extensiones_permitidas)) {
+                Flight::json(array('error' => 'Solo se permiten archivos PDF, JPG, JPEG o PNG'), 400);
+                return;
+            }
+
+            if ($archivo['size'] > 10 * 1024 * 1024) {
+                Flight::json(array('error' => 'El archivo excede el tamaño máximo de 10MB'), 400);
+                return;
+            }
+
+            // Configuración de IA del tenant: se cargan todas las claves en un solo arreglo.
+            $db = Flight::db();
+            $stmtConfig = $db->prepare("SELECT clave, valor FROM ia_configuracion WHERE id_tenant = :id_tenant");
+            $stmtConfig->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtConfig->execute();
+            $config = array();
+            foreach ($stmtConfig->fetchAll(PDO::FETCH_ASSOC) as $filaConfig) {
+                $config[$filaConfig['clave']] = $filaConfig['valor'];
+            }
+
+            if (empty($config['gemini_api_key'])) {
+                Flight::json(array('error' => 'API Key de Gemini no configurada en ia_configuracion'), 500);
+                return;
+            }
+
+            if (isset($config['estado_servicio']) && $config['estado_servicio'] !== 'activo') {
+                Flight::json(array('error' => 'El servicio de IA se encuentra pausado o en mantenimiento'), 503);
+                return;
+            }
+
+            // Preparar el archivo para la IA.
+            $contenidoArchivo = file_get_contents($archivo['tmp_name']);
+            $base64 = base64_encode($contenidoArchivo);
+            $esPdf = ($extension === 'pdf');
+            $mimeType = $esPdf ? 'application/pdf' : 'image/' . ($extension === 'jpg' ? 'jpeg' : $extension);
+
+            // El registro civil colombiano trae al inscrito (el niño) y a sus padres.
+            // Del niño se toma el NUIP (número único de identificación personal, arriba
+            // del documento), NO el serial/indicativo. El sexo y los tipos de documento
+            // se resuelven a id en el backend por nombre; aquí solo se extrae el texto.
+            $prompt = "Analiza este REGISTRO CIVIL DE NACIMIENTO colombiano y extrae ÚNICAMENTE los siguientes datos en formato JSON estricto. "
+                . "No incluyas explicaciones ni texto adicional, SOLO el JSON:\n\n"
+                . "{\n"
+                . "  \"nino\": {\n"
+                . "    \"primer_nombre\": (string o null),\n"
+                . "    \"segundo_nombre\": (string o null),\n"
+                . "    \"primer_apellido\": (string o null),\n"
+                . "    \"segundo_apellido\": (string o null),\n"
+                . "    \"numero_identificacion\": (string con el NUIP del inscrito, solo dígitos, o null),\n"
+                . "    \"fecha_nacimiento\": (string en formato YYYY-MM-DD o null),\n"
+                . "    \"sexo\": (\"Masculino\", \"Femenino\" o null)\n"
+                . "  },\n"
+                . "  \"padre\": {\n"
+                . "    \"primer_nombre\": (string o null),\n"
+                . "    \"segundo_nombre\": (string o null),\n"
+                . "    \"primer_apellido\": (string o null),\n"
+                . "    \"segundo_apellido\": (string o null),\n"
+                . "    \"numero_identificacion\": (string con el documento del padre, solo dígitos, o null)\n"
+                . "  },\n"
+                . "  \"madre\": {\n"
+                . "    \"primer_nombre\": (string o null),\n"
+                . "    \"segundo_nombre\": (string o null),\n"
+                . "    \"primer_apellido\": (string o null),\n"
+                . "    \"segundo_apellido\": (string o null),\n"
+                . "    \"numero_identificacion\": (string con el documento de la madre, solo dígitos, o null)\n"
+                . "  }\n"
+                . "}\n\n"
+                . "Reglas:\n"
+                . "- El NUIP es el número que aparece rotulado como 'NUIP' en la parte superior del documento (por ejemplo 1.072.680.919). NO uses el 'Serial' ni el 'Indicativo Serial'.\n"
+                . "- Si un campo no aparece o no es legible, usa null.\n"
+                . "- Si el padre o la madre no aparecen en el documento, devuelve ese objeto con todos sus campos en null.\n"
+                . "- numero_identificacion: devuelve solo los dígitos, sin puntos ni espacios.";
+
+            // Se sube el límite de tokens porque la respuesta trae niño + 2 padres,
+            // más larga que un comprobante (que usa el default de 500 en IaVision).
+            $resultado = IaVision::extraerDeImagen($config, $base64, $mimeType, $prompt, $esPdf, 1200);
+
+            // Registro de uso por proveedor (best-effort; nunca rompe la lectura).
+            IaVision::registrarUso($db, TenantContext::id(), $resultado);
+
+            if (!$resultado['success']) {
+                Flight::json(array('error' => 'No se pudo analizar el registro civil con ningún proveedor de IA: ' . $resultado['error']), 503);
+                return;
+            }
+
+            // Limpiar posibles cercos de código markdown y decodificar el JSON.
+            $textoRespuesta = $resultado['texto'];
+            $textoRespuesta = preg_replace('/```json\s*/', '', $textoRespuesta);
+            $textoRespuesta = preg_replace('/```\s*/', '', $textoRespuesta);
+            $textoRespuesta = trim($textoRespuesta);
+
+            $datosExtraidos = json_decode($textoRespuesta, true);
+
+            if (!$datosExtraidos) {
+                Flight::json(array(
+                    'error' => 'No se pudieron extraer los datos del registro civil',
+                    'respuesta_ia' => $textoRespuesta
+                ), 422);
+                return;
+            }
+
+            // Registrar uso: contador de mensajes y acumulado de tokens consumidos.
+            $stmtContador = $db->prepare("UPDATE ia_configuracion SET valor = valor + 1, fecha_actualizacion = NOW() WHERE clave = 'mensajes_generados_hoy' AND id_tenant = :id_tenant");
+            $stmtContador->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtContador->execute();
+
+            $tokensTotal = $resultado['tokens']['total'];
+            if ($tokensTotal > 0) {
+                $stmtTokens = $db->prepare("UPDATE ia_configuracion SET valor = valor + :tokens, fecha_actualizacion = NOW() WHERE clave = 'tokens_consumidos_hoy' AND id_tenant = :id_tenant");
+                $stmtTokens->bindParam(':tokens', $tokensTotal);
+                $stmtTokens->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmtTokens->execute();
+            }
+
+            Flight::json(array(
+                'success' => true,
+                'datos' => $datosExtraidos,
+                'proveedor' => $resultado['proveedor']
+            ));
+        } catch (Exception $e) {
+            error_log("Error en analizarRegistroCivil: " . $e->getMessage());
+            Flight::json(array('error' => 'Error interno al procesar el registro civil: ' . $e->getMessage()), 500);
+        }
+    }
+
+    /**
+     * Registro rápido COMPLETO desde el asistente de registro civil.
+     * En una sola transacción crea: persona del niño, estudiante, asignación de
+     * grupo (con grado opcional), horarios del estudiante, y por cada acudiente
+     * presente su persona + acudiente. Los usuarios del portal de padres NO se
+     * crean aquí: el front los crea en un segundo llamado a POST /usuarios con los
+     * id_persona que devuelve este método.
+     *
+     * A diferencia de registroRapido() (usado por el módulo de asistencia, un solo
+     * acudiente y sin grado/horario), este método asigna grado y horarios y admite
+     * varios acudientes. registroRapido() NO se modifica.
+     *
+     * POST /estudiantes/registro-rapido-completo
+     *
+     * Body (JSON): {
+     *   nino: { id_tipo_identificacion, numero_identificacion, primer_nombre,
+     *           segundo_nombre, primer_apellido, segundo_apellido,
+     *           fecha_nacimiento, id_genero, fecha_ingreso },
+     *   id_grupo, id_grado (opcional), anno (opcional),
+     *   horarios: [ { id_dia_semana, hora_entrada, hora_salida } ] (opcional),
+     *   acudientes: [ {
+     *       id_tipo_identificacion, numero_identificacion, primer_nombre,
+     *       segundo_nombre, primer_apellido, segundo_apellido,
+     *       telefono, correo_electronico, id_tipo_acudiente,
+     *       es_responsable_pago, autorizado_recoger, autorizado_sistema
+     *   } ]
+     * }
+     */
+    public static function registroRapidoCompleto()
+    {
+        $db = Flight::db();
+        try {
+            $userData = JWTService::requerirAutenticacion();
+            PermisosService::validar($userData, 'estudiantes.administrar');
+
+            $data = Flight::request()->data;
+
+            $nino = isset($data['nino']) ? $data['nino'] : null;
+            $id_grupo = isset($data['id_grupo']) ? $data['id_grupo'] : null;
+            $id_grado = isset($data['id_grado']) ? $data['id_grado'] : null;
+            $anno = isset($data['anno']) && $data['anno'] ? $data['anno'] : date('Y');
+            $horarios = isset($data['horarios']) ? $data['horarios'] : array();
+            $acudientes = isset($data['acudientes']) ? $data['acudientes'] : array();
+
+            // Validaciones mínimas: el niño y su documento son obligatorios (como toda
+            // persona), y debe venir al menos un acudiente. El grupo es obligatorio
+            // porque el estudiante nace asignado a un grupo.
+            if (!$nino || empty($nino['numero_identificacion'])) {
+                Flight::json(array('error' => 'Faltan los datos del niño o su número de identificación'), 400);
+                return;
+            }
+            if (empty($nino['id_tipo_identificacion'])) {
+                Flight::json(array('error' => 'Falta el tipo de identificación del niño'), 400);
+                return;
+            }
+            if (!$id_grupo) {
+                Flight::json(array('error' => 'Debe seleccionar un grupo para el estudiante'), 400);
+                return;
+            }
+            if (!is_array($acudientes) || count($acudientes) === 0) {
+                Flight::json(array('error' => 'Debe registrar al menos un acudiente'), 400);
+                return;
+            }
+            foreach ($acudientes as $ac) {
+                if (empty($ac['numero_identificacion']) || empty($ac['id_tipo_identificacion'])) {
+                    Flight::json(array('error' => 'Cada acudiente debe tener tipo y número de identificación'), 400);
+                    return;
+                }
+            }
+
+            $db->beginTransaction();
+
+            $idTenant = TenantContext::id();
+
+            // ============================================================
+            // 1. PERSONA DEL NIÑO: buscar o crear
+            // ============================================================
+            $id_persona_nino = self::buscarOCrearPersona($db, $idTenant, array(
+                'id_tipo_identificacion' => $nino['id_tipo_identificacion'],
+                'numero_identificacion'  => $nino['numero_identificacion'],
+                'primer_nombre'          => isset($nino['primer_nombre']) ? $nino['primer_nombre'] : null,
+                'segundo_nombre'         => isset($nino['segundo_nombre']) ? $nino['segundo_nombre'] : null,
+                'primer_apellido'        => isset($nino['primer_apellido']) ? $nino['primer_apellido'] : null,
+                'segundo_apellido'       => isset($nino['segundo_apellido']) ? $nino['segundo_apellido'] : null,
+                'fecha_nacimiento'       => isset($nino['fecha_nacimiento']) ? $nino['fecha_nacimiento'] : null,
+                'id_genero'              => isset($nino['id_genero']) ? $nino['id_genero'] : null,
+                'nacionalidad'           => 'Colombiana',
+                'ocupacion'              => 'Estudiante',
+                'telefono'               => null,
+                'correo_electronico'     => null,
+            ));
+
+            // ============================================================
+            // 2. ESTUDIANTE: verificar que no exista, crear
+            // ============================================================
+            $stmt = $db->prepare("SELECT id, activo FROM estudiantes WHERE id_persona = :id_persona AND id_tenant = :id_tenant");
+            $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $stmt->bindParam(':id_persona', $id_persona_nino);
+            $stmt->execute();
+            $estudianteExistente = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            $estudiante_ya_existia = false;
+            if ($estudianteExistente) {
+                if ($estudianteExistente['activo'] == 0) {
+                    $db->rollBack();
+                    Flight::json(array('error' => 'Este estudiante existe pero está inactivo. Actívelo primero desde el módulo de estudiantes.'), 400);
+                    return;
+                }
+                $id_estudiante = $estudianteExistente['id'];
+                $estudiante_ya_existia = true;
+            } else {
+                $fecha_ingreso = (isset($nino['fecha_ingreso']) && $nino['fecha_ingreso']) ? $nino['fecha_ingreso'] : date('Y-m-d');
+                $idEstudiante = Uuid::generar();
+                $stmt = $db->prepare("INSERT INTO estudiantes (id, id_tenant, id_persona, fecha_ingreso, activo, alimentacion, permanente, telefono_emergencia, eps, anno)
+                    VALUES (:id, :id_tenant, :id_persona, :fecha_ingreso, 1, 0, 0, '', '', :anno)");
+                $stmt->bindValue(':id', $idEstudiante);
+                $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                $stmt->bindParam(':id_persona', $id_persona_nino);
+                $stmt->bindParam(':fecha_ingreso', $fecha_ingreso);
+                $stmt->bindParam(':anno', $anno);
+                $stmt->execute();
+                $id_estudiante = $idEstudiante;
+            }
+
+            // ============================================================
+            // 3. ASIGNAR GRUPO Y GRADO (si no tiene uno activo)
+            // ============================================================
+            $stmt = $db->prepare("SELECT id FROM estudiantes_x_grupos WHERE id_estudiante = :id_estudiante AND activo = 1 AND id_tenant = :id_tenant");
+            $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $stmt->bindParam(':id_estudiante', $id_estudiante);
+            $stmt->execute();
+            $grupoActual = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$grupoActual) {
+                $stmt = $db->prepare("INSERT INTO estudiantes_x_grupos (id_tenant, id_estudiante, id_grupo, id_grado, anio, activo)
+                    VALUES (:id_tenant, :id_estudiante, :id_grupo, :id_grado, :anio, 1)");
+                $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                $stmt->bindParam(':id_estudiante', $id_estudiante);
+                $stmt->bindParam(':id_grupo', $id_grupo);
+                $stmt->bindValue(':id_grado', $id_grado ? $id_grado : null);
+                $stmt->bindParam(':anio', $anno);
+                $stmt->execute();
+            }
+
+            // ============================================================
+            // 4. HORARIOS DEL ESTUDIANTE (si vienen del asistente)
+            // ============================================================
+            if (is_array($horarios) && count($horarios) > 0) {
+                $stmtHor = $db->prepare("
+                    INSERT INTO horarios_estudiante (id_tenant, id_estudiante, id_dia_semana, hora_entrada, hora_salida)
+                    VALUES (:id_tenant, :id_estudiante, :id_dia_semana, :hora_entrada, :hora_salida)
+                    ON DUPLICATE KEY UPDATE hora_entrada = :hora_entrada2, hora_salida = :hora_salida2
+                ");
+                $stmtHor->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                foreach ($horarios as $h) {
+                    if (empty($h['id_dia_semana'])) {
+                        continue;
+                    }
+                    $stmtHor->bindParam(':id_estudiante', $id_estudiante);
+                    $stmtHor->bindParam(':id_dia_semana', $h['id_dia_semana']);
+                    $stmtHor->bindParam(':hora_entrada', $h['hora_entrada']);
+                    $stmtHor->bindParam(':hora_salida', $h['hora_salida']);
+                    $stmtHor->bindParam(':hora_entrada2', $h['hora_entrada']);
+                    $stmtHor->bindParam(':hora_salida2', $h['hora_salida']);
+                    $stmtHor->execute();
+                }
+            }
+
+            // ============================================================
+            // 5. ACUDIENTES: persona + acudiente + usuario del portal
+            // ============================================================
+            $acudientesCreados = array();
+            foreach ($acudientes as $ac) {
+                // 5.1 Persona del acudiente (buscar o crear)
+                $id_persona_acud = self::buscarOCrearPersona($db, $idTenant, array(
+                    'id_tipo_identificacion' => $ac['id_tipo_identificacion'],
+                    'numero_identificacion'  => $ac['numero_identificacion'],
+                    'primer_nombre'          => isset($ac['primer_nombre']) ? $ac['primer_nombre'] : null,
+                    'segundo_nombre'         => isset($ac['segundo_nombre']) ? $ac['segundo_nombre'] : null,
+                    'primer_apellido'        => isset($ac['primer_apellido']) ? $ac['primer_apellido'] : null,
+                    'segundo_apellido'       => isset($ac['segundo_apellido']) ? $ac['segundo_apellido'] : null,
+                    'fecha_nacimiento'       => null,
+                    'id_genero'              => null,
+                    'nacionalidad'           => 'Colombiana',
+                    'ocupacion'              => null,
+                    'telefono'               => isset($ac['telefono']) ? $ac['telefono'] : null,
+                    'correo_electronico'     => isset($ac['correo_electronico']) ? $ac['correo_electronico'] : null,
+                ));
+
+                // 5.2 Acudiente (buscar duplicado por estudiante+persona+tipo, o crear)
+                $id_tipo_acudiente = isset($ac['id_tipo_acudiente']) ? $ac['id_tipo_acudiente'] : null;
+                $es_responsable_pago = isset($ac['es_responsable_pago']) ? intval($ac['es_responsable_pago']) : 1;
+                $autorizado_recoger = isset($ac['autorizado_recoger']) ? intval($ac['autorizado_recoger']) : 1;
+                $autorizado_sistema = isset($ac['autorizado_sistema']) ? intval($ac['autorizado_sistema']) : 1;
+
+                $stmt = $db->prepare("SELECT id FROM acudientes WHERE id_estudiante = :id_estudiante AND id_persona = :id_persona AND id_tipo_acudiente = :id_tipo_acudiente AND id_tenant = :id_tenant");
+                $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                $stmt->bindParam(':id_estudiante', $id_estudiante);
+                $stmt->bindParam(':id_persona', $id_persona_acud);
+                $stmt->bindValue(':id_tipo_acudiente', $id_tipo_acudiente);
+                $stmt->execute();
+                $acudienteExistente = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                if ($acudienteExistente) {
+                    $id_acudiente = $acudienteExistente['id'];
+                } else {
+                    $idAcudiente = Uuid::generar();
+                    $stmt = $db->prepare("INSERT INTO acudientes (id, id_tenant, id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo)
+                        VALUES (:id, :id_tenant, :id_estudiante, :id_persona, :id_tipo_acudiente, :es_responsable_pago, :autorizado_recoger, :autorizado_sistema, 1)");
+                    $stmt->bindValue(':id', $idAcudiente);
+                    $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                    $stmt->bindParam(':id_estudiante', $id_estudiante);
+                    $stmt->bindParam(':id_persona', $id_persona_acud);
+                    $stmt->bindValue(':id_tipo_acudiente', $id_tipo_acudiente);
+                    $stmt->bindParam(':es_responsable_pago', $es_responsable_pago);
+                    $stmt->bindParam(':autorizado_recoger', $autorizado_recoger);
+                    $stmt->bindParam(':autorizado_sistema', $autorizado_sistema);
+                    $stmt->execute();
+                    $id_acudiente = $idAcudiente;
+                }
+
+                // El usuario del portal de padres NO se crea aquí: lo crea el front en
+                // un segundo llamado a POST /usuarios (Usuarios::new) por cada acudiente,
+                // con usuario y clave = numero_identificacion. Por eso se devuelve el
+                // id_persona y el numero_identificacion de cada acudiente.
+                $acudientesCreados[] = array(
+                    'id_acudiente' => $id_acudiente,
+                    'id_persona' => $id_persona_acud,
+                    'numero_identificacion' => $ac['numero_identificacion'],
+                    'correo_electronico' => isset($ac['correo_electronico']) ? $ac['correo_electronico'] : null
+                );
+            }
+
+            $db->commit();
+
+            Flight::json(array(
+                'id_estudiante' => $id_estudiante,
+                'id_persona_nino' => $id_persona_nino,
+                'estudiante_ya_existia' => $estudiante_ya_existia,
+                'acudientes' => $acudientesCreados,
+                'nombre_estudiante' => trim(
+                    (isset($nino['primer_nombre']) ? $nino['primer_nombre'] : '') . ' ' .
+                    (isset($nino['primer_apellido']) ? $nino['primer_apellido'] : '')
+                )
+            ));
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log("Error en registroRapidoCompleto: " . $e->getMessage());
+            Flight::json(array('error' => 'Error en registro rápido completo: ' . $e->getMessage()), 500);
+        }
+    }
+
+    /**
+     * Busca una persona por tipo y número de identificación dentro del tenant; si
+     * existe devuelve su id (y completa teléfono/correo si estaban vacíos y llegan
+     * ahora), y si no existe la crea. Usada por registroRapidoCompleto para no
+     * duplicar personas al registrar niño y acudientes.
+     *
+     * @param PDO   $db
+     * @param int   $idTenant
+     * @param array $p Campos de la persona (ver INSERT abajo).
+     * @return string id (UUID) de la persona.
+     */
+    private static function buscarOCrearPersona($db, $idTenant, $p)
+    {
+        $stmt = $db->prepare("SELECT id FROM personas WHERE id_tipo_identificacion = :tipo AND numero_identificacion = :numero AND id_tenant = :id_tenant");
+        $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+        $stmt->bindValue(':tipo', $p['id_tipo_identificacion']);
+        $stmt->bindValue(':numero', $p['numero_identificacion']);
+        $stmt->execute();
+        $existente = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($existente) {
+            // Completar teléfono/correo solo si estaban vacíos, para no pisar datos
+            // que ya tuviera la persona.
+            if (!empty($p['telefono'])) {
+                $up = $db->prepare("UPDATE personas SET telefono = :telefono WHERE id = :id AND id_tenant = :id_tenant AND (telefono IS NULL OR telefono = '')");
+                $up->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                $up->bindValue(':telefono', $p['telefono']);
+                $up->bindValue(':id', $existente['id']);
+                $up->execute();
+            }
+            if (!empty($p['correo_electronico'])) {
+                $up = $db->prepare("UPDATE personas SET correo_electronico = :correo WHERE id = :id AND id_tenant = :id_tenant AND (correo_electronico IS NULL OR correo_electronico = '')");
+                $up->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                $up->bindValue(':correo', $p['correo_electronico']);
+                $up->bindValue(':id', $existente['id']);
+                $up->execute();
+            }
+            return $existente['id'];
+        }
+
+        $id = Uuid::generar();
+        $stmt = $db->prepare("INSERT INTO personas (
+                id, id_tenant, primer_nombre, segundo_nombre, primer_apellido, segundo_apellido,
+                id_tipo_identificacion, numero_identificacion, nacionalidad, fecha_nacimiento,
+                id_genero, correo_electronico, telefono, ocupacion
+            ) VALUES (
+                :id, :id_tenant, :primer_nombre, :segundo_nombre, :primer_apellido, :segundo_apellido,
+                :id_tipo_identificacion, :numero_identificacion, :nacionalidad, :fecha_nacimiento,
+                :id_genero, :correo_electronico, :telefono, :ocupacion
+            )");
+        $stmt->bindValue(':id', $id);
+        $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+        $stmt->bindValue(':primer_nombre', $p['primer_nombre']);
+        $stmt->bindValue(':segundo_nombre', $p['segundo_nombre']);
+        $stmt->bindValue(':primer_apellido', $p['primer_apellido']);
+        $stmt->bindValue(':segundo_apellido', $p['segundo_apellido']);
+        $stmt->bindValue(':id_tipo_identificacion', $p['id_tipo_identificacion']);
+        $stmt->bindValue(':numero_identificacion', $p['numero_identificacion']);
+        $stmt->bindValue(':nacionalidad', isset($p['nacionalidad']) ? $p['nacionalidad'] : 'Colombiana');
+        $stmt->bindValue(':fecha_nacimiento', $p['fecha_nacimiento']);
+        $stmt->bindValue(':id_genero', $p['id_genero'] ? $p['id_genero'] : null);
+        $stmt->bindValue(':correo_electronico', $p['correo_electronico']);
+        $stmt->bindValue(':telefono', $p['telefono']);
+        $stmt->bindValue(':ocupacion', $p['ocupacion']);
+        $stmt->execute();
+
+        return $id;
+    }
 }

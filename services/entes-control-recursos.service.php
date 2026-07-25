@@ -187,12 +187,9 @@ class EntesControlRecursos
             // 1) Recursos configurados para el ente
             $sentence = $db->prepare("
                 SELECT ecr.tipo_recurso, ecr.id_tipo_documento, ecr.id_reporte,
-                       tp.codigo AS codigo_tipo_persona,
-                       tp.nombre AS nombre_tipo_persona,
-                       td.nombre AS nombre_tipo_documento
+                       tp.codigo AS codigo_tipo_persona
                 FROM entes_control_recursos ecr
-                LEFT JOIN tipos_personas   tp ON tp.id = ecr.id_tipo_persona
-                LEFT JOIN tipos_documentos td ON td.id = ecr.id_tipo_documento
+                LEFT JOIN tipos_personas tp ON tp.id = ecr.id_tipo_persona
                 WHERE ecr.id_ente_control = :id_ente_control
                   AND ecr.id_tenant = :id_tenant
                   AND ecr.activo = 1
@@ -202,81 +199,231 @@ class EntesControlRecursos
             $sentence->execute();
             $recursos = $sentence->fetchAll();
 
-            $grupos = array();
-            $reportes = array();
+            // Tipos de documento permitidos, separados por origen.
+            $tiposEstudiante   = array();  // documentos del propio estudiante
+            $tiposAcudiente    = array();  // documentos de los acudientes
+            $tiposColaborador  = array();
+            $tiposInstitucion  = array();
+            $tiposEnte         = array();  // documentos propios del ente
+            $reportesIds       = array();
 
-            foreach ($recursos as $recurso) {
-
-                // ---- Recurso de tipo reporte ----
-                if ($recurso['tipo_recurso'] === 'reporte') {
-                    $rep = $db->prepare("
-                        SELECT cr.id, cr.nombre, cr.ruta,
-                               tr.codigo AS codigo_tipo_reporte,
-                               tr.nombre AS nombre_tipo_reporte
-                        FROM catalogo_reportes cr
-                        LEFT JOIN tipos_reportes tr ON tr.id = cr.id_tipo_reporte
-                        WHERE cr.id = :id_reporte
-                          AND cr.id_tenant = :id_tenant
-                          AND cr.activo = 1
-                    ");
-                    $rep->bindValue(':id_reporte', $recurso['id_reporte']);
-                    $rep->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
-                    $rep->execute();
-                    $fila = $rep->fetch();
-                    if ($fila) {
-                        $reportes[] = $fila;
+            foreach ($recursos as $r) {
+                if ($r['tipo_recurso'] === 'reporte') {
+                    $reportesIds[] = $r['id_reporte'];
+                } else if ($r['tipo_recurso'] === 'documento') {
+                    switch ($r['codigo_tipo_persona']) {
+                        case 'estudiante':   $tiposEstudiante[]  = $r['id_tipo_documento']; break;
+                        case 'acudiente':    $tiposAcudiente[]   = $r['id_tipo_documento']; break;
+                        case 'colaborador':  $tiposColaborador[] = $r['id_tipo_documento']; break;
+                        case 'institucion':  $tiposInstitucion[] = $r['id_tipo_documento']; break;
+                        case 'ente_control': $tiposEnte[]        = $r['id_tipo_documento']; break;
                     }
-                    continue;
                 }
+            }
 
-                // ---- Recurso de tipo documento ----
-                $codigoTipoPersona = $recurso['codigo_tipo_persona'];
+            // 2) Documentos de ESTUDIANTES (solo activos, tipos permitidos)
+            $docsEstudiante = array();
+            if (!empty($tiposEstudiante)) {
+                $ph = implode(',', array_fill(0, count($tiposEstudiante), '?'));
+                $sql = "
+                    SELECT e.id AS id_estudiante, e.id_persona,
+                           dp.id, dp.nombre_archivo, dp.fecha_vencimiento,
+                           td.nombre AS nombre_tipo_documento
+                    FROM documentos_personas dp
+                    INNER JOIN estudiantes e ON e.id_persona = dp.id_persona AND e.activo = 1 AND e.id_tenant = ?
+                    INNER JOIN tipos_documentos td ON td.id = dp.id_tipo_documento
+                    WHERE dp.id_tenant = ?
+                      AND dp.activo = 1
+                      AND dp.id_tipo_documento IN ($ph)
+                ";
+                $st = $db->prepare($sql);
+                $params = array_merge(array($idTenant, $idTenant), $tiposEstudiante);
+                $st->execute($params);
+                $docsEstudiante = $st->fetchAll();
+            }
 
-                // Lista blanca: si el tipo de persona no tiene tabla de rol
-                // conocida, se omite en lugar de armar SQL con datos externos.
-                if (!isset(self::$tablasRol[$codigoTipoPersona])) {
-                    continue;
-                }
-                $tablaRol = self::$tablasRol[$codigoTipoPersona];
-
-                $docs = $db->prepare("
-                    SELECT dp.id,
-                           dp.nombre_archivo,
-                           dp.ruta_archivo,
-                           dp.fecha_subida,
-                           dp.fecha_vencimiento,
-                           dp.observaciones,
-                           dp.id_persona,
+            // 3) Documentos de ACUDIENTES (colgados de su estudiante)
+            $docsAcudiente = array();
+            if (!empty($tiposAcudiente)) {
+                $ph = implode(',', array_fill(0, count($tiposAcudiente), '?'));
+                $sql = "
+                    SELECT a.id_estudiante,
+                           dp.id, dp.nombre_archivo, dp.fecha_vencimiento,
+                           td.nombre AS nombre_tipo_documento,
                            COALESCE(
                                NULLIF(TRIM(p.razon_social), ''),
                                TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido))
-                           ) AS nombre_persona,
-                           p.numero_identificacion
+                           ) AS nombre_acudiente
                     FROM documentos_personas dp
+                    INNER JOIN acudientes a ON a.id_persona = dp.id_persona AND a.activo = 1 AND a.id_tenant = ?
                     INNER JOIN personas p ON p.id = dp.id_persona
-                    INNER JOIN {$tablaRol} rol ON rol.id_persona = p.id
-                    WHERE dp.id_tipo_documento = :id_tipo_documento
-                      AND dp.id_tenant = :id_tenant
+                    INNER JOIN tipos_documentos td ON td.id = dp.id_tipo_documento
+                    WHERE dp.id_tenant = ?
                       AND dp.activo = 1
-                      AND rol.id_tenant = :id_tenant_rol
-                    ORDER BY nombre_persona ASC, dp.fecha_subida DESC
-                ");
-                $docs->bindValue(':id_tipo_documento', $recurso['id_tipo_documento']);
-                $docs->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
-                $docs->bindValue(':id_tenant_rol', $idTenant, PDO::PARAM_INT);
-                $docs->execute();
+                      AND dp.id_tipo_documento IN ($ph)
+                ";
+                $st = $db->prepare($sql);
+                $params = array_merge(array($idTenant, $idTenant), $tiposAcudiente);
+                $st->execute($params);
+                $docsAcudiente = $st->fetchAll();
+            }
 
-                $grupos[] = array(
-                    'tipo_persona'   => $recurso['nombre_tipo_persona'],
-                    'codigo_persona' => $codigoTipoPersona,
-                    'tipo_documento' => $recurso['nombre_tipo_documento'],
-                    'documentos'     => $docs->fetchAll()
+            // 4) Armar las carpetas por estudiante
+            $carpetas = array();  // id_estudiante => carpeta
+
+            foreach ($docsEstudiante as $d) {
+                $ide = $d['id_estudiante'];
+                if (!isset($carpetas[$ide])) {
+                    $carpetas[$ide] = array(
+                        'id_estudiante' => $ide,
+                        'documentos_estudiante' => array(),
+                        'documentos_acudientes' => array()
+                    );
+                }
+                $carpetas[$ide]['documentos_estudiante'][] = array(
+                    'id' => $d['id'],
+                    'nombre_archivo' => $d['nombre_archivo'],
+                    'fecha_vencimiento' => $d['fecha_vencimiento'],
+                    'tipo_documento' => $d['nombre_tipo_documento']
                 );
             }
 
+            foreach ($docsAcudiente as $d) {
+                $ide = $d['id_estudiante'];
+                if (!isset($carpetas[$ide])) {
+                    $carpetas[$ide] = array(
+                        'id_estudiante' => $ide,
+                        'documentos_estudiante' => array(),
+                        'documentos_acudientes' => array()
+                    );
+                }
+                $carpetas[$ide]['documentos_acudientes'][] = array(
+                    'id' => $d['id'],
+                    'nombre_archivo' => $d['nombre_archivo'],
+                    'fecha_vencimiento' => $d['fecha_vencimiento'],
+                    'tipo_documento' => $d['nombre_tipo_documento'],
+                    'nombre_acudiente' => $d['nombre_acudiente']
+                );
+            }
+
+            // 5) Ponerle nombre y foto a cada carpeta (estudiante)
+            $resultado = array();
+            if (!empty($carpetas)) {
+                $ids = array_keys($carpetas);
+                $ph = implode(',', array_fill(0, count($ids), '?'));
+                $st = $db->prepare("
+                    SELECT e.id AS id_estudiante,
+                           TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_estudiante,
+                           p.numero_identificacion,
+                           p.foto
+                    FROM estudiantes e
+                    INNER JOIN personas p ON p.id = e.id_persona
+                    WHERE e.id IN ($ph)
+                ");
+                $st->execute($ids);
+                $infoEstudiantes = array();
+                foreach ($st->fetchAll() as $info) {
+                    $infoEstudiantes[$info['id_estudiante']] = $info;
+                }
+
+                foreach ($carpetas as $ide => $carpeta) {
+                    $info = $infoEstudiantes[$ide] ?? array();
+                    $total = count($carpeta['documentos_estudiante']) + count($carpeta['documentos_acudientes']);
+                    $resultado[] = array(
+                        'id_estudiante'          => $ide,
+                        'nombre_estudiante'      => $info['nombre_estudiante'] ?? '',
+                        'numero_identificacion'  => $info['numero_identificacion'] ?? '',
+                        'foto'                   => $info['foto'] ?? null,
+                        'total_documentos'       => $total,
+                        'documentos_estudiante'  => $carpeta['documentos_estudiante'],
+                        'documentos_acudientes'  => $carpeta['documentos_acudientes']
+                    );
+                }
+
+                // Ordenar por nombre
+                usort($resultado, function ($a, $b) {
+                    return strcasecmp($a['nombre_estudiante'], $b['nombre_estudiante']);
+                });
+            }
+
+            // ----- Carpetas planas: institución, colaboradores y ente -----
+            // Helper inline: documentos de una persona por rol, agrupados por persona.
+            $carpetasPlanas = function($tabla, $tipos) use ($db, $idTenant) {
+                if (empty($tipos)) { return array(); }
+                $ph = implode(',', array_fill(0, count($tipos), '?'));
+                $sql = "
+                    SELECT p.id AS id_persona,
+                           COALESCE(
+                               NULLIF(TRIM(p.razon_social), ''),
+                               TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido))
+                           ) AS nombre,
+                           p.numero_identificacion,
+                           dp.id, dp.nombre_archivo, dp.fecha_vencimiento,
+                           td.nombre AS tipo_documento
+                    FROM documentos_personas dp
+                    INNER JOIN {$tabla} rol ON rol.id_persona = dp.id_persona AND rol.activo = 1 AND rol.id_tenant = ?
+                    INNER JOIN personas p ON p.id = dp.id_persona
+                    INNER JOIN tipos_documentos td ON td.id = dp.id_tipo_documento
+                    WHERE dp.id_tenant = ?
+                      AND dp.activo = 1
+                      AND dp.id_tipo_documento IN ($ph)
+                    ORDER BY nombre ASC
+                ";
+                $st = $db->prepare($sql);
+                $st->execute(array_merge(array($idTenant, $idTenant), $tipos));
+
+                $mapa = array();
+                foreach ($st->fetchAll() as $row) {
+                    $idp = $row['id_persona'];
+                    if (!isset($mapa[$idp])) {
+                        $mapa[$idp] = array(
+                            'id_persona' => $idp,
+                            'nombre' => $row['nombre'],
+                            'numero_identificacion' => $row['numero_identificacion'],
+                            'documentos' => array()
+                        );
+                    }
+                    $mapa[$idp]['documentos'][] = array(
+                        'id' => $row['id'],
+                        'nombre_archivo' => $row['nombre_archivo'],
+                        'fecha_vencimiento' => $row['fecha_vencimiento'],
+                        'tipo_documento' => $row['tipo_documento']
+                    );
+                }
+                $lista = array();
+                foreach ($mapa as $c) {
+                    $c['total_documentos'] = count($c['documentos']);
+                    $lista[] = $c;
+                }
+                return $lista;
+            };
+
+            $carpetasInstitucion  = $carpetasPlanas('instituciones', $tiposInstitucion);
+            $carpetasColaboradores = $carpetasPlanas('colaboradores', $tiposColaborador);
+            $carpetasEnte         = $carpetasPlanas('entes_control', $tiposEnte);
+
+            // 6) Reportes (no dependen de estudiante)
+            $reportes = array();
+            if (!empty($reportesIds)) {
+                $ph = implode(',', array_fill(0, count($reportesIds), '?'));
+                $st = $db->prepare("
+                    SELECT cr.id, cr.nombre, cr.ruta,
+                           tr.nombre AS nombre_tipo_reporte
+                    FROM catalogo_reportes cr
+                    LEFT JOIN tipos_reportes tr ON tr.id = cr.id_tipo_reporte
+                    WHERE cr.id_tenant = ? AND cr.activo = 1 AND cr.id IN ($ph)
+                    ORDER BY cr.orden ASC, cr.nombre ASC
+                ");
+                $st->execute(array_merge(array($idTenant), $reportesIds));
+                $reportes = $st->fetchAll();
+            }
+
             Flight::json(array(
-                'documentos' => $grupos,
-                'reportes'   => $reportes
+                'estudiantes'   => $resultado,
+                'institucion'   => $carpetasInstitucion,
+                'colaboradores' => $carpetasColaboradores,
+                'entes'         => $carpetasEnte,
+                'reportes'      => $reportes
             ));
         } catch (Exception $e) {
             error_log("Error en EntesControlRecursos::resolver: " . $e->getMessage());

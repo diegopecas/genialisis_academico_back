@@ -45,6 +45,10 @@ class IaVision
      * @param string $mimeType MIME del archivo (image/jpeg, image/png, application/pdf).
      * @param string $prompt   Instrucción para el modelo.
      * @param bool   $esPdf    true si el archivo es PDF (solo Gemini lo procesa).
+     * @param int    $maxTokens Límite de tokens de la respuesta del modelo. Por
+     *                          defecto 500 (suficiente para un comprobante). Se sube
+     *                          cuando la respuesta esperada es más larga (por ejemplo
+     *                          leer un registro civil con niño + padres).
      * @return array [
      *   'success'   => bool,
      *   'texto'     => string|null,   // texto crudo devuelto por el modelo
@@ -53,7 +57,7 @@ class IaVision
      *   'error'     => string|null    // motivo si ningún proveedor respondió
      * ]
      */
-    public static function extraerDeImagen($config, $base64, $mimeType, $prompt, $esPdf = false)
+    public static function extraerDeImagen($config, $base64, $mimeType, $prompt, $esPdf = false, $maxTokens = 500)
     {
         $tokensVacios = array('input' => 0, 'output' => 0, 'total' => 0);
 
@@ -101,14 +105,14 @@ class IaVision
                 $esperaMs = (isset($config['gemini_espera_ms']) && $config['gemini_espera_ms'] !== '')
                     ? intval($config['gemini_espera_ms'])
                     : self::DEFAULT_ESPERA_MS;
-                $r = self::llamarGeminiVision($key, $modelo, $base64, $mimeType, $prompt, $reintentos, $esperaMs, $timeout);
+                $r = self::llamarGeminiVision($key, $modelo, $base64, $mimeType, $prompt, $reintentos, $esperaMs, $timeout, $maxTokens);
             } elseif ($proveedor === 'openrouter') {
                 $key = isset($config['openrouter_api_key']) ? $config['openrouter_api_key'] : null;
                 if (!$key) {
                     error_log("IaVision - se salta 'openrouter': falta openrouter_api_key");
                     continue;
                 }
-                $r = self::llamarOpenAICompatibleVision(self::URL_OPENROUTER, $key, $modelo, $base64, $mimeType, $prompt, $timeout);
+                $r = self::llamarOpenAICompatibleVision(self::URL_OPENROUTER, $key, $modelo, $base64, $mimeType, $prompt, $timeout, $maxTokens);
             } elseif ($proveedor === 'qwen') {
                 $key = isset($config['qwen_api_key']) ? $config['qwen_api_key'] : null;
                 $baseUrl = isset($config['qwen_base_url']) ? trim($config['qwen_base_url']) : null;
@@ -123,14 +127,14 @@ class IaVision
                 // Cada tenant tiene su propia URL dedicada de DashScope (qwen_base_url,
                 // hasta /v1); aquí se le agrega el path del endpoint de chat.
                 $url = rtrim($baseUrl, '/') . '/chat/completions';
-                $r = self::llamarOpenAICompatibleVision($url, $key, $modelo, $base64, $mimeType, $prompt, $timeout);
+                $r = self::llamarOpenAICompatibleVision($url, $key, $modelo, $base64, $mimeType, $prompt, $timeout, $maxTokens);
             } elseif ($proveedor === 'groq') {
                 $key = isset($config['groq_api_key']) ? $config['groq_api_key'] : null;
                 if (!$key) {
                     error_log("IaVision - se salta 'groq': falta groq_api_key");
                     continue;
                 }
-                $r = self::llamarOpenAICompatibleVision(self::URL_GROQ, $key, $modelo, $base64, $mimeType, $prompt, $timeout);
+                $r = self::llamarOpenAICompatibleVision(self::URL_GROQ, $key, $modelo, $base64, $mimeType, $prompt, $timeout, $maxTokens);
             } else {
                 error_log("IaVision - proveedor desconocido en la cadena: '$proveedor'");
                 continue;
@@ -279,7 +283,7 @@ class IaVision
      * Solo reintenta ante 503 (modelo saturado) o error de conexión; los demás
      * errores no se reintentan porque reintentar no ayudaría.
      */
-    private static function llamarGeminiVision($apiKey, $modelo, $base64, $mimeType, $prompt, $reintentos, $esperaMs, $timeout)
+    private static function llamarGeminiVision($apiKey, $modelo, $base64, $mimeType, $prompt, $reintentos, $esperaMs, $timeout, $maxTokens = 500)
     {
         $tokens = array('input' => 0, 'output' => 0, 'total' => 0);
         $url = "https://generativelanguage.googleapis.com/v1beta/models/" . $modelo . ":generateContent?key=" . $apiKey;
@@ -293,7 +297,7 @@ class IaVision
                     )
                 )
             ),
-            'generationConfig' => array('temperature' => 0.1, 'maxOutputTokens' => 500)
+            'generationConfig' => array('temperature' => 0.1, 'maxOutputTokens' => $maxTokens)
         );
         $body = json_encode($payload);
 
@@ -360,7 +364,7 @@ class IaVision
      * Groq) en modo visión. La imagen va como data URL en base64. Un mismo método
      * sirve para todos porque comparten el formato: solo cambian URL, key y modelo.
      */
-    private static function llamarOpenAICompatibleVision($url, $apiKey, $modelo, $base64, $mimeType, $prompt, $timeout)
+    private static function llamarOpenAICompatibleVision($url, $apiKey, $modelo, $base64, $mimeType, $prompt, $timeout, $maxTokens = 500)
     {
         $tokens = array('input' => 0, 'output' => 0, 'total' => 0);
 
@@ -376,7 +380,7 @@ class IaVision
                 )
             ),
             'temperature' => 0.1,
-            'max_tokens' => 500
+            'max_tokens' => $maxTokens
         );
         $body = json_encode($payload);
 
