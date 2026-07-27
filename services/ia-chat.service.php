@@ -2,6 +2,9 @@
 
 class IaChat
 {
+    const URL_OPENROUTER = 'https://openrouter.ai/api/v1/chat/completions';
+    const URL_GROQ       = 'https://api.groq.com/openai/v1/chat/completions';
+
     // =====================================================
     // ENDPOINTS PRINCIPALES
     // =====================================================
@@ -9,18 +12,20 @@ class IaChat
     public static function enviarMensaje()
     {
         try {
+            // El usuario sale del token, nunca del body (evita suplantar id_persona).
+            $userData = JWTService::requerirAutenticacion();
+            PermisosService::validar($userData, 'chat.ia.usar');
+            $id_persona = $userData->id_persona;
+
             $db = Flight::db();
 
-            $id_persona = Flight::request()->data['id_persona'];
-            $mensaje = Flight::request()->data['mensaje'];
+            $mensaje = trim(Flight::request()->data['mensaje'] ?? '');
             $id_conversacion = Flight::request()->data['id_conversacion'] ?? null;
 
-            if (!$id_persona || empty(trim($mensaje))) {
-                Flight::json(["error" => "id_persona y mensaje son requeridos"], 400);
+            if ($mensaje === '') {
+                Flight::json(["error" => "El mensaje es requerido"], 400);
                 return;
             }
-
-            $mensaje = trim($mensaje);
 
             // 1. Verificar que el usuario esté activo
             $sentence = $db->prepare("SELECT activo FROM usuarios WHERE id_persona = :id_persona AND id_tenant = :id_tenant LIMIT 1");
@@ -112,9 +117,12 @@ class IaChat
         }
     }
 
-    public static function listarConversaciones($id_persona)
+    public static function listarConversaciones($id_persona = null)
     {
         try {
+            $userData = JWTService::requerirAutenticacion();
+            $id_persona = $userData->id_persona;
+
             $db = Flight::db();
 
             $sentence = $db->prepare("SELECT id, titulo, rol, fecha_creacion, fecha_actualizacion 
@@ -137,7 +145,15 @@ class IaChat
     public static function obtenerConversacion($id_conversacion)
     {
         try {
+            $userData = JWTService::requerirAutenticacion();
+
             $db = Flight::db();
+
+            // Solo se puede leer una conversación propia
+            if (!self::conversacionValida($db, $id_conversacion, $userData->id_persona)) {
+                Flight::json(["error" => "Conversación no encontrada"], 404);
+                return;
+            }
 
             $sentence = $db->prepare("SELECT id, rol_mensaje, mensaje, proveedor, fecha 
                 FROM ia_chat_mensajes 
@@ -158,7 +174,15 @@ class IaChat
     public static function eliminarConversacion($id_conversacion)
     {
         try {
+            $userData = JWTService::requerirAutenticacion();
+
             $db = Flight::db();
+
+            // Solo se puede eliminar una conversación propia
+            if (!self::conversacionValida($db, $id_conversacion, $userData->id_persona)) {
+                Flight::json(["error" => "Conversación no encontrada"], 404);
+                return;
+            }
 
             $sentence = $db->prepare("UPDATE ia_chat_conversaciones SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id_conversacion);
@@ -175,6 +199,9 @@ class IaChat
     public static function obtenerLog()
     {
         try {
+            $userData = JWTService::requerirAutenticacion();
+            PermisosService::validar($userData, 'chat.ia.usar');
+
             $db = Flight::db();
 
             $limite = isset($_GET['limite']) ? (int) $_GET['limite'] : 50;
@@ -246,19 +273,22 @@ class IaChat
         }
     }
 
-    public static function verificarAccesoInstitucional($id_persona)
+    public static function verificarAccesoInstitucional($id_persona = null)
     {
-        self::verificarAcceso($id_persona, 'chat_habilitado_institucional');
+        self::verificarAcceso('chat_habilitado_institucional');
     }
 
-    public static function verificarAccesoPadres($id_persona)
+    public static function verificarAccesoPadres($id_persona = null)
     {
-        self::verificarAcceso($id_persona, 'chat_habilitado_padres');
+        self::verificarAcceso('chat_habilitado_padres');
     }
 
-    private static function verificarAcceso($id_persona, $clave_config)
+    private static function verificarAcceso($clave_config)
     {
         try {
+            $userData = JWTService::requerirAutenticacion();
+            $id_persona = $userData->id_persona;
+
             $db = Flight::db();
 
             // 1. Verificar si el chat está habilitado para este portal
@@ -269,7 +299,13 @@ class IaChat
                 return;
             }
 
-            // 2. Verificar que el usuario esté activo
+            // 2. Permiso del sistema (chequeo suave: si no lo tiene, el widget se oculta)
+            if (!self::tienePermisoChat($userData)) {
+                Flight::json(["success" => true, "tiene_acceso" => false, "razon" => "sin_permiso"]);
+                return;
+            }
+
+            // 3. Verificar que el usuario esté activo
             $sentence = $db->prepare("SELECT activo FROM usuarios WHERE id_persona = :id_persona AND id_tenant = :id_tenant LIMIT 1");
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -281,7 +317,7 @@ class IaChat
                 return;
             }
 
-            // 3. Verificar que tenga al menos un permiso activo
+            // 4. Verificar que tenga al menos un permiso activo
             $sentence = $db->prepare("SELECT COUNT(*) as total FROM ia_chat_permisos_usuario WHERE id_persona = :id_persona AND activo = 1 AND id_tenant = :id_tenant");
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -309,6 +345,24 @@ class IaChat
     // =====================================================
     // MÉTODOS PRIVADOS
     // =====================================================
+
+    /**
+     * Chequeo SUAVE del permiso de chat (sin cortar la ejecución).
+     * Igual criterio que PermisosService pero devolviendo bool: super_admin o '*' pasan.
+     */
+    private static function tienePermisoChat($userData)
+    {
+        if (isset($userData->super_admin) && $userData->super_admin == 1) {
+            return true;
+        }
+        if (isset($userData->permisos)) {
+            $permisos = (array) $userData->permisos;
+            if (in_array('*', $permisos, true) || in_array('chat.ia.usar', $permisos, true)) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     private static function determinarRol($db, $id_persona)
     {
@@ -1038,36 +1092,114 @@ class IaChat
 
     private static function llamarIA($config, $contexto, $historial, $mensaje_usuario)
     {
-        // Intentar Gemini primero
-        $gemini_key = $config['gemini_api_key'] ?? null;
-        if ($gemini_key) {
-            $resultado = self::llamarGemini($gemini_key, $contexto, $historial, $mensaje_usuario);
-            if ($resultado['success']) {
-                return ["respuesta" => $resultado['respuesta'], "proveedor" => "gemini"];
-            }
-            error_log("Gemini falló: " . ($resultado['error'] ?? 'desconocido'));
+        // Cadena de proveedores para texto (misma idea que ia_vision_cadena, pero con
+        // modelos de texto). Formato: "proveedor|modelo;proveedor|modelo". Se prueba en
+        // orden y se cae al siguiente si el proveedor falla.
+        $cadenaRaw = isset($config['ia_chat_cadena']) ? trim($config['ia_chat_cadena']) : '';
+        $pasos = self::parsearCadenaChat($cadenaRaw);
+
+        if (empty($pasos)) {
+            error_log("IaChat: no hay cadena de proveedores configurada (ia_chat_cadena)");
+            return self::respuestaFallback();
         }
 
-        // Fallback a Groq
-        $groq_key = $config['groq_api_key'] ?? null;
-        if ($groq_key) {
-            $resultado = self::llamarGroq($groq_key, $contexto, $historial, $mensaje_usuario);
-            if ($resultado['success']) {
-                return ["respuesta" => $resultado['respuesta'], "proveedor" => "groq"];
+        foreach ($pasos as $paso) {
+            $proveedor = $paso['proveedor'];
+            $modelo = $paso['modelo'];
+            $r = null;
+
+            if ($proveedor === 'gemini') {
+                $key = $config['gemini_api_key'] ?? null;
+                if (!$key) {
+                    error_log("IaChat - se salta 'gemini': falta gemini_api_key");
+                    continue;
+                }
+                $r = self::llamarGemini($key, $modelo, $contexto, $historial, $mensaje_usuario);
+            } elseif ($proveedor === 'groq') {
+                $key = $config['groq_api_key'] ?? null;
+                if (!$key) {
+                    error_log("IaChat - se salta 'groq': falta groq_api_key");
+                    continue;
+                }
+                $r = self::llamarChatOpenAI(self::URL_GROQ, $key, $modelo, $contexto, $historial, $mensaje_usuario);
+            } elseif ($proveedor === 'openrouter') {
+                $key = $config['openrouter_api_key'] ?? null;
+                if (!$key) {
+                    error_log("IaChat - se salta 'openrouter': falta openrouter_api_key");
+                    continue;
+                }
+                $r = self::llamarChatOpenAI(self::URL_OPENROUTER, $key, $modelo, $contexto, $historial, $mensaje_usuario);
+            } elseif ($proveedor === 'qwen') {
+                $key = $config['qwen_api_key'] ?? null;
+                $baseUrl = isset($config['qwen_base_url']) ? trim($config['qwen_base_url']) : null;
+                if (!$key) {
+                    error_log("IaChat - se salta 'qwen': falta qwen_api_key");
+                    continue;
+                }
+                if (!$baseUrl) {
+                    error_log("IaChat - se salta 'qwen': falta qwen_base_url");
+                    continue;
+                }
+                $url = rtrim($baseUrl, '/') . '/chat/completions';
+                $r = self::llamarChatOpenAI($url, $key, $modelo, $contexto, $historial, $mensaje_usuario);
+            } else {
+                error_log("IaChat - proveedor no soportado en la cadena: {$proveedor}");
+                continue;
             }
-            error_log("Groq falló: " . ($resultado['error'] ?? 'desconocido'));
+
+            if (!empty($r['success'])) {
+                return ["respuesta" => $r['respuesta'], "proveedor" => $proveedor];
+            }
+            error_log("IaChat - proveedor '{$proveedor}' ({$modelo}) falló: " . ($r['error'] ?? 'desconocido'));
         }
 
+        return self::respuestaFallback();
+    }
+
+    /**
+     * Mensaje de respuesta cuando ningún proveedor de la cadena responde.
+     */
+    private static function respuestaFallback()
+    {
         return [
             "respuesta" => "Lo siento, en este momento no puedo procesar tu consulta. Por favor intenta de nuevo en unos minutos o contacta a la administración del jardín.",
             "proveedor" => "fallback"
         ];
     }
 
-    private static function llamarGemini($api_key, $contexto, $historial, $mensaje_usuario)
+    /**
+     * Parsea "proveedor|modelo;proveedor|modelo" a una lista ordenada de pasos.
+     * Ignora trozos vacíos o mal formados.
+     */
+    private static function parsearCadenaChat($cadena)
+    {
+        $pasos = [];
+        if (trim($cadena) === '') {
+            return $pasos;
+        }
+        foreach (explode(';', $cadena) as $trozo) {
+            $trozo = trim($trozo);
+            if ($trozo === '') {
+                continue;
+            }
+            $partes = explode('|', $trozo, 2);
+            if (count($partes) !== 2) {
+                continue;
+            }
+            $proveedor = strtolower(trim($partes[0]));
+            $modelo = trim($partes[1]);
+            if ($proveedor === '' || $modelo === '') {
+                continue;
+            }
+            $pasos[] = ['proveedor' => $proveedor, 'modelo' => $modelo];
+        }
+        return $pasos;
+    }
+
+    private static function llamarGemini($api_key, $modelo, $contexto, $historial, $mensaje_usuario)
     {
         try {
-            $url = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=" . $api_key;
+            $url = "https://generativelanguage.googleapis.com/v1/models/" . $modelo . ":generateContent?key=" . $api_key;
 
             $contents = [];
 
@@ -1118,11 +1250,13 @@ class IaChat
         }
     }
 
-    private static function llamarGroq($api_key, $contexto, $historial, $mensaje_usuario)
+    /**
+     * Llamada de chat a un endpoint OpenAI-compatible (groq / openrouter / qwen).
+     * Envía el contexto como 'system' y el historial + mensaje como turnos.
+     */
+    private static function llamarChatOpenAI($url, $api_key, $modelo, $contexto, $historial, $mensaje_usuario)
     {
         try {
-            $url = "https://api.groq.com/openai/v1/chat/completions";
-
             $messages = [];
             $messages[] = ["role" => "system", "content" => $contexto . "\n\nResponde siempre en español."];
 
@@ -1138,7 +1272,7 @@ class IaChat
             }
 
             $body = json_encode([
-                "model" => "llama-3.3-70b-versatile",
+                "model" => $modelo,
                 "messages" => $messages,
                 "temperature" => 0.7,
                 "max_tokens" => 1024
@@ -1156,8 +1290,12 @@ class IaChat
 
             $response = curl_exec($ch);
             $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curl_error = curl_error($ch);
             curl_close($ch);
 
+            if ($curl_error) {
+                return ["success" => false, "error" => "conexión: " . $curl_error];
+            }
             if ($http_code !== 200) {
                 return ["success" => false, "error" => "HTTP " . $http_code];
             }
