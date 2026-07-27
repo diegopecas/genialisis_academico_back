@@ -83,6 +83,35 @@ class DashboardGerencial
         ];
     }
 
+    /**
+     * Detalle operativo (asistencia + colaboradores) para el contexto del chat.
+     * Reusa los mismos métodos de detalle que los endpoints, sin duplicar SQL.
+     */
+    public static function detalleOperativoContexto($db, $fecha)
+    {
+        self::setTimeZone();
+        return [
+            'fecha' => $fecha,
+            'asistencia' => self::detalleAsistencia($db, $fecha),
+            'colaboradores' => self::detalleColaboradores($db, $fecha)
+        ];
+    }
+
+    /**
+     * Detalle financiero (cartera + recaudo + movimientos) para el contexto del chat.
+     * El rango temporal de recaudo/movimientos se deriva de la fecha (mes/año).
+     */
+    public static function detalleFinancieroContexto($db, $fecha)
+    {
+        self::setTimeZone();
+        return [
+            'fecha' => $fecha,
+            'cartera' => self::detalleCartera($db),
+            'recaudo' => self::detalleRecaudo($db, $fecha, 'mes'),
+            'movimientos' => self::detalleMovimientos($db, $fecha, 'mes')
+        ];
+    }
+
     // =========================================================
     // DETALLE ASISTENCIA ESTUDIANTES
     // =========================================================
@@ -96,6 +125,15 @@ class DashboardGerencial
             $db = Flight::db();
 
             $fecha = isset($_GET['fecha']) && !empty($_GET['fecha']) ? $_GET['fecha'] : date('Y-m-d');
+
+            Flight::json(self::detalleAsistencia($db, $fecha));
+        } catch (Exception $e) {
+            Flight::json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    private static function detalleAsistencia($db, $fecha)
+    {
             $fechaAyer = date('Y-m-d', strtotime($fecha . ' -1 day'));
 
             $sql = "SELECT 
@@ -242,14 +280,11 @@ class DashboardGerencial
             }
             unset($r);
 
-            Flight::json([
+            return [
                 'fecha' => $fecha,
                 'total' => count($registros),
                 'registros' => $registros
-            ]);
-        } catch (Exception $e) {
-            Flight::json(['error' => $e->getMessage()], 500);
-        }
+            ];
     }
 
     // =========================================================
@@ -265,6 +300,15 @@ class DashboardGerencial
             $db = Flight::db();
 
             $fecha = isset($_GET['fecha']) && !empty($_GET['fecha']) ? $_GET['fecha'] : date('Y-m-d');
+
+            Flight::json(self::detalleColaboradores($db, $fecha));
+        } catch (Exception $e) {
+            Flight::json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    private static function detalleColaboradores($db, $fecha)
+    {
             $esHoy = ($fecha === date('Y-m-d'));
 
             // Día de la semana ISO (1=Lunes ... 7=Domingo) — coincide con dias_semana.id
@@ -347,14 +391,11 @@ class DashboardGerencial
             }
             unset($r);
 
-            Flight::json([
+            return [
                 'fecha' => $fecha,
                 'total' => count($registros),
                 'registros' => $registros
-            ]);
-        } catch (Exception $e) {
-            Flight::json(['error' => $e->getMessage()], 500);
-        }
+            ];
     }
 
     // =========================================================
@@ -845,6 +886,15 @@ class DashboardGerencial
             $fecha = isset($_GET['fecha']) && !empty($_GET['fecha']) ? $_GET['fecha'] : date('Y-m-d');
             $rango = isset($_GET['rango']) ? $_GET['rango'] : 'mes';
 
+            Flight::json(self::detalleRecaudo($db, $fecha, $rango));
+        } catch (Exception $e) {
+            Flight::json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    private static function detalleRecaudo($db, $fecha, $rango)
+    {
+
             $fechaObj = new DateTime($fecha);
             $anio = $fechaObj->format('Y');
             $mes = $fechaObj->format('m');
@@ -938,17 +988,14 @@ class DashboardGerencial
             $stmtT->execute();
             $tipos = $stmtT->fetchAll(PDO::FETCH_ASSOC);
 
-            Flight::json([
+            return [
                 'fecha' => $fecha,
                 'rango' => $rango,
                 'total' => count($registros),
                 'registros' => $registros,
                 'resumen_tipos' => $resumenTipos,
                 'tipos_pago' => $tipos
-            ]);
-        } catch (Exception $e) {
-            Flight::json(['error' => $e->getMessage()], 500);
-        }
+            ];
     }
 
     /**
@@ -964,6 +1011,14 @@ class DashboardGerencial
             self::setTimeZone();
             $db = Flight::db();
 
+            Flight::json(self::detalleCartera($db));
+        } catch (Exception $e) {
+            Flight::json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    private static function detalleCartera($db)
+    {
             $sql = "SELECT 
                     p.id AS id_persona,
                     TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_persona,
@@ -1110,13 +1165,10 @@ class DashboardGerencial
             }
             unset($r);
 
-            Flight::json([
+            return [
                 'total' => count($registros),
                 'registros' => $registros
-            ]);
-        } catch (Exception $e) {
-            Flight::json(['error' => $e->getMessage()], 500);
-        }
+            ];
     }
 
     /**
@@ -1644,6 +1696,15 @@ class DashboardGerencial
             $fecha = isset($_GET['fecha']) && !empty($_GET['fecha']) ? $_GET['fecha'] : date('Y-m-d');
             $rango = isset($_GET['rango']) ? $_GET['rango'] : 'mes';
 
+            Flight::json(self::detalleMovimientos($db, $fecha, $rango));
+        } catch (Exception $e) {
+            Flight::json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    private static function detalleMovimientos($db, $fecha, $rango)
+    {
+
             $fechaObj = new DateTime($fecha);
             $anio = $fechaObj->format('Y');
             $mes = $fechaObj->format('m');
@@ -1723,17 +1784,14 @@ class DashboardGerencial
             $stmtM->execute();
             $medios = $stmtM->fetchAll(PDO::FETCH_ASSOC);
 
-            Flight::json([
+            return [
                 'fecha' => $fecha,
                 'rango' => $rango,
                 'total' => count($registros),
                 'registros' => $registros,
                 'categorias' => $categorias,
                 'medios_pago' => $medios
-            ]);
-        } catch (Exception $e) {
-            Flight::json(['error' => $e->getMessage()], 500);
-        }
+            ];
     }
 
     /**

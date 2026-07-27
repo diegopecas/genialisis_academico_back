@@ -88,7 +88,8 @@ class IaChat
             $id_usuario = $usuarioRow ? (int)$usuarioRow['id'] : null;
             $es_super_admin = $usuarioRow ? (int)($usuarioRow['super_admin'] ?? 0) === 1 : false;
 
-            $contexto = self::armarContexto($db, $id_persona, $rol, $nombre, $config, $id_usuario, $es_super_admin);
+            $fecha_consulta = self::resolverFechaConsulta($mensaje);
+            $contexto = self::armarContexto($db, $id_persona, $rol, $nombre, $config, $id_usuario, $es_super_admin, $fecha_consulta);
 
             // 8. Llamar a la IA (Gemini primero, Groq fallback)
             $inicio_tiempo = microtime(true);
@@ -420,7 +421,7 @@ class IaChat
      * Consulta ia_chat_permisos_usuario y por cada tipo permitido
      * llama al método correspondiente para obtener la información
      */
-    private static function armarContexto($db, $id_persona, $rol, $nombre, $config = [], $id_usuario = null, $es_super_admin = false)
+    private static function armarContexto($db, $id_persona, $rol, $nombre, $config = [], $id_usuario = null, $es_super_admin = false, $fecha_consulta = null)
     {
         // Obtener nombre del asistente desde configuración
         $nombre_asistente = $config['nombre_asistente'] ?? 'Lumi';
@@ -454,7 +455,8 @@ class IaChat
         // Solo se calcula si el usuario tiene algún permiso global que la necesite.
         $codigos = array_column($permisos, 'codigo');
         $necesitaFoto = in_array('global_operativo', $codigos, true) || in_array('global_financiero', $codigos, true);
-        $foto = $necesitaFoto ? self::obtenerFotoContexto($db, $config) : null;
+        $fecha_ctx = $fecha_consulta ?: date('Y-m-d');
+        $foto = $necesitaFoto ? self::obtenerFotoContexto($db, $config, $fecha_ctx) : null;
 
         // Por cada permiso, armar el bloque de contexto correspondiente
         foreach ($permisos as $permiso) {
@@ -667,17 +669,27 @@ class IaChat
             case 'grupo_financiero':
                 return self::contextoDummyGrupoFinanciero([]);
             case 'global_operativo':
-                // Datos reales del dashboard; si la foto no está disponible, cae a genérico
-                return (is_array($foto) && isset($foto['operativo']))
-                    ? self::textoContextoOperativo($foto['operativo'])
-                    : self::contextoDummyGlobalOperativo();
+                // Datos reales del dashboard (resumen + detalle); si la foto no está, cae a genérico
+                if (is_array($foto) && isset($foto['operativo'])) {
+                    $texto = self::textoContextoOperativo($foto['operativo']);
+                    if (isset($foto['operativo_detalle'])) {
+                        $texto .= self::textoDetalleOperativo($foto['operativo_detalle']);
+                    }
+                    return $texto;
+                }
+                return self::contextoDummyGlobalOperativo();
             case 'global_academico':
                 return self::contextoDummyGlobalAcademico();
             case 'global_financiero':
-                // Datos reales del dashboard; si la foto no está disponible, cae a genérico
-                return (is_array($foto) && isset($foto['financiero']))
-                    ? self::textoContextoFinanciero($foto['financiero'])
-                    : self::contextoDummyGlobalFinanciero();
+                // Datos reales del dashboard (resumen + detalle); si la foto no está, cae a genérico
+                if (is_array($foto) && isset($foto['financiero'])) {
+                    $texto = self::textoContextoFinanciero($foto['financiero']);
+                    if (isset($foto['financiero_detalle'])) {
+                        $texto .= self::textoDetalleFinanciero($foto['financiero_detalle']);
+                    }
+                    return $texto;
+                }
+                return self::contextoDummyGlobalFinanciero();
             default:
                 return "";
         }
@@ -709,15 +721,15 @@ class IaChat
      * con DashboardGerencial y la guarda. El TTL sale de ia_configuracion
      * (contexto_cache_ttl_min); si la clave no existe o es <= 0, no se cachea.
      */
-    private static function obtenerFotoContexto($db, $config)
+    private static function obtenerFotoContexto($db, $config, $fecha)
     {
-        $fecha = date('Y-m-d');
         $ttlMin = (isset($config['contexto_cache_ttl_min']) && (int) $config['contexto_cache_ttl_min'] > 0)
             ? (int) $config['contexto_cache_ttl_min']
             : 0;
+        $esPasado = ($fecha < date('Y-m-d'));
 
-        // 1. Foto vigente en caché (misma fecha)
-        $cacheJson = IaChatContextoCache::obtenerVigente($db, $ttlMin);
+        // 1. Foto vigente en caché para esa fecha
+        $cacheJson = IaChatContextoCache::obtenerVigente($db, $fecha, $ttlMin);
         if ($cacheJson) {
             $decoded = json_decode($cacheJson, true);
             if (is_array($decoded) && isset($decoded['fecha']) && $decoded['fecha'] === $fecha) {
@@ -731,15 +743,18 @@ class IaChat
             $foto = [
                 'fecha' => $fecha,
                 'operativo' => DashboardGerencial::resumenOperativoContexto($db, $fecha),
-                'financiero' => DashboardGerencial::resumenFinancieroContexto($db, $fecha)
+                'operativo_detalle' => DashboardGerencial::detalleOperativoContexto($db, $fecha),
+                'financiero' => DashboardGerencial::resumenFinancieroContexto($db, $fecha),
+                'financiero_detalle' => DashboardGerencial::detalleFinancieroContexto($db, $fecha)
             ];
         } catch (Exception $e) {
             error_log("Error calculando foto de contexto IA: " . $e->getMessage());
             return ['fecha' => $fecha];
         }
 
-        if ($ttlMin > 0) {
-            IaChatContextoCache::guardar($db, json_encode($foto));
+        // El pasado se cachea siempre (no cambia); hoy solo si hay TTL configurado.
+        if ($esPasado || $ttlMin > 0) {
+            IaChatContextoCache::guardar($db, $fecha, json_encode($foto));
         }
 
         return $foto;
@@ -817,6 +832,151 @@ class IaChat
         $texto .= "- Recaudado hoy: " . self::pesos($recHoy['total'] ?? 0) . " (" . (int) ($recHoy['cantidad'] ?? 0) . " pagos)\n";
         $texto .= "- Recaudado en el mes: " . self::pesos($recMes['total'] ?? 0) . " (" . (int) ($recMes['cantidad'] ?? 0) . " pagos)\n";
         $texto .= "- Recaudado en el año: " . self::pesos($recAnio['total'] ?? 0) . "\n";
+
+        return $texto;
+    }
+
+    /**
+     * Resuelve la fecha a la que se refiere el mensaje del usuario.
+     * Reconoce "hoy", "ayer", "anteayer" y fechas explícitas (dd/mm/aaaa o
+     * aaaa-mm-dd). Si no detecta nada, retorna hoy. Solo interpreta una fecha.
+     */
+    private static function resolverFechaConsulta($mensaje)
+    {
+        $hoy = date('Y-m-d');
+        $texto = mb_strtolower($mensaje, 'UTF-8');
+
+        // Fecha explícita aaaa-mm-dd
+        if (preg_match('/(\d{4})-(\d{2})-(\d{2})/', $texto, $m)) {
+            $f = sprintf('%04d-%02d-%02d', (int) $m[1], (int) $m[2], (int) $m[3]);
+            return self::fechaValidaONull($f) ?: $hoy;
+        }
+
+        // Fecha explícita dd/mm/aaaa (o d/m/aaaa)
+        if (preg_match('#(\d{1,2})/(\d{1,2})/(\d{4})#', $texto, $m)) {
+            $f = sprintf('%04d-%02d-%02d', (int) $m[3], (int) $m[2], (int) $m[1]);
+            return self::fechaValidaONull($f) ?: $hoy;
+        }
+
+        // Palabras relativas (anteayer antes que ayer por ser superconjunto)
+        if (strpos($texto, 'anteayer') !== false) {
+            return date('Y-m-d', strtotime('-2 day'));
+        }
+        if (strpos($texto, 'ayer') !== false) {
+            return date('Y-m-d', strtotime('-1 day'));
+        }
+
+        return $hoy;
+    }
+
+    /**
+     * Valida que una cadena aaaa-mm-dd sea una fecha real; retorna la fecha o null.
+     */
+    private static function fechaValidaONull($f)
+    {
+        $d = DateTime::createFromFormat('Y-m-d', $f);
+        return ($d && $d->format('Y-m-d') === $f) ? $f : null;
+    }
+
+    /**
+     * Construye el bloque de detalle operativo (asistencia y colaboradores).
+     */
+    private static function textoDetalleOperativo($det)
+    {
+        $texto = "";
+
+        $asis = (isset($det['asistencia']['registros']) && is_array($det['asistencia']['registros']))
+            ? $det['asistencia']['registros'] : [];
+        if (!empty($asis)) {
+            $texto .= "\nDETALLE DE ASISTENCIA POR ESTUDIANTE:\n";
+            foreach ($asis as $r) {
+                $nombre = isset($r['nombre_completo']) ? trim($r['nombre_completo']) : 'Sin nombre';
+                $grupo = $r['nombre_grupo'] ?? 'Sin grupo';
+                $estado = $r['estado'] ?? '';
+                $linea = "- {$nombre} | grupo: {$grupo} | {$estado}";
+                if (!empty($r['hora_ingreso'])) {
+                    $linea .= " | ingreso: " . $r['hora_ingreso'];
+                }
+                if (!empty($r['hora_salida'])) {
+                    $linea .= " | salida: " . $r['hora_salida'];
+                }
+                if (($estado === 'No asistió') && !empty($r['ultima_asistencia'])) {
+                    $linea .= " | última asistencia: " . $r['ultima_asistencia'];
+                }
+                $texto .= $linea . "\n";
+            }
+        }
+
+        $cols = (isset($det['colaboradores']['registros']) && is_array($det['colaboradores']['registros']))
+            ? $det['colaboradores']['registros'] : [];
+        if (!empty($cols)) {
+            $texto .= "\nDETALLE DE COLABORADORES:\n";
+            foreach ($cols as $r) {
+                $nombre = isset($r['nombre_completo']) ? trim($r['nombre_completo']) : 'Sin nombre';
+                $cargo = $r['nombre_cargo'] ?? 'Sin cargo';
+                $estado = $r['estado'] ?? '';
+                $linea = "- {$nombre} | cargo: {$cargo} | {$estado}";
+                if (!empty($r['hora_entrada'])) {
+                    $linea .= " | entrada: " . $r['hora_entrada'];
+                }
+                if (!empty($r['hora_salida'])) {
+                    $linea .= " | salida: " . $r['hora_salida'];
+                }
+                $texto .= $linea . "\n";
+            }
+        }
+
+        return $texto;
+    }
+
+    /**
+     * Construye el bloque de detalle financiero (deudores, recaudo, movimientos).
+     */
+    private static function textoDetalleFinanciero($det)
+    {
+        $texto = "";
+
+        $deudores = (isset($det['cartera']['registros']) && is_array($det['cartera']['registros']))
+            ? $det['cartera']['registros'] : [];
+        if (!empty($deudores)) {
+            $texto .= "\nDETALLE DE CARTERA (deudores, ordenados por saldo vencido):\n";
+            foreach ($deudores as $r) {
+                $nombre = isset($r['nombre_persona']) ? trim($r['nombre_persona']) : 'Sin nombre';
+                $tipo = $r['tipo_persona'] ?? '';
+                $grupoCargo = $r['grupo_o_cargo'] ?? '';
+                $texto .= "- {$nombre} ({$tipo}, {$grupoCargo}) | pendiente: " . self::pesos($r['saldo_pendiente'] ?? 0)
+                    . " | vencido: " . self::pesos($r['saldo_vencido'] ?? 0)
+                    . " | cuentas: " . (int) ($r['cuentas_pendientes'] ?? 0)
+                    . " | días máx. vencido: " . (int) ($r['dias_max_vencido'] ?? 0) . "\n";
+            }
+        }
+
+        $pagos = (isset($det['recaudo']['registros']) && is_array($det['recaudo']['registros']))
+            ? $det['recaudo']['registros'] : [];
+        if (!empty($pagos)) {
+            $texto .= "\nDETALLE DE RECAUDO (pagos del mes):\n";
+            foreach ($pagos as $r) {
+                $nombre = isset($r['nombre_persona']) ? trim($r['nombre_persona']) : 'Sin nombre';
+                $tipoPago = $r['tipo_pago'] ?? '';
+                $fecha = $r['fecha'] ?? '';
+                $texto .= "- {$fecha} | {$nombre} | {$tipoPago} | " . self::pesos($r['valor_recibido'] ?? 0) . "\n";
+            }
+        }
+
+        $movs = (isset($det['movimientos']['registros']) && is_array($det['movimientos']['registros']))
+            ? $det['movimientos']['registros'] : [];
+        if (!empty($movs)) {
+            $texto .= "\nDETALLE DE MOVIMIENTOS FINANCIEROS (del mes):\n";
+            foreach ($movs as $r) {
+                $fecha = $r['fecha'] ?? '';
+                $tipo = $r['tipo'] ?? '';
+                $categoria = $r['categoria'] ?? '';
+                $concepto = $r['concepto'] ?? '';
+                $estado = $r['estado'] ?? '';
+                $texto .= "- {$fecha} | {$tipo} | {$categoria} / {$concepto} | " . self::pesos($r['valor'] ?? 0)
+                    . " | {$estado}\n";
+            }
+        }
 
         return $texto;
     }
