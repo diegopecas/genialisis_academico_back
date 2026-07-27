@@ -41,13 +41,16 @@ class IaChat
                 $respuesta_ia = self::llamarIA($config, $contexto_inactivo, [], $mensaje);
                 $tiempo_ms = round((microtime(true) - $inicio_tiempo) * 1000);
 
-                $id_conversacion_resp = $id_conversacion ?? self::crearConversacion($db, $id_persona, 'inactivo', $mensaje);
+                // Reusar la conversación entrante solo si existe y es de esta persona/tenant; si no, crear nueva
+                $id_conversacion_resp = self::conversacionValida($db, $id_conversacion, $id_persona)
+                    ? $id_conversacion
+                    : self::crearConversacion($db, $id_persona, 'inactivo', $mensaje);
                 self::guardarMensaje($db, $id_conversacion_resp, 'user', $mensaje);
                 self::guardarMensaje($db, $id_conversacion_resp, 'assistant', $respuesta_ia['respuesta'], $respuesta_ia['proveedor'], $tiempo_ms);
 
                 Flight::json([
                     "success" => true,
-                    "id_conversacion" => (int) $id_conversacion_resp,
+                    "id_conversacion" => $id_conversacion_resp,
                     "respuesta" => $respuesta_ia['respuesta'],
                     "proveedor" => $respuesta_ia['proveedor'],
                     "tiempo_ms" => $tiempo_ms
@@ -62,7 +65,8 @@ class IaChat
             $nombre = self::obtenerNombrePersona($db, $id_persona);
 
             // 4. Obtener o crear conversación
-            if (!$id_conversacion) {
+            // Si el id entrante no existe o no pertenece a esta persona/tenant, se crea una nueva
+            if (!self::conversacionValida($db, $id_conversacion, $id_persona)) {
                 $id_conversacion = self::crearConversacion($db, $id_persona, $rol, $mensaje);
             }
 
@@ -96,7 +100,7 @@ class IaChat
 
             Flight::json([
                 "success" => true,
-                "id_conversacion" => (int) $id_conversacion,
+                "id_conversacion" => $id_conversacion,
                 "respuesta" => $respuesta_ia['respuesta'],
                 "proveedor" => $respuesta_ia['proveedor'],
                 "tiempo_ms" => $tiempo_ms
@@ -345,6 +349,28 @@ class IaChat
         $sentence->execute();
         $row = $sentence->fetch(PDO::FETCH_ASSOC);
         return ($row && $row['nombre']) ? trim($row['nombre']) : 'Usuario';
+    }
+
+    /**
+     * Verifica que la conversación exista, esté activa y pertenezca a la persona/tenant.
+     * Evita que un id_conversacion inválido (p. ej. estado viejo del cliente) rompa el INSERT
+     * de mensajes por la FK; en ese caso el flujo crea una conversación nueva.
+     */
+    private static function conversacionValida($db, $id_conversacion, $id_persona)
+    {
+        if (!$id_conversacion) {
+            return false;
+        }
+
+        $sentence = $db->prepare("SELECT 1 FROM ia_chat_conversaciones 
+            WHERE id = :id AND id_persona = :id_persona AND activo = 1 AND id_tenant = :id_tenant 
+            LIMIT 1");
+        $sentence->bindParam(':id', $id_conversacion);
+        $sentence->bindParam(':id_persona', $id_persona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+
+        return (bool) $sentence->fetch();
     }
 
     private static function crearConversacion($db, $id_persona, $rol, $primer_mensaje)
