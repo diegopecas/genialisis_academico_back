@@ -450,6 +450,12 @@ class IaChat
         $csv_estudiantes = !empty($ids_estudiantes) ? implode(',', $ids_estudiantes) : '';
         $csv_grupos = !empty($ids_grupos) ? implode(',', $ids_grupos) : '';
 
+        // Foto de contexto global (operativo/financiero) reusando el dashboard.
+        // Solo se calcula si el usuario tiene algún permiso global que la necesite.
+        $codigos = array_column($permisos, 'codigo');
+        $necesitaFoto = in_array('global_operativo', $codigos, true) || in_array('global_financiero', $codigos, true);
+        $foto = $necesitaFoto ? self::obtenerFotoContexto($db, $config) : null;
+
         // Por cada permiso, armar el bloque de contexto correspondiente
         foreach ($permisos as $permiso) {
             $codigo = $permiso['codigo'];
@@ -460,7 +466,7 @@ class IaChat
                 continue;
             }
 
-            $contexto .= self::obtenerContextoPorTipo($db, $codigo, $csv_estudiantes, $csv_grupos);
+            $contexto .= self::obtenerContextoPorTipo($db, $codigo, $csv_estudiantes, $csv_grupos, $foto);
         }
 
         // Agregar documentación de módulos accesibles desde db_master
@@ -640,10 +646,12 @@ class IaChat
     }
 
     /**
-     * Retorna el bloque de contexto para un tipo de información
-     * Llama a stored procedures para datos reales, dummy para los pendientes
+     * Retorna el bloque de contexto para un tipo de información.
+     * - Personal (est/grupo): datos reales vía stored procedure.
+     * - Global operativo/financiero: datos reales del dashboard (foto en caché).
+     * - Resto: aún sin fuente de datos, devuelve texto genérico (no inventa).
      */
-    private static function obtenerContextoPorTipo($db, $codigo, $csv_estudiantes, $csv_grupos)
+    private static function obtenerContextoPorTipo($db, $codigo, $csv_estudiantes, $csv_grupos, $foto = null)
     {
         switch ($codigo) {
             case 'est_personal':
@@ -659,11 +667,17 @@ class IaChat
             case 'grupo_financiero':
                 return self::contextoDummyGrupoFinanciero([]);
             case 'global_operativo':
-                return self::contextoDummyGlobalOperativo();
+                // Datos reales del dashboard; si la foto no está disponible, cae a genérico
+                return (is_array($foto) && isset($foto['operativo']))
+                    ? self::textoContextoOperativo($foto['operativo'])
+                    : self::contextoDummyGlobalOperativo();
             case 'global_academico':
                 return self::contextoDummyGlobalAcademico();
             case 'global_financiero':
-                return self::contextoDummyGlobalFinanciero();
+                // Datos reales del dashboard; si la foto no está disponible, cae a genérico
+                return (is_array($foto) && isset($foto['financiero']))
+                    ? self::textoContextoFinanciero($foto['financiero'])
+                    : self::contextoDummyGlobalFinanciero();
             default:
                 return "";
         }
@@ -689,183 +703,173 @@ class IaChat
         }
     }
 
+    /**
+     * Obtiene la foto del contexto global reusando el dashboard.
+     * Lee la caché (ia_chat_contexto_cache); si está vencida o no existe, recalcula
+     * con DashboardGerencial y la guarda. El TTL sale de ia_configuracion
+     * (contexto_cache_ttl_min); si la clave no existe o es <= 0, no se cachea.
+     */
+    private static function obtenerFotoContexto($db, $config)
+    {
+        $fecha = date('Y-m-d');
+        $ttlMin = (isset($config['contexto_cache_ttl_min']) && (int) $config['contexto_cache_ttl_min'] > 0)
+            ? (int) $config['contexto_cache_ttl_min']
+            : 0;
+
+        // 1. Foto vigente en caché (misma fecha)
+        $cacheJson = IaChatContextoCache::obtenerVigente($db, $ttlMin);
+        if ($cacheJson) {
+            $decoded = json_decode($cacheJson, true);
+            if (is_array($decoded) && isset($decoded['fecha']) && $decoded['fecha'] === $fecha) {
+                return $decoded;
+            }
+        }
+
+        // 2. Recalcular desde el dashboard (fuente única). Si algo falla,
+        //    se devuelve la foto sin bloques para que caiga a texto genérico.
+        try {
+            $foto = [
+                'fecha' => $fecha,
+                'operativo' => DashboardGerencial::resumenOperativoContexto($db, $fecha),
+                'financiero' => DashboardGerencial::resumenFinancieroContexto($db, $fecha)
+            ];
+        } catch (Exception $e) {
+            error_log("Error calculando foto de contexto IA: " . $e->getMessage());
+            return ['fecha' => $fecha];
+        }
+
+        if ($ttlMin > 0) {
+            IaChatContextoCache::guardar($db, json_encode($foto));
+        }
+
+        return $foto;
+    }
+
+    /**
+     * Formatea un valor numérico como pesos colombianos para el contexto.
+     */
+    private static function pesos($valor)
+    {
+        return '$' . number_format((float) $valor, 0, ',', '.');
+    }
+
+    /**
+     * Construye el bloque de texto operativo a partir del resumen del dashboard.
+     */
+    private static function textoContextoOperativo($op)
+    {
+        $a = isset($op['asistencia']) ? $op['asistencia'] : [];
+        $c = isset($op['colaboradores']) ? $op['colaboradores'] : [];
+        $al = isset($op['alimentacion']) ? $op['alimentacion'] : [];
+        $fecha = isset($op['fecha']) ? $op['fecha'] : date('Y-m-d');
+
+        $texto = "\nDATOS OPERATIVOS DEL JARDÍN (fecha {$fecha}):\n";
+
+        $texto .= "Asistencia de estudiantes:\n";
+        $texto .= "- Estudiantes activos: " . (int) ($a['total_activos'] ?? 0) . "\n";
+        $texto .= "- Asistieron hoy: " . (int) ($a['total_asistieron'] ?? 0) . " (" . ($a['porcentaje'] ?? 0) . "%)\n";
+        if (!empty($a['es_hoy'])) {
+            $texto .= "- Presentes en este momento: " . (int) ($a['total_presentes_ahora'] ?? 0) . "\n";
+            $texto .= "- Ya salieron: " . (int) ($a['total_salieron'] ?? 0) . "\n";
+        }
+        if (!empty($a['por_grupo'])) {
+            $texto .= "Asistencia por grupo:\n";
+            foreach ($a['por_grupo'] as $g) {
+                $texto .= "  - " . $g['nombre_grupo'] . ": " . (int) $g['asistieron'] . "/" . (int) $g['total'] . " (" . $g['porcentaje'] . "%)\n";
+            }
+        }
+
+        $texto .= "Colaboradores:\n";
+        $texto .= "- Activos (validan jornada): " . (int) ($c['total_activos'] ?? 0) . "\n";
+        if (!empty($c['es_hoy'])) {
+            $texto .= "- Presentes en este momento: " . (int) ($c['presentes'] ?? 0) . "\n";
+        }
+        $texto .= "- Ingresaron: " . (int) ($c['ingresaron'] ?? 0) . " | Salieron: " . (int) ($c['salieron'] ?? 0) . " | En descanso: " . (int) ($c['en_descanso'] ?? 0) . " | Entradas tarde: " . (int) ($c['tarde'] ?? 0) . "\n";
+
+        $texto .= "Alimentación:\n";
+        $texto .= "- Servicios mensuales servidos: " . (int) ($al['mensuales_servidos'] ?? 0) . "/" . (int) ($al['mensuales_contratados'] ?? 0) . " (" . ($al['mensuales_porcentaje'] ?? 0) . "%)\n";
+        $texto .= "- Servicios diarios servidos: " . (int) ($al['diarios_servidos'] ?? 0) . "\n";
+
+        return $texto;
+    }
+
+    /**
+     * Construye el bloque de texto financiero a partir del resumen del dashboard.
+     */
+    private static function textoContextoFinanciero($fin)
+    {
+        $car = isset($fin['cartera']) ? $fin['cartera'] : [];
+        $rec = isset($fin['recaudo']) ? $fin['recaudo'] : [];
+        $fecha = isset($fin['fecha']) ? $fin['fecha'] : date('Y-m-d');
+
+        $texto = "\nDATOS FINANCIEROS DEL JARDÍN (fecha {$fecha}):\n";
+
+        $texto .= "Cartera:\n";
+        $texto .= "- Total facturado: " . self::pesos($car['total_facturado'] ?? 0) . "\n";
+        $texto .= "- Total recaudado: " . self::pesos($car['total_recaudado'] ?? 0) . "\n";
+        $texto .= "- Saldo pendiente: " . self::pesos($car['saldo_pendiente'] ?? 0) . "\n";
+        $texto .= "- Saldo vencido: " . self::pesos($car['saldo_vencido'] ?? 0) . " (" . ($car['porcentaje_vencido'] ?? 0) . "% del pendiente)\n";
+
+        $recHoy = isset($rec['recaudado_hoy']) ? $rec['recaudado_hoy'] : [];
+        $recMes = isset($rec['recaudado_mes']) ? $rec['recaudado_mes'] : [];
+        $recAnio = isset($rec['recaudado_anio']) ? $rec['recaudado_anio'] : [];
+        $texto .= "Recaudo:\n";
+        $texto .= "- Recaudado hoy: " . self::pesos($recHoy['total'] ?? 0) . " (" . (int) ($recHoy['cantidad'] ?? 0) . " pagos)\n";
+        $texto .= "- Recaudado en el mes: " . self::pesos($recMes['total'] ?? 0) . " (" . (int) ($recMes['cantidad'] ?? 0) . " pagos)\n";
+        $texto .= "- Recaudado en el año: " . self::pesos($recAnio['total'] ?? 0) . "\n";
+
+        return $texto;
+    }
+
     // =====================================================
-    // CONTEXTOS DUMMY POR TIPO - Reemplazar por queries reales
-    // Cada método recibe los IDs de estudiantes cuando aplica
+    // CONTEXTOS SIN FUENTE DE DATOS AÚN
+    // Devuelven texto genérico para no inventar información.
+    // (Se conservan los métodos; reemplazar por datos reales cuando exista fuente.)
     // =====================================================
 
     private static function contextoDummyEstPersonal($ids_estudiantes)
     {
-        $cantidad = count($ids_estudiantes);
-        return <<<EOT
-
-DATOS PERSONALES DE ESTUDIANTES (acceso a {$cantidad} estudiante(s)):
-- Santiago Morales | 4 años | Grupo: Párvulos A | Docente: María García
-  Acudiente principal: Miguel Morales (padre) | Tel: 310-XXX-XXXX
-  Acudiente secundario: Laura Galindo (madre) | Tel: 311-XXX-XXXX
-  Dirección: Chía, Cundinamarca
-  EPS: Compensar | RH: O+
-
-EOT;
+        return "\nDATOS PERSONALES DE ESTUDIANTES: sección sin datos disponibles por el momento.\n";
     }
 
     private static function contextoDummyEstAcademico($ids_estudiantes)
     {
-        $cantidad = count($ids_estudiantes);
-        return <<<EOT
-
-DATOS ACADÉMICOS DE ESTUDIANTES (acceso a {$cantidad} estudiante(s)):
-- Santiago Morales:
-  Sprint actual: Sprint 3 (Febrero 2026)
-  Asistencia mes actual: 15/18 días (83%)
-  Última observación: "Ha mejorado mucho en motricidad fina. Participa activamente."
-  Calificaciones último sprint:
-    Desarrollo cognitivo: Sobresaliente (4.5)
-    Desarrollo social: Excelente (5.0)
-    Motricidad: Sobresaliente (4.5)
-    Comunicativa: Notable (4.0)
-  Pendientes: Ninguno
-
-EOT;
+        return "\nDATOS ACADÉMICOS DE ESTUDIANTES: sección sin datos disponibles por el momento.\n";
     }
 
     private static function contextoDummyEstFinanciero($ids_estudiantes)
     {
-        $cantidad = count($ids_estudiantes);
-        return <<<EOT
-
-DATOS FINANCIEROS DE ESTUDIANTES (acceso a {$cantidad} estudiante(s)):
-- Santiago Morales:
-  Pensión mensual: $450.000
-  Saldo pendiente: $450.000 (Febrero 2026, vence 15 Feb)
-  Último pago: $450.000 (15 Ene 2026 - Pensión Enero)
-  Estado general: Al día en pagos anteriores
-  Historial de pagos (últimos 3 meses):
-    Enero 2026: $450.000 ✓ pagado 15/01
-    Diciembre 2025: $450.000 ✓ pagado 13/12
-    Noviembre 2025: $450.000 ✓ pagado 14/11
-
-EOT;
+        return "\nDATOS FINANCIEROS DE ESTUDIANTES: sección sin datos disponibles por el momento.\n";
     }
 
     private static function contextoDummyGrupoPersonal($ids_estudiantes)
     {
-        $cantidad = count($ids_estudiantes);
-        return <<<EOT
-
-DATOS PERSONALES DE ESTUDIANTES DEL GRUPO (acceso a {$cantidad} estudiante(s)):
-- Santiago Morales | 4 años | Grupo: Párvulos A
-  Acudiente: Miguel Morales (padre) | Tel: 310-XXX-XXXX
-- Valentina López | 3 años | Grupo: Párvulos A
-  Acudiente: Andrea López (madre) | Tel: 312-XXX-XXXX
-- Mateo Rodríguez | 4 años | Grupo: Párvulos A
-  Acudiente: Carlos Rodríguez (padre) | Tel: 315-XXX-XXXX
-- Isabella Martínez | 3 años | Grupo: Párvulos A
-  Acudiente: Paula Martínez (madre) | Tel: 318-XXX-XXXX
-- Samuel García | 4 años | Grupo: Párvulos A
-  Acudiente: Andrés García (padre) | Tel: 320-XXX-XXXX
-
-EOT;
+        return "\nDATOS PERSONALES DEL GRUPO: sección sin datos disponibles por el momento.\n";
     }
 
     private static function contextoDummyGrupoAcademico($ids_estudiantes)
     {
-        $cantidad = count($ids_estudiantes);
-        return <<<EOT
-
-DATOS ACADÉMICOS DEL GRUPO (acceso a {$cantidad} estudiante(s)):
-Sprint actual: Sprint 3 (Febrero 2026)
-
-Resumen de asistencia del grupo:
-- Promedio asistencia: 87%
-- Presentes hoy: 13/15
-
-Calificaciones del grupo (promedio por área):
-- Desarrollo cognitivo: 4.3
-- Desarrollo social: 4.6
-- Motricidad: 4.1
-- Comunicativa: 3.9
-
-Estudiantes que requieren apoyo:
-- Mateo Rodríguez: Requiere apoyo en lenguaje (comunicativa: 3.2)
-
-Pendientes docente:
-- Observaciones semanales (vence Viernes)
-- Calificaciones corte 1 (vence 28 Feb)
-
-EOT;
+        return "\nDATOS ACADÉMICOS DEL GRUPO: sección sin datos disponibles por el momento.\n";
     }
 
     private static function contextoDummyGrupoFinanciero($ids_estudiantes)
     {
-        $cantidad = count($ids_estudiantes);
-        return <<<EOT
-
-DATOS FINANCIEROS DEL GRUPO (acceso a {$cantidad} estudiante(s)):
-- Familias al día: 12 de 15 (80%)
-- Familias en mora: 3
-  - Familia Rodríguez: $450.000 pendiente (Febrero)
-  - Familia López: $900.000 pendiente (Enero + Febrero)
-  - Familia García: $450.000 pendiente (Febrero)
-- Total pendiente del grupo: $1.800.000
-
-EOT;
+        return "\nDATOS FINANCIEROS DEL GRUPO: sección sin datos disponibles por el momento.\n";
     }
 
     private static function contextoDummyGlobalOperativo()
     {
-        return <<<EOT
-
-DATOS OPERATIVOS DEL JARDÍN:
-- Estudiantes activos: 85
-- Docentes: 8 | Colaboradores: 12
-- Ocupación: 85% (85 de 100 cupos)
-- Horario: Lunes a Viernes 7:00 AM - 5:00 PM
-- Dirección: Chía, Cundinamarca
-
-Distribución por grupos:
-  Sala cuna (0-1 año): 10 niños - Docente: Ana Ruiz
-  Caminadores (1-2 años): 12 niños - Docente: Laura Torres
-  Párvulos A (3-4 años): 15 niños - Docente: María García
-  Párvulos B (3-4 años): 14 niños - Docente: Carmen Díaz
-  Pre-jardín A (4-5 años): 18 niños - Docente: Patricia Gómez
-  Pre-jardín B (4-5 años): 16 niños - Docente: Sofía Herrera
-
-Asistencia hoy: 78/85 presentes (91.8%)
-Inasistencias reportadas: 5 | Sin reporte: 2
-
-EOT;
+        return "\nDATOS OPERATIVOS DEL JARDÍN: sección sin datos disponibles por el momento.\n";
     }
 
     private static function contextoDummyGlobalAcademico()
     {
-        return <<<EOT
-
-DATOS ACADÉMICOS GLOBALES DEL JARDÍN:
-- Sprint actual: Sprint 3 (Febrero 2026)
-- Promedio general de calificaciones: 4.2 / 5.0
-- Área con mejor rendimiento: Desarrollo social (4.6)
-- Área con menor rendimiento: Comunicativa (3.8)
-- Estudiantes con todas las áreas en Sobresaliente o superior: 23 (27%)
-- Estudiantes que requieren apoyo: 8 (9.4%)
-- Calificaciones pendientes por registrar: 12 tareas
-
-EOT;
+        return "\nDATOS ACADÉMICOS GLOBALES DEL JARDÍN: sección sin datos disponibles por el momento.\n";
     }
 
     private static function contextoDummyGlobalFinanciero()
     {
-        return <<<EOT
-
-DATOS FINANCIEROS GLOBALES DEL JARDÍN (mes actual):
-- Total facturado: $38.250.000
-- Total recaudado: $31.500.000
-- Cartera pendiente: $6.750.000
-- Familias en mora: 8 de 85 (9.4%)
-- Porcentaje de recaudo: 82.4%
-- Familias al día: 77 de 85 (90.6%)
-
-EOT;
+        return "\nDATOS FINANCIEROS GLOBALES DEL JARDÍN: sección sin datos disponibles por el momento.\n";
     }
 
     // =====================================================

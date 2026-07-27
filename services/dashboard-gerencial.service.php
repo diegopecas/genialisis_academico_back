@@ -41,6 +41,49 @@ class DashboardGerencial
     }
 
     // =========================================================
+    // RESÚMENES REUTILIZABLES (contexto para chat IA)
+    // Devuelven los mismos arreglos que usan los endpoints, sin JWT ni
+    // Flight::json, para que otros servicios (IaChat) los consuman sin
+    // duplicar la lógica de cálculo. Los endpoints públicos no cambian.
+    // =========================================================
+
+    /**
+     * Resumen operativo del jardín (asistencia + colaboradores + alimentación)
+     * para una fecha. Reusa los mismos cálculos privados que getResumen().
+     */
+    public static function resumenOperativoContexto($db, $fecha)
+    {
+        self::setTimeZone();
+        $esHoy = ($fecha === date('Y-m-d'));
+
+        $asistencia = self::calcularAsistencia($db, $fecha, $esHoy);
+        $colaboradores = self::calcularColaboradores($db, $fecha, $esHoy);
+        $alimentacion = self::calcularAlimentacion($db, $fecha, $asistencia['total_asistieron']);
+
+        return [
+            'fecha' => $fecha,
+            'asistencia' => $asistencia,
+            'colaboradores' => $colaboradores,
+            'alimentacion' => $alimentacion
+        ];
+    }
+
+    /**
+     * Resumen financiero del jardín (cartera + recaudo) para una fecha.
+     * Reusa los mismos cálculos privados que getCarteraResumen()/getRecaudoResumen().
+     */
+    public static function resumenFinancieroContexto($db, $fecha)
+    {
+        self::setTimeZone();
+
+        return [
+            'fecha' => $fecha,
+            'cartera' => self::calcularCartera($db, $fecha),
+            'recaudo' => self::calcularRecaudo($db, $fecha)
+        ];
+    }
+
+    // =========================================================
     // DETALLE ASISTENCIA ESTUDIANTES
     // =========================================================
     public static function getAsistenciaDetalle()
