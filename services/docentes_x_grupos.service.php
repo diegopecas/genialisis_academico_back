@@ -7,7 +7,7 @@ class DocentesXGrupos
         $sentence = $db->prepare("
             SELECT dxg.*, 
                    d.id_persona,
-                   CONCAT(p.primer_nombre, ' ', p.segundo_nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido) AS nombre_docente,
+                   CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) AS nombre_docente,
                    g.nombre AS nombre_grupo
             FROM docentes_x_grupos dxg
             INNER JOIN docentes d ON dxg.id_docente = d.id
@@ -50,7 +50,7 @@ class DocentesXGrupos
         $sentence = $db->prepare("
             SELECT dxg.*, 
                    d.id_persona,
-                   CONCAT(p.primer_nombre, ' ', p.segundo_nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido) AS nombre_docente,
+                   CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) AS nombre_docente,
                    p.numero_identificacion,
                    d.id_nivel_escolaridad,
                    ne.nombre AS nivel_escolaridad
@@ -75,7 +75,7 @@ class DocentesXGrupos
         $sentence = $db->prepare("
             SELECT dxg.*, 
                    d.id_persona,
-                   CONCAT(p.primer_nombre, ' ', p.segundo_nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido) AS nombre_docente,
+                   CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) AS nombre_docente,
                    p.correo_electronico,
                    p.telefono
             FROM docentes_x_grupos dxg

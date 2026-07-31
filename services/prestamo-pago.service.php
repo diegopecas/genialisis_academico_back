@@ -17,7 +17,7 @@ class PrestamosPagos
                 pc.numero_cuota,
                 pc.monto_cuota as monto_cuota_original,
                 pr.id_colaborador,
-                CONCAT(p.primer_nombre, ' ', p.primer_apellido) as nombre_usuario_registro,
+                CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_usuario_registro,
                 n.periodo as nombre_nomina
             FROM prestamos_pagos pp
             INNER JOIN tipos_pago_prestamo tp ON pp.id_tipo_pago = tp.id
@@ -57,7 +57,7 @@ class PrestamosPagos
                 tp.nombre as nombre_tipo_pago,
                 pc.numero_cuota,
                 pc.monto_cuota as monto_cuota_original,
-                CONCAT(p.primer_nombre, ' ', p.primer_apellido) as nombre_usuario_registro,
+                CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_usuario_registro,
                 n.periodo as nombre_nomina,
                 n.periodo as periodo_nomina
             FROM prestamos_pagos pp
@@ -95,7 +95,7 @@ class PrestamosPagos
                 pp.*,
                 tp.nombre as nombre_tipo_pago,
                 pc.numero_cuota,
-                CONCAT(p.primer_nombre, ' ', p.primer_apellido) as nombre_usuario_registro,
+                CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_usuario_registro,
                 n.nombre as nombre_nomina,
                 n.periodo as periodo_nomina
             FROM prestamos_pagos pp
@@ -133,7 +133,7 @@ class PrestamosPagos
             SELECT 
                 pp.*,
                 tp.nombre as nombre_tipo_pago,
-                CONCAT(p.primer_nombre, ' ', p.primer_apellido) as nombre_usuario_registro,
+                CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_usuario_registro,
                 n.periodo as nombre_nomina,
                 n.periodo as periodo_nomina
             FROM prestamos_pagos pp

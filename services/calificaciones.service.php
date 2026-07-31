@@ -27,7 +27,7 @@ class Calificaciones
         $db = Flight::db();
         $sentence = $db->prepare("
             SELECT c.id, c.id_tarea_x_sprint, c.id_estudiante, c.id_parametro_calificacion, c.id_valor_parametro_calificacion,
-                CONCAT(p.primer_nombre, ' ', p.primer_apellido) as nombre_estudiante
+                CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_estudiante
             FROM calificaciones c
             INNER JOIN estudiantes e ON c.id_estudiante = e.id
             INNER JOIN personas p ON e.id_persona = p.id
@@ -413,12 +413,11 @@ class Calificaciones
                     p.segundo_nombre,
                     p.primer_apellido,
                     p.segundo_apellido,
-                    CONCAT(
-                        p.primer_nombre, 
-                        IF(p.segundo_nombre IS NOT NULL AND p.segundo_nombre != '', CONCAT(' ', p.segundo_nombre), ''),
-                        ' ',
+                    CONCAT_WS(' ',
+                        p.primer_nombre,
+                        p.segundo_nombre,
                         p.primer_apellido,
-                        IF(p.segundo_apellido IS NOT NULL AND p.segundo_apellido != '', CONCAT(' ', p.segundo_apellido), '')
+                        p.segundo_apellido
                     ) as nombre_completo_estudiante,
                     p.numero_identificacion,
                     eg.id_grupo,
@@ -552,12 +551,11 @@ class Calificaciones
                     pd.segundo_nombre as docente_segundo_nombre,
                     pd.primer_apellido as docente_apellido,
                     pd.segundo_apellido as docente_segundo_apellido,
-                    CONCAT(
-                        pd.primer_nombre, 
-                        IF(pd.segundo_nombre IS NOT NULL AND pd.segundo_nombre != '', CONCAT(' ', pd.segundo_nombre), ''),
-                        ' ',
+                    CONCAT_WS(' ',
+                        pd.primer_nombre,
+                        pd.segundo_nombre,
                         pd.primer_apellido,
-                        IF(pd.segundo_apellido IS NOT NULL AND pd.segundo_apellido != '', CONCAT(' ', pd.segundo_apellido), '')
+                        pd.segundo_apellido
                     ) as nombre_completo_docente
                 FROM 
                     docentes d

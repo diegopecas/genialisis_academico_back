@@ -10,7 +10,7 @@ class Visitas
                     v.*,
                     tc.nombre as nombre_tipo_contacto,
                     tcc.nombre as nombre_como_conocio,
-                    CONCAT(u.usuario, ' - ', p.primer_nombre, ' ', p.primer_apellido) as nombre_usuario_registro
+                    CONCAT_WS(' - ', u.usuario, NULLIF(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido), '')) as nombre_usuario_registro
                 FROM visitas v
                 INNER JOIN tipos_contacto tc ON v.id_tipo_contacto = tc.id
                 LEFT JOIN tipos_como_conocio tcc ON v.id_como_conocio = tcc.id
@@ -38,7 +38,7 @@ class Visitas
                     v.*,
                     tc.nombre as nombre_tipo_contacto,
                     tcc.nombre as nombre_como_conocio,
-                    CONCAT(u.usuario, ' - ', p.primer_nombre, ' ', p.primer_apellido) as nombre_usuario_registro
+                    CONCAT_WS(' - ', u.usuario, NULLIF(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido), '')) as nombre_usuario_registro
                 FROM visitas v
                 INNER JOIN tipos_contacto tc ON v.id_tipo_contacto = tc.id
                 LEFT JOIN tipos_como_conocio tcc ON v.id_como_conocio = tcc.id
@@ -66,7 +66,7 @@ class Visitas
                     v.*,
                     tc.nombre as nombre_tipo_contacto,
                     tcc.nombre as nombre_como_conocio,
-                    CONCAT(u.usuario, ' - ', p.primer_nombre, ' ', p.primer_apellido) as nombre_usuario_registro
+                    CONCAT_WS(' - ', u.usuario, NULLIF(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido), '')) as nombre_usuario_registro
                 FROM visitas v
                 INNER JOIN tipos_contacto tc ON v.id_tipo_contacto = tc.id
                 LEFT JOIN tipos_como_conocio tcc ON v.id_como_conocio = tcc.id

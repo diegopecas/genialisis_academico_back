@@ -7,7 +7,7 @@ class HistorialCambiosPersona
             $db = Flight::db();
             $sentence = $db->prepare("SELECT 
                 h.*,
-                CONCAT(p.primer_nombre, ' ', p.primer_apellido) AS nombre_usuario
+                CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) AS nombre_usuario
             FROM historial_cambios_persona h
             LEFT JOIN usuarios u ON h.id_usuario = u.id
             LEFT JOIN personas p ON u.id_persona = p.id

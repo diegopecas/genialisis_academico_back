@@ -6,8 +6,8 @@ class PuntosCasasDocentes
     {
         $db = Flight::db();
         $sentence = $db->prepare("select pcd.id, pcd.id_docente_entrega, pcd.id_docente_recibe, pcd.valor, pcd.fecha, pcd.id_casa_docente, pcd.observacion,
-            CONCAT(pde.primer_nombre, ' ', pde.segundo_nombre, ' ', pde.primer_apellido, ' ', pde.segundo_apellido) nombre_docente_entrega,
-            CONCAT(pdr.primer_nombre, ' ', pdr.segundo_nombre, ' ', pdr.primer_apellido, ' ', pdr.segundo_apellido) nombre_docente_recibe
+            CONCAT_WS(' ', pde.primer_nombre, pde.segundo_nombre, pde.primer_apellido, pde.segundo_apellido) nombre_docente_entrega,
+            CONCAT_WS(' ', pdr.primer_nombre, pdr.segundo_nombre, pdr.primer_apellido, pdr.segundo_apellido) nombre_docente_recibe
             from puntos_casas_docentes pcd
             left outer join docentes de on pcd.id_docente_entrega = de.id
             left outer join docentes dr on pcd.id_docente_recibe = dr.id
@@ -24,8 +24,8 @@ class PuntosCasasDocentes
     {
         $db = Flight::db();
         $sentence = $db->prepare("select pcd.id, pcd.id_docente_entrega, pcd.id_docente_recibe, pcd.valor, pcd.fecha, pcd.id_casa_docente, pcd.observacion,
-            CONCAT(pde.primer_nombre, ' ', pde.segundo_nombre, ' ', pde.primer_apellido, ' ', pde.segundo_apellido) nombre_docente_entrega,
-            CONCAT(pdr.primer_nombre, ' ', pdr.segundo_nombre, ' ', pdr.primer_apellido, ' ', pdr.segundo_apellido) nombre_docente_recibe
+            CONCAT_WS(' ', pde.primer_nombre, pde.segundo_nombre, pde.primer_apellido, pde.segundo_apellido) nombre_docente_entrega,
+            CONCAT_WS(' ', pdr.primer_nombre, pdr.segundo_nombre, pdr.primer_apellido, pdr.segundo_apellido) nombre_docente_recibe
             from puntos_casas_docentes pcd
             left outer join docentes de on pcd.id_docente_entrega = de.id
             left outer join docentes dr on pcd.id_docente_recibe = dr.id

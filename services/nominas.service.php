@@ -12,8 +12,8 @@ class Nominas {
                 SELECT 
                     n.*,
                     en.nombre as nombre_estado,
-                    CONCAT(pg.primer_nombre, ' ', pg.primer_apellido) as nombre_usuario_genera,
-                    CONCAT(pc.primer_nombre, ' ', pc.primer_apellido) as nombre_usuario_cierra
+                    CONCAT_WS(' ', pg.primer_nombre, pg.primer_apellido) as nombre_usuario_genera,
+                    CONCAT_WS(' ', pc.primer_nombre, pc.primer_apellido) as nombre_usuario_cierra
                 FROM nominas n
                 INNER JOIN estados_nomina en ON n.id_estado = en.id
                 INNER JOIN usuarios ug ON n.id_usuario_genera = ug.id
@@ -49,8 +49,8 @@ class Nominas {
                 SELECT 
                     n.*,
                     en.nombre as nombre_estado,
-                    CONCAT(pg.primer_nombre, ' ', pg.primer_apellido) as nombre_usuario_genera,
-                    CONCAT(pc.primer_nombre, ' ', pc.primer_apellido) as nombre_usuario_cierra
+                    CONCAT_WS(' ', pg.primer_nombre, pg.primer_apellido) as nombre_usuario_genera,
+                    CONCAT_WS(' ', pc.primer_nombre, pc.primer_apellido) as nombre_usuario_cierra
                 FROM nominas n
                 INNER JOIN estados_nomina en ON n.id_estado = en.id
                 INNER JOIN usuarios ug ON n.id_usuario_genera = ug.id

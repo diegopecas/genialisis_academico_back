@@ -11,7 +11,7 @@ class NominasDetalle {
             $stmt = $db->prepare("
                 SELECT 
                     nd.*,
-                    CONCAT(p.primer_nombre, ' ', p.primer_apellido) as nombre_colaborador,
+                    CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_colaborador,
                     cn.codigo as codigo_concepto,
                     cn.nombre as nombre_concepto,
                     cn.es_suma
@@ -47,7 +47,7 @@ class NominasDetalle {
             $stmt = $db->prepare("
                 SELECT 
                     nd.id_colaborador,
-                    CONCAT(p.primer_nombre, ' ', p.primer_apellido) as nombre_colaborador,
+                    CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_colaborador,
                     c.documento,
                     SUM(CASE WHEN cn.es_suma = 1 THEN nd.valor_total ELSE 0 END) as total_devengado,
                     SUM(CASE WHEN cn.es_suma = 0 THEN nd.valor_total ELSE 0 END) as total_deducciones,
@@ -124,7 +124,7 @@ class NominasDetalle {
             $stmt = $db->prepare("
                 SELECT 
                     nd.*,
-                    CONCAT(p.primer_nombre, ' ', p.primer_apellido) as nombre_colaborador,
+                    CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_colaborador,
                     cn.codigo as codigo_concepto,
                     cn.nombre as nombre_concepto,
                     cn.es_suma

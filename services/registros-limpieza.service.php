@@ -11,8 +11,8 @@ class RegistrosLimpieza
                 tpl.nombre as nombre_proceso,
                 erl.nombre as nombre_estado,
                 erl.color as color_estado,
-                CONCAT(ue.primer_nombre, ' ', ue.primer_apellido) as nombre_ejecutor,
-                CONCAT(us.primer_nombre, ' ', us.primer_apellido) as nombre_supervisor,
+                CONCAT_WS(' ', ue.primer_nombre, ue.primer_apellido) as nombre_ejecutor,
+                CONCAT_WS(' ', us.primer_nombre, us.primer_apellido) as nombre_supervisor,
                 (SELECT COUNT(*) FROM registros_limpieza_detalle WHERE id_registro_limpieza = rl.id) as total_elementos,
                 (SELECT SUM(cantidad_consumida) FROM registros_limpieza_consumos WHERE id_registro_limpieza = rl.id) as total_productos_consumidos,
                 DATE_FORMAT(rl.fecha_programada, '%d/%m/%Y') as fecha_programada_formateada
@@ -45,8 +45,8 @@ class RegistrosLimpieza
                 tpl.nombre as nombre_proceso,
                 erl.nombre as nombre_estado,
                 erl.color as color_estado,
-                CONCAT(ue.primer_nombre, ' ', ue.primer_apellido) as nombre_ejecutor,
-                CONCAT(us.primer_nombre, ' ', us.primer_apellido) as nombre_supervisor
+                CONCAT_WS(' ', ue.primer_nombre, ue.primer_apellido) as nombre_ejecutor,
+                CONCAT_WS(' ', us.primer_nombre, us.primer_apellido) as nombre_supervisor
             FROM registros_limpieza rl
             INNER JOIN areas_fisicas af ON rl.id_area_fisica = af.id
             INNER JOIN tipos_proceso_limpieza tpl ON rl.id_tipo_proceso_limpieza = tpl.id

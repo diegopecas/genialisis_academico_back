@@ -43,7 +43,7 @@ class DocumentosPersonas
                 DATEDIFF(dp.fecha_vencimiento, CURDATE()) AS dias_para_vencer,
                 dp.observaciones,
                 dp.id_usuario_subio,
-                CONCAT(pu.primer_nombre, ' ', pu.primer_apellido) AS nombre_usuario_subio,
+                CONCAT_WS(' ', pu.primer_nombre, pu.primer_apellido) AS nombre_usuario_subio,
                 dp.activo,
                 dp.firma_digital_id,
                 dp.firma_digital_estado,
@@ -133,7 +133,7 @@ class DocumentosPersonas
                 DATEDIFF(dp.fecha_vencimiento, CURDATE()) AS dias_para_vencer,
                 dp.observaciones,
                 dp.id_usuario_subio,
-                CONCAT(pu.primer_nombre, ' ', pu.primer_apellido) AS nombre_usuario_subio,
+                CONCAT_WS(' ', pu.primer_nombre, pu.primer_apellido) AS nombre_usuario_subio,
                 dp.activo
             FROM documentos_personas dp
             INNER JOIN personas p ON dp.id_persona = p.id
@@ -187,7 +187,7 @@ class DocumentosPersonas
                 DATEDIFF(dp.fecha_vencimiento, CURDATE()) AS dias_para_vencer,
                 dp.observaciones,
                 dp.id_usuario_subio,
-                CONCAT(pu.primer_nombre, ' ', pu.primer_apellido) AS nombre_usuario_subio,
+                CONCAT_WS(' ', pu.primer_nombre, pu.primer_apellido) AS nombre_usuario_subio,
                 dp.activo
             FROM documentos_personas dp
             INNER JOIN personas p ON dp.id_persona = p.id

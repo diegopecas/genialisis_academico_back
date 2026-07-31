@@ -70,7 +70,7 @@ class TareasXSprints
                 et.nombre as nombre_estado,
                 g.nombre as nombre_grupo,
                 ar.nombre as nombre_area,
-                CONCAT(p.primer_nombre, ' ', p.primer_apellido) as nombre_docente
+                CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_docente
             FROM tareas_x_sprints txs
             LEFT JOIN actividades_academicas aa ON txs.id_actividad_academica = aa.id
             LEFT JOIN estados_tareas et ON txs.id_estado_tarea = et.id
@@ -97,7 +97,7 @@ class TareasXSprints
                 txs.observaciones,
                 txs.fecha_cambio_estado,
                 txs.id_usuario_cambio_estado,
-                CONCAT(pu.primer_nombre, ' ', pu.primer_apellido) as nombre_usuario_cambio,
+                CONCAT_WS(' ', pu.primer_nombre, pu.primer_apellido) as nombre_usuario_cambio,
                 txs.id_sprint,
                 txs.id_actividad_academica,
                 txs.id_grupo,
@@ -114,7 +114,7 @@ class TareasXSprints
                 aa.nivel_uno,
                 aa.nivel_dos,
                 et.nombre as nombre_estado,
-                CONCAT(p.primer_nombre, ' ', p.primer_apellido) as nombre_docente,
+                CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_docente,
                 g.nombre as nombre_grupo,
                 ar.nombre as nombre_area,
                 GROUP_CONCAT(DISTINCT ed.nombre ORDER BY ed.nombre) as esferas,
@@ -650,7 +650,7 @@ class TareasXSprints
                     et.nombre as nombre_estado,
                     g.nombre as nombre_grupo,
                     ar.nombre as nombre_area,
-                    CONCAT(p.primer_nombre, ' ', p.primer_apellido) as nombre_docente
+                    CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_docente
                 FROM tareas_x_sprints txs
                 INNER JOIN actividades_academicas aa ON txs.id_actividad_academica = aa.id
                 INNER JOIN estados_tareas et ON txs.id_estado_tarea = et.id
@@ -977,9 +977,9 @@ class TareasXSprints
                     DATE(txs.fecha_ejecucion_inicia) as fecha_ejecucion,
                     txs.fecha_ejecucion_inicia,
                     txs.fecha_ejecucion as fecha_finalizacion,
-                    CONCAT(pd.primer_nombre, ' ', pd.primer_apellido) as nombre_docente_inicia,
+                    CONCAT_WS(' ', pd.primer_nombre, pd.primer_apellido) as nombre_docente_inicia,
                     txs.id_docente_inicia,
-                    CONCAT(pd2.primer_nombre, ' ', pd2.primer_apellido) as nombre_docente_finaliza,
+                    CONCAT_WS(' ', pd2.primer_nombre, pd2.primer_apellido) as nombre_docente_finaliza,
                     txs.id_horario,
                     txs.dia_semana_horario,
                     txs.hora_inicial_horario,

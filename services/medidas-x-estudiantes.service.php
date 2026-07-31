@@ -39,7 +39,7 @@ class MedidasXEstudiantes
                 m.nombre AS nombre_medida,
                 umc.abreviatura AS unidad_abreviatura,
                 tvm.nombre AS tipo_valor,
-                CONCAT(p.primer_nombre, ' ', p.segundo_nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido) AS nombre_usuario,
+                CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) AS nombre_usuario,
                 mxe.fecha_registro
             FROM medidas_x_estudiantes mxe
             INNER JOIN medidas m ON m.id = mxe.id_medida

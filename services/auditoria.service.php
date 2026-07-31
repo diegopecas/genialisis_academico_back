@@ -282,13 +282,13 @@ class Auditoria
             p.segundo_nombre,
             p.primer_apellido,
             p.segundo_apellido,
-            CONCAT(p.primer_nombre, ' ', p.segundo_nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido) as estudiante,
+            CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) as estudiante,
             m.nombre as medida,
             mxe.valor,
             mxe.fecha,
             DATE_FORMAT(mxe.fecha, '%d/%m/%Y') as fecha_formateada,
             CONCAT('Semana ', WEEK(mxe.fecha)) as semana,
-            CONCAT(pu.primer_nombre, ' ', pu.primer_apellido) as registrado_por
+            CONCAT_WS(' ', pu.primer_nombre, pu.primer_apellido) as registrado_por
         FROM medidas_x_estudiantes mxe
         INNER JOIN estudiantes e ON mxe.id_estudiante = e.id
         INNER JOIN personas p ON e.id_persona = p.id
@@ -342,7 +342,7 @@ class Auditoria
             p.segundo_nombre,
             p.primer_apellido,
             p.segundo_apellido,
-            CONCAT(p.primer_nombre, ' ', p.segundo_nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido) as estudiante,
+            CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) as estudiante,
             DATE_FORMAT(ae.fecha_ingreso, '%d/%m/%Y') as fecha,
             DATE_FORMAT(ae.fecha_ingreso, '%h:%i %p') as hora_entrada,
             DATE_FORMAT(ae.fecha_salida, '%h:%i %p') as hora_salida,
@@ -356,8 +356,8 @@ class Auditoria
                 THEN 'Sospechoso'
                 ELSE 'Normal'
             END as estado,
-            CONCAT(pu1.primer_nombre, ' ', pu1.primer_apellido) as registrado_entrada,
-            CONCAT(pu2.primer_nombre, ' ', pu2.primer_apellido) as registrado_salida
+            CONCAT_WS(' ', pu1.primer_nombre, pu1.primer_apellido) as registrado_entrada,
+            CONCAT_WS(' ', pu2.primer_nombre, pu2.primer_apellido) as registrado_salida
         FROM asistencia_estudiantes ae
         INNER JOIN estudiantes e ON ae.id_estudiante = e.id
         INNER JOIN personas p ON e.id_persona = p.id
@@ -435,8 +435,8 @@ class Auditoria
                 THEN 'Normal'
                 ELSE 'Muy larga'
             END as categoria,
-            CONCAT(pd1.primer_nombre, ' ', pd1.primer_apellido) as docente,
-            CONCAT(pd2.primer_nombre, ' ', pd2.primer_apellido) as docente_finaliza
+            CONCAT_WS(' ', pd1.primer_nombre, pd1.primer_apellido) as docente,
+            CONCAT_WS(' ', pd2.primer_nombre, pd2.primer_apellido) as docente_finaliza
         FROM tareas_x_sprints txs
         INNER JOIN actividades_academicas aa ON txs.id_actividad_academica = aa.id
         INNER JOIN actividades_academicas_x_indicadores_logros aaxil ON aa.id = aaxil.id_actividad_academica

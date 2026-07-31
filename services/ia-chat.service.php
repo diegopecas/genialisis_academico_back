@@ -210,7 +210,7 @@ class IaChat
             // Log: pares pregunta/respuesta desde mensajes + conversaciones
             $sentence = $db->prepare("SELECT 
                     m.id,
-                    CONCAT(p.primer_nombre, ' ', p.primer_apellido) as nombre_persona,
+                    CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_persona,
                     c.rol,
                     m.mensaje as respuesta,
                     m.proveedor,

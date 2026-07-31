@@ -22,9 +22,9 @@ class MovimientosFinancieros
                 cm.nombre as categoria_nombre, cm.color as categoria_color, cm.id_tipo_movimiento,
                 tm.nombre as tipo_movimiento_nombre, tm.icono as tipo_movimiento_icono,
                 mp.nombre as medio_pago_nombre, mp.icono as medio_pago_icono, mp.color as medio_pago_color,
-                CONCAT(pr.primer_nombre, ' ', pr.primer_apellido) as usuario_registro_nombre,
-                CONCAT(pa.primer_nombre, ' ', pa.primer_apellido) as usuario_aprobacion_nombre,
-                CONCAT(pan.primer_nombre, ' ', pan.primer_apellido) as usuario_anulacion_nombre
+                CONCAT_WS(' ', pr.primer_nombre, pr.primer_apellido) as usuario_registro_nombre,
+                CONCAT_WS(' ', pa.primer_nombre, pa.primer_apellido) as usuario_aprobacion_nombre,
+                CONCAT_WS(' ', pan.primer_nombre, pan.primer_apellido) as usuario_anulacion_nombre
                 FROM movimientos_financieros mf
                 INNER JOIN conceptos_financieros cf ON mf.id_concepto_financiero = cf.id
                 INNER JOIN categorias_movimientos_financieros cm ON cf.id_categoria_movimiento_financiero = cm.id
@@ -59,9 +59,9 @@ class MovimientosFinancieros
                 cm.nombre as categoria_nombre, cm.color as categoria_color, cm.id_tipo_movimiento,
                 tm.nombre as tipo_movimiento_nombre, tm.icono as tipo_movimiento_icono,
                 mp.nombre as medio_pago_nombre, mp.icono as medio_pago_icono, mp.color as medio_pago_color,
-                CONCAT(pr.primer_nombre, ' ', pr.primer_apellido) as usuario_registro_nombre,
-                CONCAT(pa.primer_nombre, ' ', pa.primer_apellido) as usuario_aprobacion_nombre,
-                CONCAT(pan.primer_nombre, ' ', pan.primer_apellido) as usuario_anulacion_nombre
+                CONCAT_WS(' ', pr.primer_nombre, pr.primer_apellido) as usuario_registro_nombre,
+                CONCAT_WS(' ', pa.primer_nombre, pa.primer_apellido) as usuario_aprobacion_nombre,
+                CONCAT_WS(' ', pan.primer_nombre, pan.primer_apellido) as usuario_anulacion_nombre
                 FROM movimientos_financieros mf
                 INNER JOIN conceptos_financieros cf ON mf.id_concepto_financiero = cf.id
                 INNER JOIN categorias_movimientos_financieros cm ON cf.id_categoria_movimiento_financiero = cm.id
@@ -98,9 +98,9 @@ class MovimientosFinancieros
                 cm.nombre as categoria_nombre, cm.color as categoria_color, cm.id_tipo_movimiento,
                 tm.nombre as tipo_movimiento_nombre, tm.icono as tipo_movimiento_icono,
                 mp.nombre as medio_pago_nombre, mp.icono as medio_pago_icono, mp.color as medio_pago_color,
-                CONCAT(pr.primer_nombre, ' ', pr.primer_apellido) as usuario_registro_nombre,
-                CONCAT(pa.primer_nombre, ' ', pa.primer_apellido) as usuario_aprobacion_nombre,
-                CONCAT(pan.primer_nombre, ' ', pan.primer_apellido) as usuario_anulacion_nombre
+                CONCAT_WS(' ', pr.primer_nombre, pr.primer_apellido) as usuario_registro_nombre,
+                CONCAT_WS(' ', pa.primer_nombre, pa.primer_apellido) as usuario_aprobacion_nombre,
+                CONCAT_WS(' ', pan.primer_nombre, pan.primer_apellido) as usuario_anulacion_nombre
                 FROM movimientos_financieros mf
                 INNER JOIN conceptos_financieros cf ON mf.id_concepto_financiero = cf.id
                 INNER JOIN categorias_movimientos_financieros cm ON cf.id_categoria_movimiento_financiero = cm.id
@@ -221,7 +221,7 @@ class MovimientosFinancieros
                 cm.nombre as categoria_nombre, cm.color as categoria_color,
                 tm.nombre as tipo_movimiento_nombre, tm.icono as tipo_movimiento_icono,
                 mp.nombre as medio_pago_nombre, mp.icono as medio_pago_icono, mp.color as medio_pago_color,
-                CONCAT(pr.primer_nombre, ' ', pr.primer_apellido) as usuario_registro_nombre
+                CONCAT_WS(' ', pr.primer_nombre, pr.primer_apellido) as usuario_registro_nombre
                 FROM movimientos_financieros mf
                 INNER JOIN conceptos_financieros cf ON mf.id_concepto_financiero = cf.id
                 INNER JOIN categorias_movimientos_financieros cm ON cf.id_categoria_movimiento_financiero = cm.id
@@ -523,7 +523,7 @@ class MovimientosFinancieros
             cm.nombre as categoria_nombre, cm.color as categoria_color, cm.id_tipo_movimiento,
             tm.nombre as tipo_movimiento_nombre, tm.icono as tipo_movimiento_icono,
             mp.nombre as medio_pago_nombre, mp.icono as medio_pago_icono, mp.color as medio_pago_color,
-            CONCAT(pr.primer_nombre, ' ', pr.primer_apellido) as usuario_registro_nombre,
+            CONCAT_WS(' ', pr.primer_nombre, pr.primer_apellido) as usuario_registro_nombre,
             'Registrado' as estado
             FROM movimientos_financieros mf
             INNER JOIN conceptos_financieros cf ON mf.id_concepto_financiero = cf.id

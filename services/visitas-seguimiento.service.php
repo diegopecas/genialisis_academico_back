@@ -322,7 +322,7 @@ class VisitasSeguimiento
                     v.hora as hora_visita,
                     tcs.nombre as nombre_cuando_seguimiento,
                     tqd.nombre as nombre_quien_decide,
-                    (SELECT CONCAT(primer_nombre, ' ', primer_apellido) FROM visitantes WHERE id_visita = v.id AND es_contacto_principal = 1 LIMIT 1) as nombre_contacto,
+                    (SELECT CONCAT_WS(' ', primer_nombre, primer_apellido) FROM visitantes WHERE id_visita = v.id AND es_contacto_principal = 1 LIMIT 1) as nombre_contacto,
                     (SELECT telefono FROM visitantes WHERE id_visita = v.id AND es_contacto_principal = 1 LIMIT 1) as telefono_contacto
                 FROM visitas_seguimiento vs
                 INNER JOIN visitas v ON vs.id_visita = v.id

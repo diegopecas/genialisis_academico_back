@@ -1,6 +1,23 @@
 <?php
 class Personas
 {
+    /**
+     * Normaliza un campo de texto antes de guardarlo:
+     * quita espacios sobrantes y convierte la cadena vacia en NULL.
+     * Se usa en los nombres y apellidos para que la concatenacion del nombre
+     * completo no produzca espacios dobles ni valores basura.
+     */
+    private static function normalizarTexto($valor)
+    {
+        if ($valor === null) {
+            return null;
+        }
+
+        $valor = trim((string) $valor);
+
+        return $valor === '' ? null : $valor;
+    }
+
     public static function getAll()
     {
         try {
@@ -109,10 +126,10 @@ class Personas
             $db = Flight::db();
 
             // Obtener datos de la solicitud
-            $primer_nombre = isset(Flight::request()->data['primer_nombre']) ? Flight::request()->data['primer_nombre'] : null;
-            $segundo_nombre = isset(Flight::request()->data['segundo_nombre']) ? Flight::request()->data['segundo_nombre'] : null;
-            $primer_apellido = isset(Flight::request()->data['primer_apellido']) ? Flight::request()->data['primer_apellido'] : null;
-            $segundo_apellido = isset(Flight::request()->data['segundo_apellido']) ? Flight::request()->data['segundo_apellido'] : null;
+            $primer_nombre = self::normalizarTexto(isset(Flight::request()->data['primer_nombre']) ? Flight::request()->data['primer_nombre'] : null);
+            $segundo_nombre = self::normalizarTexto(isset(Flight::request()->data['segundo_nombre']) ? Flight::request()->data['segundo_nombre'] : null);
+            $primer_apellido = self::normalizarTexto(isset(Flight::request()->data['primer_apellido']) ? Flight::request()->data['primer_apellido'] : null);
+            $segundo_apellido = self::normalizarTexto(isset(Flight::request()->data['segundo_apellido']) ? Flight::request()->data['segundo_apellido'] : null);
             $id_tipo_identificacion = Flight::request()->data['id_tipo_identificacion'];
             $numero_identificacion = Flight::request()->data['numero_identificacion'];
             $nacionalidad = isset(Flight::request()->data['nacionalidad']) ? Flight::request()->data['nacionalidad'] : null;
@@ -216,10 +233,10 @@ class Personas
             $db = Flight::db();
 
             $id = Flight::request()->data['id'];
-            $primer_nombre = isset(Flight::request()->data['primer_nombre']) ? Flight::request()->data['primer_nombre'] : null;
-            $segundo_nombre = isset(Flight::request()->data['segundo_nombre']) ? Flight::request()->data['segundo_nombre'] : null;
-            $primer_apellido = isset(Flight::request()->data['primer_apellido']) ? Flight::request()->data['primer_apellido'] : null;
-            $segundo_apellido = isset(Flight::request()->data['segundo_apellido']) ? Flight::request()->data['segundo_apellido'] : null;
+            $primer_nombre = self::normalizarTexto(isset(Flight::request()->data['primer_nombre']) ? Flight::request()->data['primer_nombre'] : null);
+            $segundo_nombre = self::normalizarTexto(isset(Flight::request()->data['segundo_nombre']) ? Flight::request()->data['segundo_nombre'] : null);
+            $primer_apellido = self::normalizarTexto(isset(Flight::request()->data['primer_apellido']) ? Flight::request()->data['primer_apellido'] : null);
+            $segundo_apellido = self::normalizarTexto(isset(Flight::request()->data['segundo_apellido']) ? Flight::request()->data['segundo_apellido'] : null);
             $id_tipo_identificacion = Flight::request()->data['id_tipo_identificacion'];
             $numero_identificacion = Flight::request()->data['numero_identificacion'];
             $nacionalidad = isset(Flight::request()->data['nacionalidad']) ? Flight::request()->data['nacionalidad'] : null;

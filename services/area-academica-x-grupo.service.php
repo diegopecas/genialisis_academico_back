@@ -12,7 +12,7 @@ class AreaAcademicaXGrupo
                    a.nombre AS nombre_area,
                    a.icono AS icono_area,
                    g.nombre AS nombre_grupo,
-                   CONCAT(p.primer_nombre, ' ', p.segundo_nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido) AS nombre_docente
+                   CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) AS nombre_docente
             FROM area_academica_x_grupo axg
             INNER JOIN areas_academicas a ON axg.id_area_academica = a.id
             INNER JOIN grupos g ON axg.id_grupo = g.id
@@ -100,7 +100,7 @@ class AreaAcademicaXGrupo
                    axg.id_grupo,
                    axg.id_docente,
                    g.nombre AS nombre_grupo,
-                   CONCAT(p.primer_nombre, ' ', p.segundo_nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido) AS nombre_docente
+                   CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) AS nombre_docente
             FROM area_academica_x_grupo axg
             INNER JOIN grupos g ON axg.id_grupo = g.id
             LEFT JOIN docentes d ON axg.id_docente = d.id

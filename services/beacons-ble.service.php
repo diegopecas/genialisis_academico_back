@@ -6,7 +6,7 @@ class BeaconsBle
         $db = Flight::db();
         $sentence = $db->prepare("
             SELECT b.*,
-                   CONCAT(p.primer_nombre, ' ', p.primer_apellido) as nombre_estudiante
+                   CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_estudiante
             FROM beacons_ble b
             LEFT JOIN estudiantes e ON b.id_estudiante = e.id
             LEFT JOIN personas p ON e.id_persona = p.id
@@ -24,7 +24,7 @@ class BeaconsBle
         $db = Flight::db();
         $sentence = $db->prepare("
             SELECT b.*,
-                   CONCAT(p.primer_nombre, ' ', p.primer_apellido) as nombre_estudiante
+                   CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_estudiante
             FROM beacons_ble b
             LEFT JOIN estudiantes e ON b.id_estudiante = e.id
             LEFT JOIN personas p ON e.id_persona = p.id
@@ -43,7 +43,7 @@ class BeaconsBle
         $db = Flight::db();
         $sentence = $db->prepare("
             SELECT b.*,
-                   CONCAT(p.primer_nombre, ' ', p.primer_apellido) as nombre_estudiante
+                   CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_estudiante
             FROM beacons_ble b
             LEFT JOIN estudiantes e ON b.id_estudiante = e.id
             LEFT JOIN personas p ON e.id_persona = p.id

@@ -219,7 +219,7 @@ class VisitasAprendizajes
                 SELECT 
                     va.*,
                     v.fecha as fecha_visita,
-                    CONCAT(u.usuario, ' - ', p.primer_nombre, ' ', p.primer_apellido) as asesor
+                    CONCAT_WS(' - ', u.usuario, NULLIF(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido), '')) as asesor
                 FROM visitas_aprendizajes va
                 INNER JOIN visitas v ON va.id_visita = v.id
                 INNER JOIN usuarios u ON v.id_usuario_registro = u.id

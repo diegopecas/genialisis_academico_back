@@ -265,7 +265,7 @@ class VisitasCompromisos
                     vc.*,
                     tc.nombre as nombre_compromiso,
                     v.fecha as fecha_visita,
-                    (SELECT CONCAT(primer_nombre, ' ', primer_apellido) FROM visitantes WHERE id_visita = v.id AND es_contacto_principal = 1 LIMIT 1) as nombre_contacto,
+                    (SELECT CONCAT_WS(' ', primer_nombre, primer_apellido) FROM visitantes WHERE id_visita = v.id AND es_contacto_principal = 1 LIMIT 1) as nombre_contacto,
                     (SELECT telefono FROM visitantes WHERE id_visita = v.id AND es_contacto_principal = 1 LIMIT 1) as telefono_contacto
                 FROM visitas_compromisos vc
                 INNER JOIN tipos_compromisos tc ON vc.id_tipo_compromiso = tc.id
@@ -295,7 +295,7 @@ class VisitasCompromisos
                     vc.*,
                     tc.nombre as nombre_compromiso,
                     v.fecha as fecha_visita,
-                    (SELECT CONCAT(primer_nombre, ' ', primer_apellido) FROM visitantes WHERE id_visita = v.id AND es_contacto_principal = 1 LIMIT 1) as nombre_contacto,
+                    (SELECT CONCAT_WS(' ', primer_nombre, primer_apellido) FROM visitantes WHERE id_visita = v.id AND es_contacto_principal = 1 LIMIT 1) as nombre_contacto,
                     (SELECT telefono FROM visitantes WHERE id_visita = v.id AND es_contacto_principal = 1 LIMIT 1) as telefono_contacto
                 FROM visitas_compromisos vc
                 INNER JOIN tipos_compromisos tc ON vc.id_tipo_compromiso = tc.id

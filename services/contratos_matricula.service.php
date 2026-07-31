@@ -84,7 +84,7 @@ class ContratosMatricula
                    cm.id_usuario_genera, cm.fecha_generacion, cm.activo,
                    cm.firmado, cm.ruta_documento_firmado,
                    g.nombre AS nombre_grupo,
-                   CONCAT(pu.primer_nombre, ' ', pu.primer_apellido) AS nombre_usuario_genera
+                   CONCAT_WS(' ', pu.primer_nombre, pu.primer_apellido) AS nombre_usuario_genera
             FROM contratos_matricula cm
             INNER JOIN grupos g ON cm.id_grupo = g.id
             LEFT JOIN usuarios u ON cm.id_usuario_genera = u.id

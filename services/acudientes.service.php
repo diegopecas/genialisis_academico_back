@@ -170,7 +170,7 @@ class Acudientes
                               a.autorizado_sistema,
                               a.activo,
                               ta.nombre AS nombre_tipo_acudiente,
-                              CONCAT(p.primer_nombre, ' ', p.segundo_nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido) AS nombre_persona,
+                              CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) AS nombre_persona,
                               p.numero_identificacion AS documento_acudiente,
                               u.id as id_usuario,
                               u.usuario,

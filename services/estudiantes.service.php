@@ -50,7 +50,7 @@ class Estudiantes
                p.direccion,
                grp.id AS id_grupo, 
                grp.nombre AS nombre_grupo,
-               CONCAT(p.primer_nombre, ' ', p.segundo_nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido) AS nombre_completo
+               CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) AS nombre_completo
         FROM estudiantes e 
         INNER JOIN personas p ON e.id_persona = p.id
         INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id

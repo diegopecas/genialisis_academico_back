@@ -137,7 +137,7 @@ class CuentasPorCobrar
             ps.id_clasificacion_productos_servicios,
             cps.nombre AS nombre_clasificacion,
             cps.codigo AS clasificacion_codigo,
-            CONCAT(p.primer_nombre, ' ', p.segundo_nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido) AS nombre_usuario
+            CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) AS nombre_usuario
         FROM 
             cuentas_por_cobrar cpc
         INNER JOIN 

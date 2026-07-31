@@ -18,7 +18,7 @@ class Horarios
                                     ac.color area_academica_color,
                                     ds.nombre dia_semana_nombre,
                                     g.nombre grupo_nombre,
-                                    CONCAT(dp.primer_nombre, ' ', dp.primer_apellido) docente_nombre_completo
+                                    CONCAT_WS(' ', dp.primer_nombre, dp.primer_apellido) docente_nombre_completo
                                 from horarios h inner join areas_academicas ac on ac.id = h.id_area_academica
                                 inner join dias_semana ds on ds.id = h.id_dia_semana
                                 inner join grupos g on h.id_grupo = g.id
@@ -49,7 +49,7 @@ class Horarios
                                     ac.color area_academica_color,
                                     ds.nombre dia_semana_nombre,
                                     g.nombre grupo_nombre,
-                                    CONCAT(dp.primer_nombre, ' ', dp.primer_apellido) docente_nombre_completo
+                                    CONCAT_WS(' ', dp.primer_nombre, dp.primer_apellido) docente_nombre_completo
                                 from horarios h inner join areas_academicas ac on ac.id = h.id_area_academica
                                 inner join dias_semana ds on ds.id = h.id_dia_semana
                                 inner join grupos g on h.id_grupo = g.id
@@ -81,7 +81,7 @@ class Horarios
                                     ds.nombre dia_semana_nombre,
                                     g.nombre grupo_nombre,
                                     CASE 
-                                        WHEN d.id IS NOT NULL THEN CONCAT(dp.primer_nombre, ' ', dp.primer_apellido)
+                                        WHEN d.id IS NOT NULL THEN CONCAT_WS(' ', dp.primer_nombre, dp.primer_apellido)
                                         ELSE NULL 
                                     END as docente_nombre_completo
                                 from horarios h 
@@ -116,7 +116,7 @@ class Horarios
                                     ac.color area_academica_color,
                                     ds.nombre dia_semana_nombre,
                                     g.nombre grupo_nombre,
-                                    CONCAT(dp.primer_nombre, ' ', dp.primer_apellido) docente_nombre_completo
+                                    CONCAT_WS(' ', dp.primer_nombre, dp.primer_apellido) docente_nombre_completo
                                 from horarios h inner join areas_academicas ac on ac.id = h.id_area_academica
                                 inner join dias_semana ds on ds.id = h.id_dia_semana
                                 inner join grupos g on h.id_grupo = g.id
