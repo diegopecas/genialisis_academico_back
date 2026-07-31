@@ -138,7 +138,8 @@ class Usuarios
             $sentence = $db->prepare("SELECT u.id, u.id_persona, u.usuario, u.correo_electronico, p.primer_nombre, p.segundo_nombre,
                     p.primer_apellido, p.segundo_apellido, p.id_tipo_identificacion, ti.nombre tipo_identificacion,
                     p.numero_identificacion, p.fecha_nacimiento, p.id_genero, g.nombre nombre_genero, p.direccion, 
-                    u.activo, u.acceso_institucional, u.acceso_chat_wa, u.acceso_portal_padres
+                    u.activo, u.acceso_institucional, u.acceso_chat_wa, u.acceso_portal_padres, u.super_admin,
+                    (SELECT GROUP_CONCAT(r.nombre ORDER BY r.nombre SEPARATOR ', ') FROM roles_x_usuario rxu INNER JOIN roles r ON r.id = rxu.id_rol WHERE rxu.id_usuario = u.id) roles
                     FROM usuarios u 
                     INNER JOIN personas p ON u.id_persona = p.id
                     INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
@@ -357,6 +358,13 @@ class Usuarios
             $acceso_chat_wa = isset(Flight::request()->data['acceso_chat_wa']) ? Flight::request()->data['acceso_chat_wa'] : 1;
             $acceso_portal_padres = isset(Flight::request()->data['acceso_portal_padres']) ? Flight::request()->data['acceso_portal_padres'] : 0;
 
+            // super_admin solo lo puede otorgar otro super admin; para el resto se fuerza a 0
+            $usuarioAutenticado = JWTService::requerirAutenticacion();
+            $super_admin = 0;
+            if (($usuarioAutenticado->super_admin ?? 0) == 1) {
+                $super_admin = isset(Flight::request()->data['super_admin']) && Flight::request()->data['super_admin'] ? 1 : 0;
+            }
+
             $checkUsuario = $db->prepare("SELECT id FROM usuarios WHERE id_persona = :id_persona AND id_tenant = :id_tenant");
             $checkUsuario->bindParam(':id_persona', $id_persona);
             $checkUsuario->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -381,8 +389,8 @@ class Usuarios
 
             $usuario = $persona['numero_identificacion'];
 
-            $sentence = $db->prepare("INSERT INTO usuarios(id, id_tenant, id_persona, usuario, clave, correo_electronico, activo, acceso_institucional, acceso_chat_wa, acceso_portal_padres) 
-                                     VALUES (:id, :id_tenant, :id_persona, :usuario, :clave, :correo_electronico, :activo, :acceso_institucional, :acceso_chat_wa, :acceso_portal_padres)");
+            $sentence = $db->prepare("INSERT INTO usuarios(id, id_tenant, id_persona, usuario, clave, correo_electronico, activo, acceso_institucional, acceso_chat_wa, acceso_portal_padres, super_admin) 
+                                     VALUES (:id, :id_tenant, :id_persona, :usuario, :clave, :correo_electronico, :activo, :acceso_institucional, :acceso_chat_wa, :acceso_portal_padres, :super_admin)");
             $idUsr = Uuid::generar();
             $sentence->bindValue(':id', $idUsr);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -394,6 +402,7 @@ class Usuarios
             $sentence->bindParam(':acceso_institucional', $acceso_institucional);
             $sentence->bindParam(':acceso_chat_wa', $acceso_chat_wa);
             $sentence->bindParam(':acceso_portal_padres', $acceso_portal_padres);
+            $sentence->bindValue(':super_admin', $super_admin, PDO::PARAM_INT);
             $sentence->execute();
 
             $id_usuario = $idUsr;
@@ -423,6 +432,12 @@ class Usuarios
             $acceso_portal_padres = isset(Flight::request()->data['acceso_portal_padres']) ? Flight::request()->data['acceso_portal_padres'] : 0;
             $clave = isset(Flight::request()->data['clave']) ? Flight::request()->data['clave'] : null;
 
+            // super_admin solo lo modifica otro super admin; si no, no se toca
+            $usuarioAutenticado = JWTService::requerirAutenticacion();
+            $puedeSuperAdmin = ($usuarioAutenticado->super_admin ?? 0) == 1 && isset(Flight::request()->data['super_admin']);
+            $super_admin = $puedeSuperAdmin ? (Flight::request()->data['super_admin'] ? 1 : 0) : null;
+            $sqlSuper = $puedeSuperAdmin ? ", super_admin = :super_admin" : "";
+
             $checkUsuario = $db->prepare("SELECT id FROM usuarios WHERE id = :id AND id_tenant = :id_tenant");
             $checkUsuario->bindParam(':id', $id);
             $checkUsuario->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -434,10 +449,10 @@ class Usuarios
             }
 
             if ($clave !== null && $clave !== '') {
-                $sentence = $db->prepare("UPDATE usuarios SET correo_electronico = :correo_electronico, clave = :clave, activo = :activo, acceso_institucional = :acceso_institucional, acceso_chat_wa = :acceso_chat_wa, acceso_portal_padres = :acceso_portal_padres WHERE id = :id AND id_tenant = :id_tenant");
+                $sentence = $db->prepare("UPDATE usuarios SET correo_electronico = :correo_electronico, clave = :clave, activo = :activo, acceso_institucional = :acceso_institucional, acceso_chat_wa = :acceso_chat_wa, acceso_portal_padres = :acceso_portal_padres" . $sqlSuper . " WHERE id = :id AND id_tenant = :id_tenant");
                 $sentence->bindParam(':clave', $clave);
             } else {
-                $sentence = $db->prepare("UPDATE usuarios SET correo_electronico = :correo_electronico, activo = :activo, acceso_institucional = :acceso_institucional, acceso_chat_wa = :acceso_chat_wa, acceso_portal_padres = :acceso_portal_padres WHERE id = :id AND id_tenant = :id_tenant");
+                $sentence = $db->prepare("UPDATE usuarios SET correo_electronico = :correo_electronico, activo = :activo, acceso_institucional = :acceso_institucional, acceso_chat_wa = :acceso_chat_wa, acceso_portal_padres = :acceso_portal_padres" . $sqlSuper . " WHERE id = :id AND id_tenant = :id_tenant");
             }
 
             $sentence->bindParam(':correo_electronico', $correo_electronico);
@@ -445,6 +460,9 @@ class Usuarios
             $sentence->bindParam(':acceso_institucional', $acceso_institucional);
             $sentence->bindParam(':acceso_chat_wa', $acceso_chat_wa);
             $sentence->bindParam(':acceso_portal_padres', $acceso_portal_padres);
+            if ($puedeSuperAdmin) {
+                $sentence->bindValue(':super_admin', $super_admin, PDO::PARAM_INT);
+            }
             $sentence->bindParam(':id', $id);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
@@ -498,4 +516,43 @@ class Usuarios
             Flight::json(['error' => $e->getMessage()], 500);
         }
     }
+
+    /**
+     * Restablecimiento de clave por un administrador (no requiere la clave actual).
+     * Payload: { id, claveNueva }
+     */
+    public static function restablecerClave()
+    {
+        try {
+            $db = Flight::db();
+            $data = Flight::request()->data;
+            $id = $data->id ?? null;
+            $claveNueva = $data->claveNueva ?? null;
+
+            if (!$id || !$claveNueva) {
+                Flight::json(['error' => 'Datos incompletos'], 400);
+                return;
+            }
+
+            $verificar = $db->prepare("SELECT id FROM usuarios WHERE id = :id AND id_tenant = :id_tenant");
+            $verificar->bindParam(':id', $id);
+            $verificar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $verificar->execute();
+            if (!$verificar->fetch()) {
+                Flight::json(['error' => 'Usuario no encontrado'], 404);
+                return;
+            }
+
+            $actualizar = $db->prepare("UPDATE usuarios SET clave = :clave WHERE id = :id AND id_tenant = :id_tenant");
+            $actualizar->bindParam(':clave', $claveNueva);
+            $actualizar->bindParam(':id', $id);
+            $actualizar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $actualizar->execute();
+
+            Flight::json(['id' => $id, 'mensaje' => 'Clave restablecida']);
+        } catch (Exception $e) {
+            Flight::json(['error' => $e->getMessage()], 500);
+        }
+    }
+
 }

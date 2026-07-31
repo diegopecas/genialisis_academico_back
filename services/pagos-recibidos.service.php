@@ -1187,6 +1187,7 @@ class PagosRecibidos
      */
     public static function analizarComprobante()
     {
+        error_log("IaVision - analizarComprobante v2 (referencia como string / JSON_BIGINT_AS_STRING)");
         $userData = JWTService::requerirAutenticacion();
 
         try {
@@ -1242,7 +1243,7 @@ class PagosRecibidos
                 . "No incluyas explicaciones ni texto adicional, SOLO el JSON:\n\n"
                 . "{\n"
                 . "  \"monto_texto\": (string con el monto TAL CUAL aparece impreso en el comprobante, conservando sus puntos y comas, por ejemplo \"35.000,00\" o \"1.200.000\"),\n"
-                . "  \"referencia\": (string con el número de referencia, aprobación o comprobante),\n"
+                . "  \"referencia\": (string entre comillas SIEMPRE, aunque sean solo dígitos, para no perder ninguno; es el número de referencia, aprobación o comprobante),\n"
                 . "  \"fecha\": (string en formato YYYY-MM-DD),\n"
                 . "  \"banco\": (string con el nombre de la entidad o banco emisor del comprobante, por ejemplo: Nequi, Bancolombia, Daviplata, etc.)\n"
                 . "}\n\n"
@@ -1273,7 +1274,7 @@ class PagosRecibidos
             $textoRespuesta = preg_replace('/```\s*/', '', $textoRespuesta);
             $textoRespuesta = trim($textoRespuesta);
 
-            $datosExtraidos = json_decode($textoRespuesta, true);
+            $datosExtraidos = json_decode($textoRespuesta, true, 512, JSON_BIGINT_AS_STRING);
 
             if (!$datosExtraidos) {
                 Flight::json(array(
@@ -1315,7 +1316,7 @@ class PagosRecibidos
                 'proveedor' => $resultado['proveedor'],
                 'datos' => array(
                     'valor' => $valorNormalizado,
-                    'referencia' => isset($datosExtraidos['referencia']) ? trim($datosExtraidos['referencia']) : null,
+                    'referencia' => isset($datosExtraidos['referencia']) && $datosExtraidos['referencia'] !== null ? trim((string) $datosExtraidos['referencia']) : null,
                     'fecha' => isset($datosExtraidos['fecha']) ? $datosExtraidos['fecha'] : null,
                     'banco' => isset($datosExtraidos['banco']) ? trim($datosExtraidos['banco']) : null
                 ),
