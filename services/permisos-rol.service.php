@@ -30,15 +30,10 @@ class PermisosRol
             $userData = JWTService::requerirAutenticacion();
             
 
-            $dbMaster = Flight::db_master();
-            $stmt = $dbMaster->prepare("
-                SELECT DISTINCT portal 
-                FROM permisos 
-                WHERE activo = 1 AND portal IS NOT NULL 
-                ORDER BY portal
-            ");
-            $stmt->execute();
-            $portales = $stmt->fetchAll(PDO::FETCH_COLUMN);
+            // Los portales válidos del sistema. 'ambos' NO es un portal: es el
+            // marcador de un permiso que aplica a los dos, y el filtrado del árbol
+            // ya lo resuelve con (portal = :portal OR portal = 'ambos').
+            $portales = [JWTService::PORTAL_INSTITUCIONAL, JWTService::PORTAL_PADRES];
             Flight::json($portales);
         } catch (Exception $e) {
             Flight::json(['error' => $e->getMessage()], 500);

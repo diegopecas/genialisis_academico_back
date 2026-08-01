@@ -1187,7 +1187,6 @@ class PagosRecibidos
      */
     public static function analizarComprobante()
     {
-        error_log("IaVision - analizarComprobante v2 (referencia como string / JSON_BIGINT_AS_STRING)");
         $userData = JWTService::requerirAutenticacion();
 
         try {

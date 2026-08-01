@@ -205,7 +205,7 @@ function convertirNumerosEnArray(&$array) {
             // Las versiones son strings ('1.0' != 1.0). Sin esto, json_encode
             // devuelve 1 y cualquier comparacion de version se rompe.
             $camposString = ['telefono', 'celular', 'documento', 'ruc', 'codigo_postal', 'nit', 'clave', 'fecha',
-                             'version', 'version_actual', 'version_politica', 'hd_v'];
+                             'version', 'version_actual', 'version_politica', 'hd_v', 'referencia', 'referencia_bancaria'];
             
             if (!in_array($key, $camposString)) {
                 $value = strpos($value, '.') !== false ? (float)$value : (int)$value;
