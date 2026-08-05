@@ -1,6 +1,20 @@
 <?php
 class ReglasCobroAutomatico
 {
+    /**
+     * Normaliza el valor de cobro_fraccion recibido del front.
+     * NULL/'' => valor fijo del producto (NULL en base)
+     * 0       => por hora, redondeando hacia arriba
+     * 1       => proporcional a los minutos
+     */
+    private static function normalizarCobroFraccion($data)
+    {
+        if (!isset($data['cobro_fraccion'])) return null;
+        $valor = $data['cobro_fraccion'];
+        if ($valor === null || $valor === '') return null;
+        return intval($valor);
+    }
+
     public static function getAll()
     {
         try {
@@ -71,14 +85,16 @@ class ReglasCobroAutomatico
             $request = Flight::request();
             $data = $request->data->getData();
 
+            $cobroFraccion = self::normalizarCobroFraccion($data);
+
             $idNew = Uuid::generar();
             $stmt = $db->prepare("
                 INSERT INTO reglas_cobro_automatico 
                 (id, id_tenant, nombre, id_tipo_evento, id_producto_servicio, id_grupo, hora_desde, hora_hasta, 
-                 id_dia_semana, id_convenio_exime, prioridad, activo)
+                 id_dia_semana, id_convenio_exime, cobro_fraccion, prioridad, activo)
                 VALUES 
                 (:id, :id_tenant, :nombre, :id_tipo_evento, :id_producto_servicio, :id_grupo, :hora_desde, :hora_hasta,
-                 :id_dia_semana, :id_convenio_exime, :prioridad, :activo)
+                 :id_dia_semana, :id_convenio_exime, :cobro_fraccion, :prioridad, :activo)
             ");
             $stmt->bindValue(':id', $idNew);
             $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -90,6 +106,8 @@ class ReglasCobroAutomatico
             $stmt->bindParam(':hora_hasta', $data['hora_hasta']);
             $stmt->bindParam(':id_dia_semana', $data['id_dia_semana']);
             $stmt->bindParam(':id_convenio_exime', $data['id_convenio_exime']);
+            /* NULL debe entrar como NULL: intval() lo volveria 0 y cambiaria el comportamiento del motor. */
+            $stmt->bindValue(':cobro_fraccion', $cobroFraccion, $cobroFraccion === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
             $stmt->bindParam(':prioridad', $data['prioridad']);
             $stmt->bindParam(':activo', $data['activo']);
             $stmt->execute();
@@ -109,6 +127,8 @@ class ReglasCobroAutomatico
             $request = Flight::request();
             $data = $request->data->getData();
 
+            $cobroFraccion = self::normalizarCobroFraccion($data);
+
             $stmt = $db->prepare("
                 UPDATE reglas_cobro_automatico SET
                     nombre = :nombre,
@@ -119,6 +139,7 @@ class ReglasCobroAutomatico
                     hora_hasta = :hora_hasta,
                     id_dia_semana = :id_dia_semana,
                     id_convenio_exime = :id_convenio_exime,
+                    cobro_fraccion = :cobro_fraccion,
                     prioridad = :prioridad,
                     activo = :activo
                 WHERE id = :id AND id_tenant = :id_tenant
@@ -133,6 +154,8 @@ class ReglasCobroAutomatico
             $stmt->bindParam(':hora_hasta', $data['hora_hasta']);
             $stmt->bindParam(':id_dia_semana', $data['id_dia_semana']);
             $stmt->bindParam(':id_convenio_exime', $data['id_convenio_exime']);
+            /* NULL debe entrar como NULL: intval() lo volveria 0 y cambiaria el comportamiento del motor. */
+            $stmt->bindValue(':cobro_fraccion', $cobroFraccion, $cobroFraccion === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
             $stmt->bindParam(':prioridad', $data['prioridad']);
             $stmt->bindParam(':activo', $data['activo']);
             $stmt->execute();
