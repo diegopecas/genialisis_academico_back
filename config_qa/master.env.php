@@ -1,5 +1,5 @@
 <?php
-define('DB_MASTER_HOST', '92.205.2.161');
+define('DB_MASTER_HOST', '132.148.181.209');
 define('DB_MASTER_NAME', 'g_master_academico_qa');
 define('DB_MASTER_USERNAME', 'usr_g_master_academico_qa');
 define('DB_MASTER_PASSWORD', '=fg{Tt-?)oD9~9OH');
