@@ -65,6 +65,22 @@ class CuentasPorCobrar
                 c.fecha_anulacion,
                 c.id_usuario_anulacion,
                 c.id_horario_alimentacion,
+                c.mora_causada,
+                c.fecha_calculo_mora,
+                COALESCE((
+                    SELECT SUM(cp2.valor_aplicado_mora)
+                    FROM cuenta_pagada cp2
+                    INNER JOIN pagos_recibidos pr2 ON cp2.id_pago_recibido = pr2.id
+                    WHERE cp2.id_cuenta_por_cobrar = c.id
+                      AND (pr2.anulado = 0 OR pr2.anulado IS NULL)
+                ), 0) AS mora_pagada,
+                c.mora_causada - COALESCE((
+                    SELECT SUM(cp2.valor_aplicado_mora)
+                    FROM cuenta_pagada cp2
+                    INNER JOIN pagos_recibidos pr2 ON cp2.id_pago_recibido = pr2.id
+                    WHERE cp2.id_cuenta_por_cobrar = c.id
+                      AND (pr2.anulado = 0 OR pr2.anulado IS NULL)
+                ), 0) AS saldo_mora,
                 COALESCE(SUM(
                     CASE 
                         WHEN pr.anulado = 0 OR pr.anulado IS NULL THEN cp.valor_aplicado 
@@ -87,7 +103,8 @@ class CuentasPorCobrar
                 c.id = :id AND c.id_tenant = :id_tenant
             GROUP BY 
                 c.id, c.id_producto_servicio, c.id_persona, c.fecha, c.valor, c.detalle, c.id_usuario,
-                c.anulado, c.fecha_anulacion, c.id_usuario_anulacion, c.id_horario_alimentacion
+                c.anulado, c.fecha_anulacion, c.id_usuario_anulacion, c.id_horario_alimentacion,
+                c.mora_causada, c.fecha_calculo_mora
         ");
             $sentence->bindParam(':id', $id);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -130,6 +147,22 @@ class CuentasPorCobrar
                     ELSE 0 
                 END
             ), 0) AS saldo,
+            cpc.mora_causada,
+            cpc.fecha_calculo_mora,
+            COALESCE((
+                SELECT SUM(cp2.valor_aplicado_mora)
+                FROM cuenta_pagada cp2
+                INNER JOIN pagos_recibidos pr2 ON cp2.id_pago_recibido = pr2.id
+                WHERE cp2.id_cuenta_por_cobrar = cpc.id
+                  AND (pr2.anulado = 0 OR pr2.anulado IS NULL)
+            ), 0) AS mora_pagada,
+            cpc.mora_causada - COALESCE((
+                SELECT SUM(cp2.valor_aplicado_mora)
+                FROM cuenta_pagada cp2
+                INNER JOIN pagos_recibidos pr2 ON cp2.id_pago_recibido = pr2.id
+                WHERE cp2.id_cuenta_por_cobrar = cpc.id
+                  AND (pr2.anulado = 0 OR pr2.anulado IS NULL)
+            ), 0) AS saldo_mora,
             cpc.detalle,
             ps.nombre AS nombre_producto_servicio,
             ps.id_periodicidad_cobro,
@@ -164,7 +197,8 @@ class CuentasPorCobrar
             cpc.id, cpc.fecha, cpc.valor, cpc.detalle, ps.nombre, cps.nombre, cps.codigo, 
             p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido,
             cpc.anulado, cpc.fecha_anulacion, cpc.id_usuario_anulacion, cpc.id_horario_alimentacion,
-            ha.id, ha.nombre, ps.id_periodicidad_cobro, pc.id, pc.nombre
+            ha.id, ha.nombre, ps.id_periodicidad_cobro, pc.id, pc.nombre,
+            cpc.mora_causada, cpc.fecha_calculo_mora
         ORDER BY 
             cpc.fecha, cps.nombre, ps.nombre 
     ");
@@ -193,12 +227,18 @@ class CuentasPorCobrar
 
             $data = $request->data->getData();
 
+            // Parametros de mora del producto, congelados en la cuenta: un
+            // cambio de tarifa posterior no debe alterar cuentas ya emitidas.
+            $mora = self::parametrosMoraProducto($db, $data['id_producto_servicio']);
+
             $sql = "INSERT INTO cuentas_por_cobrar (
                 id, id_tenant, id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, 
-                anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion
+                anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion,
+                id_tipo_mora, valor_recargo_mora, porcentaje_mora_mensual, mora_acumulable
             ) VALUES (
                 :id, :id_tenant, :id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario,
-                0, NULL, NULL, :id_horario_alimentacion
+                0, NULL, NULL, :id_horario_alimentacion,
+                :id_tipo_mora, :valor_recargo_mora, :porcentaje_mora_mensual, :mora_acumulable
             )";
 
             $stmt = $db->prepare($sql);
@@ -212,6 +252,10 @@ class CuentasPorCobrar
             $stmt->bindParam(':detalle', $data['detalle']);
             $stmt->bindParam(':id_usuario', $data['id_usuario']);
             $stmt->bindParam(':id_horario_alimentacion', $data['id_horario_alimentacion']);
+            $stmt->bindValue(':id_tipo_mora', $mora['id_tipo_mora']);
+            $stmt->bindValue(':valor_recargo_mora', $mora['valor_recargo_mora']);
+            $stmt->bindValue(':porcentaje_mora_mensual', $mora['porcentaje_mora_mensual']);
+            $stmt->bindValue(':mora_acumulable', $mora['mora_acumulable'], PDO::PARAM_INT);
             $stmt->execute();
 
             $id = $idCxcNew;
@@ -220,6 +264,42 @@ class CuentasPorCobrar
             error_log('Error en cuentas_por_cobrar->new(): ' . $e->getMessage());
             Flight::json(array('error' => 'Error al crear cuenta por cobrar'), 500);
         }
+    }
+
+    /**
+     * Parametros de mora vigentes de un producto, listos para copiarse a la
+     * cuenta por cobrar. Si el producto no cobra mora, devuelve todo en NULL
+     * y la cuenta simplemente no causa intereses.
+     *
+     * @param PDO    $db
+     * @param string $id_producto_servicio
+     * @return array
+     */
+    private static function parametrosMoraProducto($db, $id_producto_servicio)
+    {
+        $vacio = array(
+            'id_tipo_mora'            => null,
+            'valor_recargo_mora'      => null,
+            'porcentaje_mora_mensual' => null,
+            'mora_acumulable'         => 0
+        );
+
+        if (!class_exists('MoraConfiguracion')) {
+            return $vacio;
+        }
+
+        $config = MoraConfiguracion::obtenerVigente($db, $id_producto_servicio);
+
+        if (!$config) {
+            return $vacio;
+        }
+
+        return array(
+            'id_tipo_mora'            => $config['id_tipo_mora'],
+            'valor_recargo_mora'      => $config['valor_recargo'],
+            'porcentaje_mora_mensual' => $config['porcentaje_mensual'],
+            'mora_acumulable'         => (int) $config['recargo_acumulable']
+        );
     }
 
     public static function replace()
@@ -962,10 +1042,12 @@ class CuentasPorCobrar
             $stmtInsert = $db->prepare("
                 INSERT INTO cuentas_por_cobrar 
                 (id, id_tenant, id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, 
-                 anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion)
+                 anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion,
+                 id_tipo_mora, valor_recargo_mora, porcentaje_mora_mensual, mora_acumulable)
                 VALUES 
                 (:id, :id_tenant, :id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario,
-                 0, NULL, NULL, NULL)
+                 0, NULL, NULL, NULL,
+                 :id_tipo_mora, :valor_recargo_mora, :porcentaje_mora_mensual, :mora_acumulable)
             ");
 
             $cuentasCreadas = 0;
@@ -987,6 +1069,7 @@ class CuentasPorCobrar
                 $detalle = "Generado automáticamente - Contrato #{$id_contrato} - {$tipoConcepto} {$nombreMes} {$anioFecha}";
 
                 $idCxc = Uuid::generar();
+                $mora = self::parametrosMoraProducto($db, $valor['id_producto_servicio']);
                 $stmtInsert->bindValue(':id', $idCxc);
                 $stmtInsert->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtInsert->bindParam(':id_producto_servicio', $valor['id_producto_servicio']);
@@ -995,6 +1078,10 @@ class CuentasPorCobrar
                 $stmtInsert->bindParam(':valor', $valor['valor']);
                 $stmtInsert->bindParam(':detalle', $detalle);
                 $stmtInsert->bindParam(':id_usuario', $id_usuario);
+                $stmtInsert->bindValue(':id_tipo_mora', $mora['id_tipo_mora']);
+                $stmtInsert->bindValue(':valor_recargo_mora', $mora['valor_recargo_mora']);
+                $stmtInsert->bindValue(':porcentaje_mora_mensual', $mora['porcentaje_mora_mensual']);
+                $stmtInsert->bindValue(':mora_acumulable', $mora['mora_acumulable'], PDO::PARAM_INT);
                 $stmtInsert->execute();
 
                 $cuentasCreadas++;
@@ -1228,10 +1315,12 @@ class CuentasPorCobrar
             $stmtInsertCuenta = $db->prepare("
                 INSERT INTO cuentas_por_cobrar 
                 (id, id_tenant, id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, 
-                 anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion)
+                 anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion,
+                 id_tipo_mora, valor_recargo_mora, porcentaje_mora_mensual, mora_acumulable)
                 VALUES 
                 (:id, :id_tenant, :id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario,
-                 0, NULL, NULL, NULL)
+                 0, NULL, NULL, NULL,
+                 :id_tipo_mora, :valor_recargo_mora, :porcentaje_mora_mensual, :mora_acumulable)
             ");
 
             $stmtInsertRelacion = $db->prepare("
@@ -1312,6 +1401,11 @@ class CuentasPorCobrar
                     $stmtInsertCuenta->bindParam(':valor', $valor['valor']);
                     $stmtInsertCuenta->bindParam(':detalle', $detalle);
                     $stmtInsertCuenta->bindParam(':id_usuario', $id_usuario);
+                    $moraCursoExtra = self::parametrosMoraProducto($db, $valor['id_producto_servicio']);
+                    $stmtInsertCuenta->bindValue(':id_tipo_mora', $moraCursoExtra['id_tipo_mora']);
+                    $stmtInsertCuenta->bindValue(':valor_recargo_mora', $moraCursoExtra['valor_recargo_mora']);
+                    $stmtInsertCuenta->bindValue(':porcentaje_mora_mensual', $moraCursoExtra['porcentaje_mora_mensual']);
+                    $stmtInsertCuenta->bindValue(':mora_acumulable', $moraCursoExtra['mora_acumulable'], PDO::PARAM_INT);
                     $stmtInsertCuenta->execute();
 
                     $idCuenta = $idCxc2;

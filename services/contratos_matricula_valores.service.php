@@ -271,6 +271,13 @@ class ContratosMatriculaValores
             $fecha_inicio = Flight::request()->data['fecha_inicio'];
             $fecha_fin = Flight::request()->data['fecha_fin'];
             $cuotas_matricula = isset(Flight::request()->data['cuotas_matricula']) ? (int)Flight::request()->data['cuotas_matricula'] : 1;
+            // Dia del mes en que vence cada cuota. Es la fecha que despues se
+            // copia a la cuenta por cobrar y contra la que corre la mora.
+            // Sin dato explicito se conserva el comportamiento historico: dia 1.
+            $dia_vencimiento = isset(Flight::request()->data['dia_vencimiento']) ? (int)Flight::request()->data['dia_vencimiento'] : 1;
+            if ($dia_vencimiento < 1 || $dia_vencimiento > 31) {
+                $dia_vencimiento = 1;
+            }
             
             // Valores personalizados (con descuentos/recargos ya aplicados)
             $valor_matricula_custom = isset(Flight::request()->data['valor_matricula']) ? (float)Flight::request()->data['valor_matricula'] : null;
@@ -315,7 +322,11 @@ class ContratosMatriculaValores
             $residuoMatricula = $valorMatriculaFinal - ($cuotaBaseMatricula * $cuotas_matricula);
 
             while ($fechaActual <= $fechaLimite) {
-                $fechaPrimeroDeMes = $fechaActual->format('Y-m-01');
+                // El dia pedido se recorta al ultimo dia del mes cuando no
+                // existe (un 31 en febrero cae al 28/29).
+                $ultimoDiaDelMes = (int) $fechaActual->format('t');
+                $diaEfectivo = min($dia_vencimiento, $ultimoDiaDelMes);
+                $fechaVencimientoCuota = $fechaActual->format('Y-m-') . str_pad($diaEfectivo, 2, '0', STR_PAD_LEFT);
                 
                 // Valor de matrícula (dividido en las primeras N cuotas)
                 if ($mesIndex < $cuotas_matricula) {
@@ -327,7 +338,7 @@ class ContratosMatriculaValores
                     $valores[] = [
                         'id_producto_servicio' => $tarifa['id_producto_matricula'],
                         'nombre_producto' => $tarifa['nombre_matricula'],
-                        'fecha' => $fechaPrimeroDeMes,
+                        'fecha' => $fechaVencimientoCuota,
                         'valor' => (int)$valorCuotaMatricula,
                         'id_periodicidad_cobro' => 1, // Anual (matrícula)
                         'es_matricula' => true
@@ -338,7 +349,7 @@ class ContratosMatriculaValores
                 $valores[] = [
                     'id_producto_servicio' => $tarifa['id_producto_pension'],
                     'nombre_producto' => $tarifa['nombre_pension'],
-                    'fecha' => $fechaPrimeroDeMes,
+                    'fecha' => $fechaVencimientoCuota,
                     'valor' => (int)$valorPensionFinal,
                     'id_periodicidad_cobro' => 2, // Mensual (pensión)
                     'es_matricula' => false

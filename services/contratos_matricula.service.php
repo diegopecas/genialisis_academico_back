@@ -13,7 +13,7 @@ class ContratosMatricula
                    cm.descuento_matricula, cm.recargo_matricula,
                    cm.descuento_pension, cm.recargo_pension,
                    cm.razon_descuento, cm.razon_recargo,
-                   cm.fecha_firma, cm.fecha_inicio, cm.fecha_fin, cm.lugar_firma, 
+                   cm.fecha_firma, cm.fecha_inicio, cm.fecha_fin, cm.dia_vencimiento, cm.lugar_firma, 
                    cm.autoriza_imagenes, cm.autoriza_pagare, cm.observaciones,
                    cm.id_usuario_genera, cm.fecha_generacion, cm.activo,
                    cm.firmado, cm.ruta_documento_firmado,
@@ -46,7 +46,7 @@ class ContratosMatricula
                    cm.descuento_matricula, cm.recargo_matricula,
                    cm.descuento_pension, cm.recargo_pension,
                    cm.razon_descuento, cm.razon_recargo,
-                   cm.fecha_firma, cm.fecha_inicio, cm.fecha_fin, cm.lugar_firma, 
+                   cm.fecha_firma, cm.fecha_inicio, cm.fecha_fin, cm.dia_vencimiento, cm.lugar_firma, 
                    cm.autoriza_imagenes, cm.autoriza_pagare, cm.observaciones,
                    cm.id_usuario_genera, cm.fecha_generacion, cm.activo,
                    cm.firmado, cm.ruta_documento_firmado,
@@ -79,7 +79,7 @@ class ContratosMatricula
                    cm.descuento_matricula, cm.recargo_matricula,
                    cm.descuento_pension, cm.recargo_pension,
                    cm.razon_descuento, cm.razon_recargo,
-                   cm.fecha_firma, cm.fecha_inicio, cm.fecha_fin, cm.lugar_firma, 
+                   cm.fecha_firma, cm.fecha_inicio, cm.fecha_fin, cm.dia_vencimiento, cm.lugar_firma, 
                    cm.autoriza_imagenes, cm.autoriza_pagare, cm.observaciones,
                    cm.id_usuario_genera, cm.fecha_generacion, cm.activo,
                    cm.firmado, cm.ruta_documento_firmado,
@@ -108,7 +108,7 @@ class ContratosMatricula
         $sentence = $db->prepare("
             SELECT cm.id, cm.id_estudiante, cm.anio, cm.id_grupo, cm.valor_matricula, 
                    cm.valor_pension, cm.numero_cuotas, cm.valor_total,
-                   cm.fecha_firma, cm.fecha_inicio, cm.fecha_fin, cm.lugar_firma, 
+                   cm.fecha_firma, cm.fecha_inicio, cm.fecha_fin, cm.dia_vencimiento, cm.lugar_firma, 
                    cm.autoriza_imagenes, cm.autoriza_pagare, cm.activo,
                    cm.firmado, cm.ruta_documento_firmado,
                    g.nombre AS nombre_grupo,
@@ -154,6 +154,12 @@ class ContratosMatricula
             $valor_total = Flight::request()->data['valor_total'];
             $fecha_firma = Flight::request()->data['fecha_firma'];
             $fecha_inicio = isset(Flight::request()->data['fecha_inicio']) ? Flight::request()->data['fecha_inicio'] : null;
+            // Dia del mes en que vencen las cuotas. Determina la fecha de las
+            // cuentas por cobrar y, por tanto, desde cuando corre la mora.
+            $dia_vencimiento = isset(Flight::request()->data['dia_vencimiento']) ? (int)Flight::request()->data['dia_vencimiento'] : null;
+            if ($dia_vencimiento !== null && ($dia_vencimiento < 1 || $dia_vencimiento > 31)) {
+                $dia_vencimiento = null;
+            }
             $fecha_fin = isset(Flight::request()->data['fecha_fin']) ? Flight::request()->data['fecha_fin'] : null;
             $lugar_firma = isset(Flight::request()->data['lugar_firma']) ? Flight::request()->data['lugar_firma'] : 'Chía';
             $autoriza_imagenes = isset(Flight::request()->data['autoriza_imagenes']) ? Flight::request()->data['autoriza_imagenes'] : 0;
@@ -166,12 +172,12 @@ class ContratosMatricula
             $sentence = $db->prepare("INSERT INTO contratos_matricula 
                 (id, id_tenant, id_estudiante, anio, id_grupo, valor_matricula, descuento_matricula, recargo_matricula, 
                  valor_pension, descuento_pension, recargo_pension, razon_descuento, razon_recargo,
-                 numero_cuotas, cuotas_matricula, valor_total, fecha_firma, fecha_inicio, fecha_fin, lugar_firma, 
+                 numero_cuotas, cuotas_matricula, valor_total, fecha_firma, fecha_inicio, fecha_fin, dia_vencimiento, lugar_firma, 
                  autoriza_imagenes, autoriza_pagare, observaciones, id_usuario_genera) 
                 VALUES 
                 (:id, :id_tenant, :id_estudiante, :anio, :id_grupo, :valor_matricula, :descuento_matricula, :recargo_matricula,
                  :valor_pension, :descuento_pension, :recargo_pension, :razon_descuento, :razon_recargo,
-                 :numero_cuotas, :cuotas_matricula, :valor_total, :fecha_firma, :fecha_inicio, :fecha_fin, :lugar_firma, 
+                 :numero_cuotas, :cuotas_matricula, :valor_total, :fecha_firma, :fecha_inicio, :fecha_fin, :dia_vencimiento, :lugar_firma, 
                  :autoriza_imagenes, :autoriza_pagare, :observaciones, :id_usuario_genera)");
             
             $sentence->bindValue(':id', $idNew);
@@ -192,6 +198,7 @@ class ContratosMatricula
             $sentence->bindParam(':valor_total', $valor_total);
             $sentence->bindParam(':fecha_firma', $fecha_firma);
             $sentence->bindParam(':fecha_inicio', $fecha_inicio);
+            $sentence->bindValue(':dia_vencimiento', $dia_vencimiento, $dia_vencimiento === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
             $sentence->bindParam(':fecha_fin', $fecha_fin);
             $sentence->bindParam(':lugar_firma', $lugar_firma);
             $sentence->bindParam(':autoriza_imagenes', $autoriza_imagenes);
@@ -252,6 +259,12 @@ class ContratosMatricula
             $valor_total = Flight::request()->data['valor_total'];
             $fecha_firma = Flight::request()->data['fecha_firma'];
             $fecha_inicio = isset(Flight::request()->data['fecha_inicio']) ? Flight::request()->data['fecha_inicio'] : null;
+            // Dia del mes en que vencen las cuotas. Determina la fecha de las
+            // cuentas por cobrar y, por tanto, desde cuando corre la mora.
+            $dia_vencimiento = isset(Flight::request()->data['dia_vencimiento']) ? (int)Flight::request()->data['dia_vencimiento'] : null;
+            if ($dia_vencimiento !== null && ($dia_vencimiento < 1 || $dia_vencimiento > 31)) {
+                $dia_vencimiento = null;
+            }
             $fecha_fin = Flight::request()->data['fecha_fin'];
             $lugar_firma = Flight::request()->data['lugar_firma'];
             $autoriza_imagenes = isset(Flight::request()->data['autoriza_imagenes']) ? Flight::request()->data['autoriza_imagenes'] : 0;
@@ -277,6 +290,7 @@ class ContratosMatricula
                 valor_total = :valor_total,
                 fecha_firma = :fecha_firma,
                 fecha_inicio = :fecha_inicio,
+                dia_vencimiento = :dia_vencimiento,
                 fecha_fin = :fecha_fin,
                 lugar_firma = :lugar_firma,
                 autoriza_imagenes = :autoriza_imagenes,
@@ -303,6 +317,7 @@ class ContratosMatricula
             $sentence->bindParam(':valor_total', $valor_total);
             $sentence->bindParam(':fecha_firma', $fecha_firma);
             $sentence->bindParam(':fecha_inicio', $fecha_inicio);
+            $sentence->bindValue(':dia_vencimiento', $dia_vencimiento, $dia_vencimiento === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
             $sentence->bindParam(':fecha_fin', $fecha_fin);
             $sentence->bindParam(':lugar_firma', $lugar_firma);
             $sentence->bindParam(':autoriza_imagenes', $autoriza_imagenes);

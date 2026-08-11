@@ -4,7 +4,7 @@ class CuentaPagada
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("select id, id_cuenta_por_cobrar, id_pago_recibido, valor_aplicado, fecha from cuenta_pagada where id_tenant = :id_tenant");
+        $sentence = $db->prepare("select id, id_cuenta_por_cobrar, id_pago_recibido, valor_aplicado, valor_aplicado_mora, fecha from cuenta_pagada where id_tenant = :id_tenant");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
@@ -14,7 +14,7 @@ class CuentaPagada
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("select id, id_cuenta_por_cobrar, id_pago_recibido, valor_aplicado, fecha from cuenta_pagada where id = :id and id_tenant = :id_tenant");
+        $sentence = $db->prepare("select id, id_cuenta_por_cobrar, id_pago_recibido, valor_aplicado, valor_aplicado_mora, fecha from cuenta_pagada where id = :id and id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
@@ -31,6 +31,7 @@ class CuentaPagada
                 cp.id_cuenta_por_cobrar,
                 cp.id_pago_recibido,
                 cp.valor_aplicado,
+                cp.valor_aplicado_mora,
                 cp.fecha,
                 cpc.fecha AS fecha_cobro,
                 ps.id AS id_producto_servicio,
@@ -57,6 +58,7 @@ class CuentaPagada
                 cp.id_cuenta_por_cobrar,
                 cp.id_pago_recibido,
                 cp.valor_aplicado,
+                cp.valor_aplicado_mora,
                 cp.fecha AS fecha_aplicacion,
                 pr.fecha AS fecha_pago,
                 pr.referencia_bancaria,
@@ -88,15 +90,19 @@ class CuentaPagada
         $id_pago_recibido = Flight::request()->data['id_pago_recibido'];
         $valor_aplicado = Flight::request()->data['valor_aplicado'];
         $fecha = Flight::request()->data['fecha'];
+        // Parte del abono imputada a intereses. Si no viene es 0, de modo que
+        // los consumidores que no manejan mora siguen funcionando igual.
+        $valor_aplicado_mora = isset(Flight::request()->data['valor_aplicado_mora']) ? Flight::request()->data['valor_aplicado_mora'] : 0;
 
         $id = Uuid::generar();
-        $sentence = $db->prepare("insert into cuenta_pagada(id, id_tenant, id_cuenta_por_cobrar, id_pago_recibido, valor_aplicado, fecha) values (:id, :id_tenant, :id_cuenta_por_cobrar, :id_pago_recibido, :valor_aplicado, :fecha)");
+        $sentence = $db->prepare("insert into cuenta_pagada(id, id_tenant, id_cuenta_por_cobrar, id_pago_recibido, valor_aplicado, valor_aplicado_mora, fecha) values (:id, :id_tenant, :id_cuenta_por_cobrar, :id_pago_recibido, :valor_aplicado, :valor_aplicado_mora, :fecha)");
 
         $sentence->bindValue(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_cuenta_por_cobrar', $id_cuenta_por_cobrar);
         $sentence->bindParam(':id_pago_recibido', $id_pago_recibido);
         $sentence->bindParam(':valor_aplicado', $valor_aplicado);
+        $sentence->bindParam(':valor_aplicado_mora', $valor_aplicado_mora);
         $sentence->bindParam(':fecha', $fecha);
 
         $sentence->execute();
@@ -112,12 +118,15 @@ class CuentaPagada
         $valor_aplicado = Flight::request()->data['valor_aplicado'];
         $fecha = Flight::request()->data['fecha'];
 
-        $sentence = $db->prepare("update cuenta_pagada set id_cuenta_por_cobrar = :id_cuenta_por_cobrar, id_pago_recibido = :id_pago_recibido, valor_aplicado = :valor_aplicado, fecha = :fecha where id = :id and id_tenant = :id_tenant");
+        $valor_aplicado_mora = isset(Flight::request()->data['valor_aplicado_mora']) ? Flight::request()->data['valor_aplicado_mora'] : 0;
+
+        $sentence = $db->prepare("update cuenta_pagada set id_cuenta_por_cobrar = :id_cuenta_por_cobrar, id_pago_recibido = :id_pago_recibido, valor_aplicado = :valor_aplicado, valor_aplicado_mora = :valor_aplicado_mora, fecha = :fecha where id = :id and id_tenant = :id_tenant");
 
         $sentence->bindParam(':id', $id);
         $sentence->bindParam(':id_cuenta_por_cobrar', $id_cuenta_por_cobrar);
         $sentence->bindParam(':id_pago_recibido', $id_pago_recibido);
         $sentence->bindParam(':valor_aplicado', $valor_aplicado);
+        $sentence->bindParam(':valor_aplicado_mora', $valor_aplicado_mora);
         $sentence->bindParam(':fecha', $fecha);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
@@ -159,8 +168,8 @@ class CuentaPagada
 
             try {
                 // Preparar la consulta una sola vez
-                $query = "INSERT INTO cuenta_pagada (id, id_tenant, id_cuenta_por_cobrar, id_pago_recibido, valor_aplicado, fecha) 
-                     VALUES (:id, :id_tenant, :id_cuenta_por_cobrar, :id_pago_recibido, :valor_aplicado, :fecha)";
+                $query = "INSERT INTO cuenta_pagada (id, id_tenant, id_cuenta_por_cobrar, id_pago_recibido, valor_aplicado, valor_aplicado_mora, fecha) 
+                     VALUES (:id, :id_tenant, :id_cuenta_por_cobrar, :id_pago_recibido, :valor_aplicado, :valor_aplicado_mora, :fecha)";
                 $sentence = $db->prepare($query);
 
                 // Insertar cada cuenta
@@ -172,6 +181,8 @@ class CuentaPagada
                         $sentence->bindParam(':id_cuenta_por_cobrar', $cuenta['id_cuenta_por_cobrar']);
                         $sentence->bindParam(':id_pago_recibido', $id_pago_recibido);
                         $sentence->bindParam(':valor_aplicado', $cuenta['valor_aplicado']);
+                        $valorMora = isset($cuenta['valor_aplicado_mora']) ? $cuenta['valor_aplicado_mora'] : 0;
+                        $sentence->bindValue(':valor_aplicado_mora', $valorMora);
                         $sentence->bindParam(':fecha', $cuenta['fecha']);
 
                         $sentence->execute();
@@ -180,6 +191,7 @@ class CuentaPagada
                             'id' => $idCp,
                             'id_cuenta_por_cobrar' => $cuenta['id_cuenta_por_cobrar'],
                             'valor_aplicado' => $cuenta['valor_aplicado'],
+                            'valor_aplicado_mora' => $valorMora,
                             'success' => true
                         ];
                     } catch (Exception $e) {
