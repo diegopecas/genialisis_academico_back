@@ -1,6 +1,23 @@
 <?php
 class Colaboradores
 {
+    /**
+     * Devuelve el codigo del rol de colaborador (DOCENTE, ADMINISTRATIVO, ...) a partir de su id.
+     * Los roles se identifican por codigo y no por id, porque los ids son UUID.
+     */
+    private static function obtenerCodigoRolColaborador($db, $id_rol)
+    {
+        if (empty($id_rol)) {
+            return null;
+        }
+        $stmt = $db->prepare("SELECT codigo FROM roles_colaborador WHERE id = :id_rol AND id_tenant = :id_tenant");
+        $stmt->bindParam(':id_rol', $id_rol);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+        $row = $stmt->fetch();
+        return $row ? $row['codigo'] : null;
+    }
+
     public static function getAll()
     {
         $db = Flight::db();
@@ -346,7 +363,10 @@ class Colaboradores
             $rol_nuevo = $id_rol_colaborador;
             error_log("Cambio de rol: anterior=$rol_anterior, nuevo=$rol_nuevo");
 
-            if ($rol_anterior == 1 && $rol_nuevo != 1) {
+            $era_docente = self::obtenerCodigoRolColaborador($db, $rol_anterior) === 'DOCENTE';
+            $es_docente = self::obtenerCodigoRolColaborador($db, $rol_nuevo) === 'DOCENTE';
+
+            if ($era_docente && !$es_docente) {
                 error_log("Validando si puede cambiar de rol Docente");
                 $getDocente = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador AND id_tenant = :id_tenant");
                 $getDocente->bindParam(':id_colaborador', $id);
@@ -413,7 +433,7 @@ class Colaboradores
             $sentence->execute();
 
             // CASO 1: Era docente y ahora NO lo es
-            if ($rol_anterior == 1 && $rol_nuevo != 1) {
+            if ($era_docente && !$es_docente) {
                 error_log("Eliminando docente - pasó todas las validaciones");
                 $getDocente = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador AND id_tenant = :id_tenant");
                 $getDocente->bindParam(':id_colaborador', $id);
@@ -430,7 +450,7 @@ class Colaboradores
             }
 
             // CASO 2: NO era docente y ahora SÍ lo es
-            if ($rol_anterior != 1 && $rol_nuevo == 1) {
+            if (!$era_docente && $es_docente) {
                 error_log("Verificando si ya existe docente");
                 $checkDocente = $db->prepare("SELECT id FROM docentes WHERE (id_colaborador = :id_colaborador OR id_persona = :id_persona) AND id_tenant = :id_tenant");
                 $checkDocente->bindParam(':id_colaborador', $id);
@@ -460,7 +480,7 @@ class Colaboradores
             }
 
             // CASO 3: Era y sigue siendo docente
-            if ($rol_anterior == 1 && $rol_nuevo == 1) {
+            if ($era_docente && $es_docente) {
                 $getDocente = $db->prepare("SELECT id FROM docentes WHERE id_colaborador = :id_colaborador AND id_tenant = :id_tenant");
                 $getDocente->bindParam(':id_colaborador', $id);
                 $getDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -474,6 +494,21 @@ class Colaboradores
                     $actualizarDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $actualizarDocente->execute();
                     error_log("Docente actualizado");
+                } else {
+                    // Colaboradores que quedaron con rol Docente pero sin registro en docentes
+                    error_log("Colaborador con rol Docente sin registro en docentes, creando");
+
+                    $insertDocente = $db->prepare("INSERT INTO docentes(id, id_tenant, id_persona, id_colaborador, activo, id_casa_docente) VALUES (:id, :id_tenant, :id_persona, :id_colaborador, :activo, :id_casa_docente)");
+                    $idDocente3 = Uuid::generar();
+                    $insertDocente->bindValue(':id', $idDocente3);
+                    $insertDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $insertDocente->bindParam(':id_persona', $id_persona);
+                    $insertDocente->bindParam(':id_colaborador', $id);
+                    $insertDocente->bindParam(':id_casa_docente', $id_casa_colaborador);
+                    $insertDocente->bindParam(':activo', $activo);
+                    $insertDocente->execute();
+
+                    error_log("Docente creado con ID: $idDocente3");
                 }
             }
 

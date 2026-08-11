@@ -160,6 +160,100 @@ class Horarios
         Flight::json(array('id' => $id));
     }
 
+    /**
+     * Guarda varias franjas del mismo grupo en una sola transaccion.
+     * Espera: id_grupo y horarios[] con id_area_academica, id_dia_semana,
+     * hora_inicial, hora_final, total_minutos y total_clases.
+     * Valida solapamiento contra lo ya guardado y entre las franjas enviadas.
+     */
+    public static function guardarLote()
+    {
+        $db = Flight::db();
+        try {
+            $id_grupo = Flight::request()->data['id_grupo'];
+            $horarios = Flight::request()->data['horarios'];
+
+            if (empty($id_grupo) || !is_array($horarios) || count($horarios) === 0) {
+                Flight::json(array('error' => 'No se recibieron franjas para guardar'), 400);
+                return;
+            }
+
+            // Franjas ya guardadas del grupo, para validar cruces
+            $sentence = $db->prepare("select id_dia_semana, hora_inicial, hora_final from horarios where id_grupo = :id_grupo and id_tenant = :id_tenant");
+            $sentence->bindParam(':id_grupo', $id_grupo);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->execute();
+            $existentes = $sentence->fetchAll(PDO::FETCH_ASSOC);
+
+            $ocupadas = [];
+            foreach ($existentes as $ex) {
+                $ocupadas[] = [
+                    'id_dia_semana' => $ex['id_dia_semana'],
+                    'inicio' => substr($ex['hora_inicial'], 0, 5),
+                    'fin' => substr($ex['hora_final'], 0, 5)
+                ];
+            }
+
+            foreach ($horarios as $indice => $franja) {
+                $dia = $franja['id_dia_semana'];
+                $inicio = substr($franja['hora_inicial'], 0, 5);
+                $fin = substr($franja['hora_final'], 0, 5);
+
+                if ($fin <= $inicio) {
+                    Flight::json(array('error' => 'La hora final debe ser mayor que la hora inicial'), 400);
+                    return;
+                }
+
+                foreach ($ocupadas as $ocupada) {
+                    if ($ocupada['id_dia_semana'] == $dia && $inicio < $ocupada['fin'] && $ocupada['inicio'] < $fin) {
+                        Flight::json(array('error' => 'La franja ' . $inicio . ' - ' . $fin . ' se cruza con otra del mismo dia'), 400);
+                        return;
+                    }
+                }
+
+                $ocupadas[] = ['id_dia_semana' => $dia, 'inicio' => $inicio, 'fin' => $fin];
+            }
+
+            $db->beginTransaction();
+
+            $sentence = $db->prepare("insert into horarios(id, id_tenant, id_grupo, id_area_academica, id_dia_semana, hora_inicial, hora_final, total_minutos, total_clases)
+                                      values (:id, :id_tenant, :id_grupo, :id_area_academica, :id_dia_semana, :hora_inicial, :hora_final, :total_minutos, :total_clases)");
+
+            $ids = [];
+            foreach ($horarios as $franja) {
+                $idNew = Uuid::generar();
+                $id_area_academica = $franja['id_area_academica'];
+                $id_dia_semana = $franja['id_dia_semana'];
+                $hora_inicial = $franja['hora_inicial'];
+                $hora_final = $franja['hora_final'];
+                $total_minutos = $franja['total_minutos'];
+                $total_clases = isset($franja['total_clases']) ? $franja['total_clases'] : 1;
+
+                $sentence->bindValue(':id', $idNew);
+                $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $sentence->bindParam(':id_grupo', $id_grupo);
+                $sentence->bindParam(':id_area_academica', $id_area_academica);
+                $sentence->bindParam(':id_dia_semana', $id_dia_semana);
+                $sentence->bindParam(':hora_inicial', $hora_inicial);
+                $sentence->bindParam(':hora_final', $hora_final);
+                $sentence->bindParam(':total_minutos', $total_minutos);
+                $sentence->bindParam(':total_clases', $total_clases);
+                $sentence->execute();
+
+                $ids[] = $idNew;
+            }
+
+            $db->commit();
+            Flight::json(array('ids' => $ids, 'total' => count($ids)));
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log('Error en guardarLote de horarios: ' . $e->getMessage());
+            Flight::json(array('error' => 'Hubo un problema al guardar las franjas'), 500);
+        }
+    }
+
     public static function replace()
     {
         $db = Flight::db();

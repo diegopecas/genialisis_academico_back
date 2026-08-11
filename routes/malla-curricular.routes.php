@@ -24,6 +24,7 @@ Flight::route('GET /horarios', [Horarios::class, 'getAll']);
 Flight::route('GET /horarios/@id', [Horarios::class, 'getById']);
 Flight::route('GET /horarios/grupo/@id_grupo', [Horarios::class, 'getByGrupo']);
 Flight::route('GET /horarios/area/@id_area_academica', [Horarios::class, 'getByArea']);
+Flight::route('POST /horarios/lote', [Horarios::class, 'guardarLote']);
 Flight::route('POST /horarios', [Horarios::class, 'new']);
 Flight::route('PUT /horarios', [Horarios::class, 'replace']);
 Flight::route('DELETE /horarios', [Horarios::class, 'delete']);
