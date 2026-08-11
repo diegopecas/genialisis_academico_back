@@ -161,10 +161,12 @@ class Horarios
     }
 
     /**
-     * Guarda varias franjas del mismo grupo en una sola transaccion.
-     * Espera: id_grupo y horarios[] con id_area_academica, id_dia_semana,
-     * hora_inicial, hora_final, total_minutos y total_clases.
-     * Valida solapamiento contra lo ya guardado y entre las franjas enviadas.
+     * Guarda y elimina varias franjas del mismo grupo en una sola transaccion.
+     * Espera: id_grupo, horarios[] con id_area_academica, id_dia_semana,
+     * hora_inicial, hora_final, total_minutos y total_clases, y eliminar[] con
+     * los ids de las franjas a borrar.
+     * Valida solapamiento contra lo ya guardado (sin contar lo que se elimina)
+     * y entre las franjas enviadas.
      */
     public static function guardarLote()
     {
@@ -172,21 +174,34 @@ class Horarios
         try {
             $id_grupo = Flight::request()->data['id_grupo'];
             $horarios = Flight::request()->data['horarios'];
+            $eliminar = Flight::request()->data['eliminar'];
 
-            if (empty($id_grupo) || !is_array($horarios) || count($horarios) === 0) {
-                Flight::json(array('error' => 'No se recibieron franjas para guardar'), 400);
+            $horarios = is_array($horarios) ? $horarios : [];
+            $eliminar = is_array($eliminar) ? $eliminar : [];
+
+            if (empty($id_grupo)) {
+                Flight::json(array('error' => 'No se recibio el grupo'), 400);
+                return;
+            }
+
+            if (count($horarios) === 0 && count($eliminar) === 0) {
+                Flight::json(array('error' => 'No se recibieron cambios para guardar'), 400);
                 return;
             }
 
             // Franjas ya guardadas del grupo, para validar cruces
-            $sentence = $db->prepare("select id_dia_semana, hora_inicial, hora_final from horarios where id_grupo = :id_grupo and id_tenant = :id_tenant");
+            $sentence = $db->prepare("select id, id_dia_semana, hora_inicial, hora_final from horarios where id_grupo = :id_grupo and id_tenant = :id_tenant");
             $sentence->bindParam(':id_grupo', $id_grupo);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
             $existentes = $sentence->fetchAll(PDO::FETCH_ASSOC);
 
+            // Las que se van a eliminar dejan de ocupar espacio en la validacion
             $ocupadas = [];
             foreach ($existentes as $ex) {
+                if (in_array($ex['id'], $eliminar)) {
+                    continue;
+                }
                 $ocupadas[] = [
                     'id_dia_semana' => $ex['id_dia_semana'],
                     'inicio' => substr($ex['hora_inicial'], 0, 5),
@@ -216,6 +231,19 @@ class Horarios
 
             $db->beginTransaction();
 
+            // Primero se borra, para liberar las franjas que se reemplazan
+            $eliminados = 0;
+            if (count($eliminar) > 0) {
+                $borrar = $db->prepare("delete from horarios where id = :id and id_grupo = :id_grupo and id_tenant = :id_tenant");
+                foreach ($eliminar as $idHorario) {
+                    $borrar->bindParam(':id', $idHorario);
+                    $borrar->bindParam(':id_grupo', $id_grupo);
+                    $borrar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $borrar->execute();
+                    $eliminados += $borrar->rowCount();
+                }
+            }
+
             $sentence = $db->prepare("insert into horarios(id, id_tenant, id_grupo, id_area_academica, id_dia_semana, hora_inicial, hora_final, total_minutos, total_clases)
                                       values (:id, :id_tenant, :id_grupo, :id_area_academica, :id_dia_semana, :hora_inicial, :hora_final, :total_minutos, :total_clases)");
 
@@ -244,13 +272,13 @@ class Horarios
             }
 
             $db->commit();
-            Flight::json(array('ids' => $ids, 'total' => count($ids)));
+            Flight::json(array('ids' => $ids, 'total' => count($ids), 'eliminados' => $eliminados));
         } catch (Exception $e) {
             if ($db->inTransaction()) {
                 $db->rollBack();
             }
             error_log('Error en guardarLote de horarios: ' . $e->getMessage());
-            Flight::json(array('error' => 'Hubo un problema al guardar las franjas'), 500);
+            Flight::json(array('error' => 'Hubo un problema al guardar los cambios de horarios'), 500);
         }
     }
 

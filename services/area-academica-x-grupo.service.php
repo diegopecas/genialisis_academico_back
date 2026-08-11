@@ -37,6 +37,7 @@ class AreaAcademicaXGrupo
                    axg.id_docente,
                    a.nombre AS nombre_area_academica,
                    a.icono,
+                   a.color,
                    g.nombre AS nombre_grupo,
                    CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', 
                           IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_docente
