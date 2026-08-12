@@ -79,6 +79,7 @@ Flight::route('GET /tarifas-grupos/grupo/@id_grupo', [TarifasGrupos::class, 'get
 Flight::route('GET /tarifas-grupos/grupo/@id_grupo/anio/@anio', [TarifasGrupos::class, 'getByGrupoAnio']);
 Flight::route('GET /tarifas-grupos/anio/@anio', [TarifasGrupos::class, 'getByAnio']);
 Flight::route('POST /tarifas-grupos', [TarifasGrupos::class, 'new']);
+Flight::route('POST /tarifas-grupos/guardar-lote', [TarifasGrupos::class, 'guardarLote']);
 Flight::route('PUT /tarifas-grupos', [TarifasGrupos::class, 'replace']);
 Flight::route('DELETE /tarifas-grupos', [TarifasGrupos::class, 'delete']);
 
@@ -96,6 +97,13 @@ Flight::route('PUT /contratos-matricula/marcar-firmado', [ContratosMatricula::cl
 Flight::route('PUT /contratos-matricula/desmarcar-firmado', [ContratosMatricula::class, 'desmarcarFirmado']);
 Flight::route('PUT /contratos-matricula/anular', [ContratosMatricula::class, 'anular']);
 Flight::route('DELETE /contratos-matricula', [ContratosMatricula::class, 'delete']);
+
+// CONTRATOS DE MATRÍCULA - PRODUCTOS (LINEAS)
+Flight::route('GET /contratos-matricula-productos/contrato/@id', [ContratosMatriculaProductos::class, 'getByContrato']);
+Flight::route('GET /contratos-matricula-productos/@id', [ContratosMatriculaProductos::class, 'getById']);
+Flight::route('POST /contratos-matricula-productos', [ContratosMatriculaProductos::class, 'guardarLineas']);
+Flight::route('DELETE /contratos-matricula-productos', [ContratosMatriculaProductos::class, 'delete']);
+Flight::route('DELETE /contratos-matricula-productos/contrato/@id', [ContratosMatriculaProductos::class, 'eliminarByContrato']);
 
 // CONTRATOS DE MATRÍCULA - VALORES
 Flight::route('GET /contratos-matricula-valores/contrato/@id', [ContratosMatriculaValores::class, 'getByContrato']);

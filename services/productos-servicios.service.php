@@ -9,11 +9,14 @@ class ProductosServicios
                cp.nombre AS nombre_categoria, cp.codigo AS categoria_codigo, 
                cl.nombre AS nombre_clasificacion, cl.codigo AS clasificacion_codigo, 
                pc.nombre AS nombre_periodicidad,
+               COALESCE(tc.codigo, 'OTRO') AS codigo_tipo_cobro,
+               COALESCE(tc.nombre, 'Otro') AS nombre_tipo_cobro,
                ha.nombre AS nombre_horario_alimentacion
         FROM productos_servicios ps
         LEFT JOIN categoria_productos_servicios cp ON cp.id = ps.id_categoria_productos_servicios
         LEFT JOIN clasificacion_productos_servicios cl ON cl.id = ps.id_clasificacion_productos_servicios
         LEFT JOIN periodicidad_cobro pc ON pc.id = ps.id_periodicidad_cobro
+        LEFT JOIN tipos_cobro_producto tc ON tc.id = ps.id_tipo_cobro
         LEFT JOIN horarios_alimentacion ha ON ha.id = ps.id_horario_alimentacion_sugerido
         WHERE ps.id_tenant = :id_tenant
         ORDER BY ps.nombre
@@ -32,11 +35,14 @@ class ProductosServicios
                cp.nombre AS nombre_categoria, cp.codigo AS categoria_codigo, 
                cl.nombre AS nombre_clasificacion, cl.codigo AS clasificacion_codigo, 
                pc.nombre AS nombre_periodicidad,
+               COALESCE(tc.codigo, 'OTRO') AS codigo_tipo_cobro,
+               COALESCE(tc.nombre, 'Otro') AS nombre_tipo_cobro,
                ha.nombre AS nombre_horario_alimentacion
         FROM productos_servicios ps
         LEFT JOIN categoria_productos_servicios cp ON cp.id = ps.id_categoria_productos_servicios
         LEFT JOIN clasificacion_productos_servicios cl ON cl.id = ps.id_clasificacion_productos_servicios
         LEFT JOIN periodicidad_cobro pc ON pc.id = ps.id_periodicidad_cobro
+        LEFT JOIN tipos_cobro_producto tc ON tc.id = ps.id_tipo_cobro
         LEFT JOIN horarios_alimentacion ha ON ha.id = ps.id_horario_alimentacion_sugerido
         WHERE ps.id = :id
         AND ps.id_tenant = :id_tenant
@@ -57,11 +63,14 @@ class ProductosServicios
                cp.nombre AS nombre_categoria, cp.codigo AS categoria_codigo, 
                cl.nombre AS nombre_clasificacion, cl.codigo AS clasificacion_codigo, 
                pc.nombre AS nombre_periodicidad,
+               COALESCE(tc.codigo, 'OTRO') AS codigo_tipo_cobro,
+               COALESCE(tc.nombre, 'Otro') AS nombre_tipo_cobro,
                ha.nombre AS nombre_horario_alimentacion
         FROM productos_servicios ps
         LEFT JOIN categoria_productos_servicios cp ON cp.id = ps.id_categoria_productos_servicios
         LEFT JOIN clasificacion_productos_servicios cl ON cl.id = ps.id_clasificacion_productos_servicios
         LEFT JOIN periodicidad_cobro pc ON pc.id = ps.id_periodicidad_cobro
+        LEFT JOIN tipos_cobro_producto tc ON tc.id = ps.id_tipo_cobro
         LEFT JOIN horarios_alimentacion ha ON ha.id = ps.id_horario_alimentacion_sugerido
         WHERE ps.id_clasificacion_productos_servicios = :id
         AND ps.id_tenant = :id_tenant
@@ -92,11 +101,14 @@ class ProductosServicios
                    cp.nombre AS nombre_categoria,
                    cp.codigo AS categoria_codigo,
                    pc.nombre AS nombre_periodicidad,
+                   COALESCE(tc.codigo, 'OTRO') AS codigo_tipo_cobro,
+                   COALESCE(tc.nombre, 'Otro') AS nombre_tipo_cobro,
                    ha.nombre AS nombre_horario_alimentacion
             FROM productos_servicios ps
             LEFT JOIN clasificacion_productos_servicios cl ON cl.id = ps.id_clasificacion_productos_servicios
             LEFT JOIN categoria_productos_servicios cp ON cp.id = ps.id_categoria_productos_servicios
             LEFT JOIN periodicidad_cobro pc ON pc.id = ps.id_periodicidad_cobro
+            LEFT JOIN tipos_cobro_producto tc ON tc.id = ps.id_tipo_cobro
             LEFT JOIN horarios_alimentacion ha ON ha.id = ps.id_horario_alimentacion_sugerido
             WHERE ps.disponible = 1
             AND ps.id_tenant = :id_tenant
@@ -123,10 +135,12 @@ class ProductosServicios
             $disponible = $request->data->disponible;
             $anio = $request->data->anio;
             $id_horario = $request->data->id_horario_alimentacion_sugerido;
+            // Matricula, pension u otro. Es del producto, no del grupo ni del contrato.
+            $id_tipo_cobro = isset($request->data->id_tipo_cobro) ? $request->data->id_tipo_cobro : null;
 
             $id = Uuid::generar();
-            $sentence = $db->prepare("INSERT INTO productos_servicios(id, id_tenant, nombre, detalles, id_clasificacion_productos_servicios, id_categoria_productos_servicios, id_periodicidad_cobro, valor_sugerido, disponible, anio, id_horario_alimentacion_sugerido) 
-            VALUES (:id, :id_tenant, :nombre, :detalles, :id_clas, :id_cat, :id_period, :valor, :disponible, :anio, :id_horario)");
+            $sentence = $db->prepare("INSERT INTO productos_servicios(id, id_tenant, nombre, detalles, id_clasificacion_productos_servicios, id_categoria_productos_servicios, id_periodicidad_cobro, valor_sugerido, disponible, anio, id_horario_alimentacion_sugerido, id_tipo_cobro) 
+            VALUES (:id, :id_tenant, :nombre, :detalles, :id_clas, :id_cat, :id_period, :valor, :disponible, :anio, :id_horario, :id_tipo_cobro)");
 
             $sentence->bindValue(':id', $id);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -139,6 +153,7 @@ class ProductosServicios
             $sentence->bindParam(':disponible', $disponible);
             $sentence->bindParam(':anio', $anio);
             $sentence->bindParam(':id_horario', $id_horario);
+            $sentence->bindValue(':id_tipo_cobro', $id_tipo_cobro);
 
             $sentence->execute();
             Flight::json(array('id' => $id));
@@ -164,6 +179,8 @@ class ProductosServicios
             $disponible = $request->data->disponible;
             $anio = $request->data->anio;
             $id_horario = $request->data->id_horario_alimentacion_sugerido;
+            // Matricula, pension u otro. Es del producto, no del grupo ni del contrato.
+            $id_tipo_cobro = isset($request->data->id_tipo_cobro) ? $request->data->id_tipo_cobro : null;
 
             $sentence = $db->prepare("UPDATE productos_servicios SET 
                 nombre = :nombre,
@@ -174,7 +191,8 @@ class ProductosServicios
                 valor_sugerido = :valor,
                 disponible = :disponible,
                 anio = :anio,
-                id_horario_alimentacion_sugerido = :id_horario
+                id_horario_alimentacion_sugerido = :id_horario,
+                id_tipo_cobro = :id_tipo_cobro
                 WHERE id = :id
                 AND id_tenant = :id_tenant");
 
@@ -188,6 +206,7 @@ class ProductosServicios
             $sentence->bindParam(':disponible', $disponible);
             $sentence->bindParam(':anio', $anio);
             $sentence->bindParam(':id_horario', $id_horario);
+            $sentence->bindValue(':id_tipo_cobro', $id_tipo_cobro);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
 
             $sentence->execute();

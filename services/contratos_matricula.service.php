@@ -9,7 +9,7 @@ class ContratosMatricula
         $db = Flight::db();
         $sentence = $db->prepare("
             SELECT cm.id, cm.id_estudiante, cm.anio, cm.id_grupo, cm.valor_matricula, 
-                   cm.valor_pension, cm.numero_cuotas, cm.cuotas_matricula, cm.valor_total,
+                   cm.valor_pension, cm.valor_otros, cm.numero_cuotas, cm.cuotas_matricula, cm.valor_total,
                    cm.descuento_matricula, cm.recargo_matricula,
                    cm.descuento_pension, cm.recargo_pension,
                    cm.razon_descuento, cm.razon_recargo,
@@ -42,7 +42,7 @@ class ContratosMatricula
         $db = Flight::db();
         $sentence = $db->prepare("
             SELECT cm.id, cm.id_estudiante, cm.anio, cm.id_grupo, cm.valor_matricula, 
-                   cm.valor_pension, cm.numero_cuotas, cm.cuotas_matricula, cm.valor_total,
+                   cm.valor_pension, cm.valor_otros, cm.numero_cuotas, cm.cuotas_matricula, cm.valor_total,
                    cm.descuento_matricula, cm.recargo_matricula,
                    cm.descuento_pension, cm.recargo_pension,
                    cm.razon_descuento, cm.razon_recargo,
@@ -75,7 +75,7 @@ class ContratosMatricula
         $db = Flight::db();
         $sentence = $db->prepare("
             SELECT cm.id, cm.id_estudiante, cm.anio, cm.id_grupo, cm.valor_matricula, 
-                   cm.valor_pension, cm.numero_cuotas, cm.cuotas_matricula, cm.valor_total,
+                   cm.valor_pension, cm.valor_otros, cm.numero_cuotas, cm.cuotas_matricula, cm.valor_total,
                    cm.descuento_matricula, cm.recargo_matricula,
                    cm.descuento_pension, cm.recargo_pension,
                    cm.razon_descuento, cm.razon_recargo,
@@ -107,7 +107,7 @@ class ContratosMatricula
         $db = Flight::db();
         $sentence = $db->prepare("
             SELECT cm.id, cm.id_estudiante, cm.anio, cm.id_grupo, cm.valor_matricula, 
-                   cm.valor_pension, cm.numero_cuotas, cm.valor_total,
+                   cm.valor_pension, cm.valor_otros, cm.numero_cuotas, cm.valor_total,
                    cm.fecha_firma, cm.fecha_inicio, cm.fecha_fin, cm.dia_vencimiento, cm.lugar_firma, 
                    cm.autoriza_imagenes, cm.autoriza_pagare, cm.activo,
                    cm.firmado, cm.ruta_documento_firmado,
@@ -144,6 +144,9 @@ class ContratosMatricula
             $descuento_matricula = isset(Flight::request()->data['descuento_matricula']) ? Flight::request()->data['descuento_matricula'] : 0;
             $recargo_matricula = isset(Flight::request()->data['recargo_matricula']) ? Flight::request()->data['recargo_matricula'] : 0;
             $valor_pension = Flight::request()->data['valor_pension'];
+            // Total derivado de las lineas de contratos_matricula_productos.
+            // Se recibe para no perderlo mientras el contrato aun no tiene lineas.
+            $valor_otros = isset(Flight::request()->data['valor_otros']) ? Flight::request()->data['valor_otros'] : 0;
             $descuento_pension = isset(Flight::request()->data['descuento_pension']) ? Flight::request()->data['descuento_pension'] : 0;
             $recargo_pension = isset(Flight::request()->data['recargo_pension']) ? Flight::request()->data['recargo_pension'] : 0;
             $razon_descuento = isset(Flight::request()->data['razon_descuento']) ? Flight::request()->data['razon_descuento'] : null;
@@ -171,12 +174,12 @@ class ContratosMatricula
             $idNew = Uuid::generar();
             $sentence = $db->prepare("INSERT INTO contratos_matricula 
                 (id, id_tenant, id_estudiante, anio, id_grupo, valor_matricula, descuento_matricula, recargo_matricula, 
-                 valor_pension, descuento_pension, recargo_pension, razon_descuento, razon_recargo,
+                 valor_pension, valor_otros, descuento_pension, recargo_pension, razon_descuento, razon_recargo,
                  numero_cuotas, cuotas_matricula, valor_total, fecha_firma, fecha_inicio, fecha_fin, dia_vencimiento, lugar_firma, 
                  autoriza_imagenes, autoriza_pagare, observaciones, id_usuario_genera) 
                 VALUES 
                 (:id, :id_tenant, :id_estudiante, :anio, :id_grupo, :valor_matricula, :descuento_matricula, :recargo_matricula,
-                 :valor_pension, :descuento_pension, :recargo_pension, :razon_descuento, :razon_recargo,
+                 :valor_pension, :valor_otros, :descuento_pension, :recargo_pension, :razon_descuento, :razon_recargo,
                  :numero_cuotas, :cuotas_matricula, :valor_total, :fecha_firma, :fecha_inicio, :fecha_fin, :dia_vencimiento, :lugar_firma, 
                  :autoriza_imagenes, :autoriza_pagare, :observaciones, :id_usuario_genera)");
             
@@ -189,6 +192,7 @@ class ContratosMatricula
             $sentence->bindParam(':descuento_matricula', $descuento_matricula);
             $sentence->bindParam(':recargo_matricula', $recargo_matricula);
             $sentence->bindParam(':valor_pension', $valor_pension);
+            $sentence->bindParam(':valor_otros', $valor_otros);
             $sentence->bindParam(':descuento_pension', $descuento_pension);
             $sentence->bindParam(':recargo_pension', $recargo_pension);
             $sentence->bindParam(':razon_descuento', $razon_descuento);
@@ -249,6 +253,9 @@ class ContratosMatricula
             $descuento_matricula = isset(Flight::request()->data['descuento_matricula']) ? Flight::request()->data['descuento_matricula'] : 0;
             $recargo_matricula = isset(Flight::request()->data['recargo_matricula']) ? Flight::request()->data['recargo_matricula'] : 0;
             $valor_pension = Flight::request()->data['valor_pension'];
+            // Total derivado de las lineas de contratos_matricula_productos.
+            // Se recibe para no perderlo mientras el contrato aun no tiene lineas.
+            $valor_otros = isset(Flight::request()->data['valor_otros']) ? Flight::request()->data['valor_otros'] : 0;
             $descuento_pension = isset(Flight::request()->data['descuento_pension']) ? Flight::request()->data['descuento_pension'] : 0;
             $recargo_pension = isset(Flight::request()->data['recargo_pension']) ? Flight::request()->data['recargo_pension'] : 0;
             $razon_descuento = isset(Flight::request()->data['razon_descuento']) ? Flight::request()->data['razon_descuento'] : null;
@@ -281,6 +288,7 @@ class ContratosMatricula
                 descuento_matricula = :descuento_matricula,
                 recargo_matricula = :recargo_matricula,
                 valor_pension = :valor_pension,
+                valor_otros = :valor_otros,
                 descuento_pension = :descuento_pension,
                 recargo_pension = :recargo_pension,
                 razon_descuento = :razon_descuento,
@@ -308,6 +316,7 @@ class ContratosMatricula
             $sentence->bindParam(':descuento_matricula', $descuento_matricula);
             $sentence->bindParam(':recargo_matricula', $recargo_matricula);
             $sentence->bindParam(':valor_pension', $valor_pension);
+            $sentence->bindParam(':valor_otros', $valor_otros);
             $sentence->bindParam(':descuento_pension', $descuento_pension);
             $sentence->bindParam(':recargo_pension', $recargo_pension);
             $sentence->bindParam(':razon_descuento', $razon_descuento);

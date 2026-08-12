@@ -8,6 +8,15 @@ Flight::route('POST /productos-servicios', [ProductosServicios::class, 'new']);
 Flight::route('PUT /productos-servicios', [ProductosServicios::class, 'replace']);
 Flight::route('DELETE /productos-servicios', [ProductosServicios::class, 'delete']);
 
+// tipos-cobro-producto (catalogo global: matricula, pension, otro)
+Flight::route('GET /tipos-cobro-producto', [TiposCobroProducto::class, 'getAll']);
+Flight::route('GET /tipos-cobro-producto/activos', [TiposCobroProducto::class, 'getActivos']);
+Flight::route('GET /tipos-cobro-producto/codigo/@codigo', [TiposCobroProducto::class, 'getByCodigo']);
+Flight::route('GET /tipos-cobro-producto/@id', [TiposCobroProducto::class, 'getById']);
+Flight::route('POST /tipos-cobro-producto', [TiposCobroProducto::class, 'new']);
+Flight::route('PUT /tipos-cobro-producto', [TiposCobroProducto::class, 'replace']);
+Flight::route('DELETE /tipos-cobro-producto', [TiposCobroProducto::class, 'delete']);
+
 // clasificacion-productos-servicios
 Flight::route('GET /clasificacion-productos-servicios', [ClasificacionProductosServicios::class, 'getAll']);
 Flight::route('GET /clasificacion-productos-servicios/@id', [ClasificacionProductosServicios::class, 'getById']);
