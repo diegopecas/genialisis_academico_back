@@ -112,14 +112,15 @@ class MoraConfiguracion
             }
 
             $valores = self::normalizarValores($db, $data);
+            $idProductoMora = self::resolverProductoMora($db, $data, $data['id_producto_servicio']);
 
             $sentence = $db->prepare("
                 INSERT INTO mora_configuracion
                     (id, id_tenant, id_producto_servicio, id_tipo_mora, valor_recargo,
-                     recargo_acumulable, porcentaje_mensual, activo, id_usuario)
+                     recargo_acumulable, porcentaje_mensual, id_producto_mora, activo, id_usuario)
                 VALUES
                     (:id, :id_tenant, :id_producto_servicio, :id_tipo_mora, :valor_recargo,
-                     :recargo_acumulable, :porcentaje_mensual, :activo, :id_usuario)
+                     :recargo_acumulable, :porcentaje_mensual, :id_producto_mora, :activo, :id_usuario)
             ");
 
             $id = Uuid::generar();
@@ -133,6 +134,7 @@ class MoraConfiguracion
             $sentence->bindValue(':valor_recargo', $valores['valor_recargo']);
             $sentence->bindValue(':recargo_acumulable', $valores['recargo_acumulable'], PDO::PARAM_INT);
             $sentence->bindValue(':porcentaje_mensual', $valores['porcentaje_mensual']);
+            $sentence->bindValue(':id_producto_mora', $idProductoMora);
             $sentence->bindValue(':activo', $activo, PDO::PARAM_INT);
             $sentence->bindParam(':id_usuario', $idUsuario);
             $sentence->execute();
@@ -164,6 +166,7 @@ class MoraConfiguracion
             }
 
             $valores = self::normalizarValores($db, $data);
+            $idProductoMora = self::resolverProductoMora($db, $data, $data['id_producto_servicio']);
 
             $sentence = $db->prepare("
                 UPDATE mora_configuracion SET
@@ -172,6 +175,7 @@ class MoraConfiguracion
                     valor_recargo = :valor_recargo,
                     recargo_acumulable = :recargo_acumulable,
                     porcentaje_mensual = :porcentaje_mensual,
+                    id_producto_mora = :id_producto_mora,
                     activo = :activo,
                     id_usuario = :id_usuario
                 WHERE id = :id AND id_tenant = :id_tenant
@@ -186,6 +190,7 @@ class MoraConfiguracion
             $sentence->bindValue(':valor_recargo', $valores['valor_recargo']);
             $sentence->bindValue(':recargo_acumulable', $valores['recargo_acumulable'], PDO::PARAM_INT);
             $sentence->bindValue(':porcentaje_mensual', $valores['porcentaje_mensual']);
+            $sentence->bindValue(':id_producto_mora', $idProductoMora);
             $sentence->bindValue(':activo', $activo, PDO::PARAM_INT);
             $sentence->bindParam(':id_usuario', $idUsuario);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -328,7 +333,7 @@ class MoraConfiguracion
                 return;
             }
 
-            $error = self::validar($db, $data);
+            $error = self::validarCondiciones($db, $data);
             if ($error !== null) {
                 Flight::json(array('error' => $error), 400);
                 return;
@@ -351,6 +356,7 @@ class MoraConfiguracion
                     valor_recargo = :valor_recargo,
                     recargo_acumulable = :recargo_acumulable,
                     porcentaje_mensual = :porcentaje_mensual,
+                    id_producto_mora = :id_producto_mora,
                     activo = :activo,
                     id_usuario = :id_usuario
                 WHERE id = :id AND id_tenant = :id_tenant
@@ -358,14 +364,20 @@ class MoraConfiguracion
             $insertar = $db->prepare("
                 INSERT INTO mora_configuracion
                     (id, id_tenant, id_producto_servicio, id_tipo_mora, valor_recargo,
-                     recargo_acumulable, porcentaje_mensual, activo, id_usuario)
+                     recargo_acumulable, porcentaje_mensual, id_producto_mora, activo, id_usuario)
                 VALUES
                     (:id, :id_tenant, :id_producto_servicio, :id_tipo_mora, :valor_recargo,
-                     :recargo_acumulable, :porcentaje_mensual, :activo, :id_usuario)
+                     :recargo_acumulable, :porcentaje_mensual, :id_producto_mora, :activo, :id_usuario)
             ");
 
             $creados = 0;
             $actualizados = 0;
+
+            /* Producto de mora del lote:
+                 'uno_por_producto' -> se crea uno para cada producto marcado
+                 'uno_para_todos'   -> todos comparten el id_producto_mora recibido
+               Sin instruccion, se respeta el que cada configuracion ya tuviera. */
+            $modoLote = isset($data['modo_producto_mora']) ? $data['modo_producto_mora'] : null;
 
             foreach ($productos as $idProducto) {
                 $existe->bindValue(':id_producto_servicio', $idProducto);
@@ -373,11 +385,24 @@ class MoraConfiguracion
                 $existe->execute();
                 $fila = $existe->fetch(PDO::FETCH_ASSOC);
 
+                if ($modoLote === 'uno_para_todos') {
+                    $idProductoMora = !empty($data['id_producto_mora']) ? $data['id_producto_mora'] : null;
+                } elseif ($modoLote === 'uno_por_producto') {
+                    $idProductoMora = self::resolverProductoMora(
+                        $db,
+                        array('modo_producto_mora' => 'crear'),
+                        $idProducto
+                    );
+                } else {
+                    $idProductoMora = self::resolverProductoMora($db, array(), $idProducto);
+                }
+
                 if ($fila) {
                     $actualizar->bindValue(':id_tipo_mora', $valores['id_tipo_mora'], PDO::PARAM_INT);
                     $actualizar->bindValue(':valor_recargo', $valores['valor_recargo']);
                     $actualizar->bindValue(':recargo_acumulable', $valores['recargo_acumulable'], PDO::PARAM_INT);
                     $actualizar->bindValue(':porcentaje_mensual', $valores['porcentaje_mensual']);
+                    $actualizar->bindValue(':id_producto_mora', $idProductoMora);
                     $actualizar->bindValue(':activo', $activo, PDO::PARAM_INT);
                     $actualizar->bindValue(':id_usuario', $idUsuario);
                     $actualizar->bindValue(':id', $fila['id']);
@@ -392,6 +417,7 @@ class MoraConfiguracion
                     $insertar->bindValue(':valor_recargo', $valores['valor_recargo']);
                     $insertar->bindValue(':recargo_acumulable', $valores['recargo_acumulable'], PDO::PARAM_INT);
                     $insertar->bindValue(':porcentaje_mensual', $valores['porcentaje_mensual']);
+                    $insertar->bindValue(':id_producto_mora', $idProductoMora);
                     $insertar->bindValue(':activo', $activo, PDO::PARAM_INT);
                     $insertar->bindValue(':id_usuario', $idUsuario);
                     $insertar->execute();
@@ -460,6 +486,128 @@ class MoraConfiguracion
     }
 
     /**
+     * Resuelve el producto bajo el cual naceran las cuentas de mora.
+     *
+     * Tres casos segun lo que envie la pantalla:
+     *   modo_producto_mora = 'existente' -> usa el id_producto_mora recibido
+     *   modo_producto_mora = 'crear'     -> crea uno nuevo heredando
+     *                                       clasificacion, categoria y
+     *                                       periodicidad del producto original
+     *   sin modo, con id previo          -> conserva el que ya estaba
+     *
+     * @return string|null id del producto de mora
+     */
+    private static function resolverProductoMora($db, $data, $idProductoServicio)
+    {
+        $modo = isset($data['modo_producto_mora']) ? $data['modo_producto_mora'] : null;
+
+        if ($modo === 'existente' && !empty($data['id_producto_mora'])) {
+            return $data['id_producto_mora'];
+        }
+
+        if ($modo === 'crear') {
+            $nombre = !empty($data['nombre_producto_mora'])
+                ? $data['nombre_producto_mora']
+                : self::nombrePorDefectoProductoMora($db, $idProductoServicio);
+
+            return self::crearProductoMora($db, $idProductoServicio, $nombre);
+        }
+
+        // Sin instruccion explicita: se respeta el que ya tuviera configurado.
+        if (!empty($data['id_producto_mora'])) {
+            return $data['id_producto_mora'];
+        }
+
+        $sentence = $db->prepare("
+            SELECT id_producto_mora FROM mora_configuracion
+            WHERE id_producto_servicio = :id_producto_servicio AND id_tenant = :id_tenant
+            LIMIT 1
+        ");
+        $sentence->bindParam(':id_producto_servicio', $idProductoServicio);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $fila = $sentence->fetch(PDO::FETCH_ASSOC);
+
+        return ($fila && !empty($fila['id_producto_mora'])) ? $fila['id_producto_mora'] : null;
+    }
+
+    /** Nombre sugerido: "Mora - <producto>". */
+    public static function nombrePorDefectoProductoMora($db, $idProductoServicio)
+    {
+        $sentence = $db->prepare("SELECT nombre FROM productos_servicios WHERE id = :id AND id_tenant = :id_tenant LIMIT 1");
+        $sentence->bindParam(':id', $idProductoServicio);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $fila = $sentence->fetch(PDO::FETCH_ASSOC);
+
+        return $fila ? 'Mora - ' . $fila['nombre'] : 'Mora';
+    }
+
+    /**
+     * Crea el producto de mora heredando clasificacion, categoria y
+     * periodicidad del producto original, para que en los reportes quede
+     * agrupado junto al concepto que lo genera. Valor sugerido en cero: el
+     * valor real lo calcula el motor cada dia.
+     *
+     * Si ya existe un producto con ese nombre, lo reutiliza en vez de duplicar.
+     *
+     * @return string|null id del producto creado
+     */
+    private static function crearProductoMora($db, $idProductoServicio, $nombre)
+    {
+        $original = $db->prepare("
+            SELECT id_clasificacion_productos_servicios, id_categoria_productos_servicios,
+                   id_periodicidad_cobro, anio
+            FROM productos_servicios
+            WHERE id = :id AND id_tenant = :id_tenant
+            LIMIT 1
+        ");
+        $original->bindParam(':id', $idProductoServicio);
+        $original->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $original->execute();
+        $base = $original->fetch(PDO::FETCH_ASSOC);
+
+        if (!$base) {
+            return null;
+        }
+
+        $existente = $db->prepare("
+            SELECT id FROM productos_servicios
+            WHERE nombre = :nombre AND id_tenant = :id_tenant
+            LIMIT 1
+        ");
+        $existente->bindParam(':nombre', $nombre);
+        $existente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $existente->execute();
+        $ya = $existente->fetch(PDO::FETCH_ASSOC);
+
+        if ($ya) {
+            return $ya['id'];
+        }
+
+        $id = Uuid::generar();
+        $sentence = $db->prepare("
+            INSERT INTO productos_servicios
+                (id, id_tenant, nombre, detalles, id_periodicidad_cobro, valor_sugerido,
+                 disponible, anio, id_categoria_productos_servicios, id_clasificacion_productos_servicios)
+            VALUES
+                (:id, :id_tenant, :nombre, :detalles, :id_periodicidad_cobro, 0,
+                 1, :anio, :id_categoria, :id_clasificacion)
+        ");
+        $sentence->bindValue(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':nombre', $nombre);
+        $sentence->bindValue(':detalles', 'Intereses de mora. El valor lo calcula el proceso diario.');
+        $sentence->bindValue(':id_periodicidad_cobro', $base['id_periodicidad_cobro']);
+        $sentence->bindValue(':anio', $base['anio']);
+        $sentence->bindValue(':id_categoria', $base['id_categoria_productos_servicios']);
+        $sentence->bindValue(':id_clasificacion', $base['id_clasificacion_productos_servicios']);
+        $sentence->execute();
+
+        return $id;
+    }
+
+    /**
      * Valida coherencia entre el tipo de mora y los valores enviados.
      *
      * @return string|null Mensaje de error, o null si esta bien
@@ -469,6 +617,19 @@ class MoraConfiguracion
         if (empty($data['id_producto_servicio'])) {
             return 'Debe indicar el producto o servicio';
         }
+
+        return self::validarCondiciones($db, $data);
+    }
+
+    /**
+     * Valida solo las condiciones de la mora (tipo y sus valores), sin exigir
+     * producto. La usa el registro rapido, donde los productos llegan como
+     * arreglo aparte.
+     *
+     * @return string|null Mensaje de error, o null si esta bien
+     */
+    private static function validarCondiciones($db, $data)
+    {
         if (empty($data['id_tipo_mora'])) {
             return 'Debe indicar el tipo de mora';
         }

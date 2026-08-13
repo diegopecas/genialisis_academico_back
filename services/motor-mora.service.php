@@ -203,8 +203,9 @@ class MotorMora
                 $abonos = self::obtenerAbonos($db, $cuenta['id']);
                 $calculo = self::calcularCuenta($cuenta, $abonos, $fechaCorte, $fechaArranque, $exenciones);
 
+                $idCuentaMora = self::materializarCuentaMora($db, $cuenta, $calculo, $fechaCorte);
+                $calculo['id_cuenta_mora'] = $idCuentaMora;
                 MoraCausaciones::registrarCorte($db, $cuenta, $calculo, $fechaCorte);
-                self::actualizarCuenta($db, $cuenta['id'], $calculo['valor_causado'], $fechaCorte);
 
                 if ($calculo['valor_causado'] > 0) {
                     $conMora++;
@@ -451,14 +452,15 @@ class MotorMora
                 c.valor_recargo_mora,
                 c.porcentaje_mora_mensual,
                 c.mora_acumulable,
-                c.mora_causada,
                 tm.codigo AS codigo_tipo_mora,
                 ps.nombre AS nombre_producto,
+                c.id_usuario,
                 COALESCE((
-                    SELECT SUM(cp.valor_aplicado_mora)
+                    SELECT SUM(cp.valor_aplicado)
                     FROM cuenta_pagada cp
                     INNER JOIN pagos_recibidos pr ON cp.id_pago_recibido = pr.id
-                    WHERE cp.id_cuenta_por_cobrar = c.id
+                    INNER JOIN cuentas_por_cobrar cm ON cp.id_cuenta_por_cobrar = cm.id
+                    WHERE cm.id_cuenta_origen = c.id
                       AND (pr.anulado = 0 OR pr.anulado IS NULL)
                 ), 0) AS mora_pagada
             FROM cuentas_por_cobrar c
@@ -468,6 +470,7 @@ class MotorMora
               AND c.fecha < :fecha_corte
               AND (c.anulado = 0 OR c.anulado IS NULL)
               AND c.id_tipo_mora IS NOT NULL
+              AND c.es_mora = 0
               {$filtroPersona}
             ORDER BY c.fecha
         ");
@@ -486,8 +489,8 @@ class MotorMora
      * Abonos a CAPITAL de una cuenta, con la fecha real del pago. Se ignoran
      * los pagos anulados.
      *
-     * valor_aplicado sigue siendo solo capital; la parte imputada a intereses
-     * viaja aparte en valor_aplicado_mora y no entra aqui.
+     * La mora se cobra en su propia cuenta por cobrar, asi que aqui solo
+     * entran los abonos al capital de la cuenta original.
      */
     private static function obtenerAbonos($db, $id_cuenta_por_cobrar)
     {
@@ -508,19 +511,167 @@ class MotorMora
     }
 
     /**
-     * Deja en la cuenta el ultimo valor liquidado y la fecha del corte.
+     * Materializa el resultado del calculo como una CUENTA POR COBRAR de mora.
+     *
+     * - Si corresponde mora y no existe la cuenta, la crea.
+     * - Si ya existe, le actualiza el valor (el saldo que ve el acudiente es
+     *   valor - abonos, asi que si ya habia pagado parte solo ve la diferencia).
+     * - Si la mora quedo en cero, anula la cuenta de mora, salvo que ya tenga
+     *   abonos aplicados: en ese caso la deja en lo pagado, para no dejar un
+     *   pago apuntando a una cuenta anulada.
+     *
+     * La cuenta de mora lleva la MISMA FECHA de la cuenta que la origino, para
+     * que en el estado de cuenta queden juntas y la fecha no se mueva sola.
+     *
+     * @return string|null id de la cuenta de mora, o null si no hay
      */
-    private static function actualizarCuenta($db, $id_cuenta, $valorCausado, $fechaCorte)
+    private static function materializarCuentaMora($db, $cuenta, $calculo, $fechaCorte)
+    {
+        $valorCausado = (float) $calculo['valor_causado'];
+        $cuentaMora = self::obtenerCuentaMora($db, $cuenta['id']);
+
+        // Sin mora que cobrar
+        if ($valorCausado <= 0) {
+            if ($cuentaMora !== null) {
+                $abonado = (float) $cuentaMora['valor_abonado'];
+
+                if ($abonado > 0) {
+                    // Ya le abonaron: se deja en lo pagado en vez de anular.
+                    self::actualizarValorCuentaMora($db, $cuentaMora['id'], $abonado);
+                    return $cuentaMora['id'];
+                }
+
+                self::anularCuentaMora($db, $cuentaMora['id']);
+            }
+            return null;
+        }
+
+        $idProductoMora = self::obtenerProductoMora($db, $cuenta['id_producto_servicio']);
+        if ($idProductoMora === null) {
+            // El producto cobra mora pero no tiene producto de mora asociado:
+            // no se puede crear la cuenta. Se registra y se sigue con las demas.
+            error_log('Mora: el producto ' . $cuenta['id_producto_servicio'] . ' no tiene producto de mora asociado');
+            return null;
+        }
+
+        if ($cuentaMora !== null) {
+            if ((float) $cuentaMora['valor'] !== $valorCausado || (int) $cuentaMora['anulado'] === 1) {
+                self::actualizarValorCuentaMora($db, $cuentaMora['id'], $valorCausado);
+            }
+            return $cuentaMora['id'];
+        }
+
+        return self::crearCuentaMora($db, $cuenta, $idProductoMora, $valorCausado);
+    }
+
+    /**
+     * Cuenta de mora ya generada para una cuenta vencida, con lo que se le
+     * haya abonado. Incluye las anuladas, para reactivarlas si vuelve a haber
+     * mora en vez de crear otra.
+     */
+    private static function obtenerCuentaMora($db, $idCuentaOrigen)
+    {
+        $sentence = $db->prepare("
+            SELECT
+                c.id,
+                c.valor,
+                c.anulado,
+                COALESCE((
+                    SELECT SUM(cp.valor_aplicado)
+                    FROM cuenta_pagada cp
+                    INNER JOIN pagos_recibidos pr ON cp.id_pago_recibido = pr.id
+                    WHERE cp.id_cuenta_por_cobrar = c.id
+                      AND (pr.anulado = 0 OR pr.anulado IS NULL)
+                ), 0) AS valor_abonado
+            FROM cuentas_por_cobrar c
+            WHERE c.id_cuenta_origen = :id_cuenta_origen
+              AND c.id_tenant = :id_tenant
+            LIMIT 1
+        ");
+        $sentence->bindParam(':id_cuenta_origen', $idCuentaOrigen);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $fila = $sentence->fetch(PDO::FETCH_ASSOC);
+
+        return $fila ? $fila : null;
+    }
+
+    /** Producto bajo el cual nacen las cuentas de mora de un producto dado. */
+    private static function obtenerProductoMora($db, $idProductoServicio)
+    {
+        $sentence = $db->prepare("
+            SELECT id_producto_mora
+            FROM mora_configuracion
+            WHERE id_producto_servicio = :id_producto_servicio
+              AND id_tenant = :id_tenant
+              AND activo = 1
+            LIMIT 1
+        ");
+        $sentence->bindParam(':id_producto_servicio', $idProductoServicio);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $fila = $sentence->fetch(PDO::FETCH_ASSOC);
+
+        return ($fila && !empty($fila['id_producto_mora'])) ? $fila['id_producto_mora'] : null;
+    }
+
+    private static function crearCuentaMora($db, $cuenta, $idProductoMora, $valor)
+    {
+        $id = Uuid::generar();
+        $detalle = 'Intereses de mora - ' . (!empty($cuenta['detalle']) ? $cuenta['detalle'] : $cuenta['nombre_producto']);
+
+        $sentence = $db->prepare("
+            INSERT INTO cuentas_por_cobrar
+                (id, id_tenant, id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario,
+                 anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion,
+                 id_tipo_mora, valor_recargo_mora, porcentaje_mora_mensual, mora_acumulable,
+                 es_mora, id_cuenta_origen)
+            VALUES
+                (:id, :id_tenant, :id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario,
+                 0, NULL, NULL, NULL,
+                 NULL, NULL, NULL, 0,
+                 1, :id_cuenta_origen)
+        ");
+        $sentence->bindValue(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_producto_servicio', $idProductoMora);
+        $sentence->bindValue(':id_persona', $cuenta['id_persona']);
+        $sentence->bindValue(':fecha', $cuenta['fecha']);
+        $sentence->bindValue(':valor', $valor);
+        $sentence->bindValue(':detalle', substr($detalle, 0, 255));
+        $sentence->bindValue(':id_usuario', $cuenta['id_usuario']);
+        $sentence->bindValue(':id_cuenta_origen', $cuenta['id']);
+        $sentence->execute();
+
+        return $id;
+    }
+
+    /** Actualiza el valor y reactiva la cuenta si estaba anulada. */
+    private static function actualizarValorCuentaMora($db, $idCuentaMora, $valor)
     {
         $sentence = $db->prepare("
             UPDATE cuentas_por_cobrar
-            SET mora_causada = :mora_causada,
-                fecha_calculo_mora = :fecha_calculo_mora
+            SET valor = :valor,
+                anulado = 0,
+                fecha_anulacion = NULL,
+                id_usuario_anulacion = NULL
             WHERE id = :id AND id_tenant = :id_tenant
         ");
-        $sentence->bindValue(':mora_causada', $valorCausado);
-        $sentence->bindParam(':fecha_calculo_mora', $fechaCorte);
-        $sentence->bindParam(':id', $id_cuenta);
+        $sentence->bindValue(':valor', $valor);
+        $sentence->bindValue(':id', $idCuentaMora);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+    }
+
+    private static function anularCuentaMora($db, $idCuentaMora)
+    {
+        $sentence = $db->prepare("
+            UPDATE cuentas_por_cobrar
+            SET anulado = 1, fecha_anulacion = :fecha_anulacion
+            WHERE id = :id AND id_tenant = :id_tenant AND anulado = 0
+        ");
+        $sentence->bindValue(':fecha_anulacion', date('Y-m-d H:i:s'));
+        $sentence->bindValue(':id', $idCuentaMora);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
     }

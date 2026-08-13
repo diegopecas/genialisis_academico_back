@@ -150,27 +150,29 @@ class MoraCausaciones
             $db = Flight::db();
             $sentence = $db->prepare("
                 SELECT
-                    c.id AS id_cuenta_por_cobrar,
-                    c.fecha AS fecha_vencimiento,
-                    c.valor AS valor_cuenta,
-                    c.detalle,
-                    c.mora_causada,
-                    c.fecha_calculo_mora,
+                    cm.id AS id_cuenta_mora,
+                    cm.id_cuenta_origen AS id_cuenta_por_cobrar,
+                    cm.fecha AS fecha_vencimiento,
+                    cm.valor AS mora_causada,
+                    cm.detalle,
+                    co.valor AS valor_cuenta,
                     ps.nombre AS nombre_producto_servicio,
                     COALESCE((
-                        SELECT SUM(cp.valor_aplicado_mora)
+                        SELECT SUM(cp.valor_aplicado)
                         FROM cuenta_pagada cp
                         INNER JOIN pagos_recibidos pr ON cp.id_pago_recibido = pr.id
-                        WHERE cp.id_cuenta_por_cobrar = c.id
+                        WHERE cp.id_cuenta_por_cobrar = cm.id
                           AND (pr.anulado = 0 OR pr.anulado IS NULL)
                     ), 0) AS mora_pagada
-                FROM cuentas_por_cobrar c
-                LEFT JOIN productos_servicios ps ON c.id_producto_servicio = ps.id
-                WHERE c.id_persona = :id_persona
-                  AND c.id_tenant = :id_tenant
-                  AND (c.anulado = 0 OR c.anulado IS NULL)
-                  AND c.mora_causada > 0
-                ORDER BY c.fecha
+                FROM cuentas_por_cobrar cm
+                LEFT JOIN cuentas_por_cobrar co ON cm.id_cuenta_origen = co.id
+                LEFT JOIN productos_servicios ps ON co.id_producto_servicio = ps.id
+                WHERE cm.id_persona = :id_persona
+                  AND cm.id_tenant = :id_tenant
+                  AND cm.es_mora = 1
+                  AND (cm.anulado = 0 OR cm.anulado IS NULL)
+                  AND cm.valor > 0
+                ORDER BY cm.fecha
             ");
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -199,12 +201,13 @@ class MoraCausaciones
             INSERT INTO mora_causaciones
                 (id, id_tenant, id_cuenta_por_cobrar, fecha_corte, id_tipo_mora, base_calculo,
                  dias_mora, porcentaje_mensual, valor_recargo, periodos_recargo, valor_causado,
-                 valor_pagado, exento)
+                 valor_pagado, exento, id_cuenta_mora)
             VALUES
                 (:id, :id_tenant, :id_cuenta_por_cobrar, :fecha_corte, :id_tipo_mora, :base_calculo,
                  :dias_mora, :porcentaje_mensual, :valor_recargo, :periodos_recargo, :valor_causado,
-                 :valor_pagado, :exento)
+                 :valor_pagado, :exento, :id_cuenta_mora)
             ON DUPLICATE KEY UPDATE
+                id_cuenta_mora = VALUES(id_cuenta_mora),
                 id_tipo_mora = VALUES(id_tipo_mora),
                 base_calculo = VALUES(base_calculo),
                 dias_mora = VALUES(dias_mora),
@@ -229,6 +232,7 @@ class MoraCausaciones
         $sentence->bindValue(':valor_causado', $calculo['valor_causado']);
         $sentence->bindValue(':valor_pagado', $calculo['valor_pagado']);
         $sentence->bindValue(':exento', $calculo['exento'], PDO::PARAM_INT);
+        $sentence->bindValue(':id_cuenta_mora', isset($calculo['id_cuenta_mora']) ? $calculo['id_cuenta_mora'] : null);
         $sentence->execute();
     }
 }

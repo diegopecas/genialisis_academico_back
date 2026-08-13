@@ -65,22 +65,6 @@ class CuentasPorCobrar
                 c.fecha_anulacion,
                 c.id_usuario_anulacion,
                 c.id_horario_alimentacion,
-                c.mora_causada,
-                c.fecha_calculo_mora,
-                COALESCE((
-                    SELECT SUM(cp2.valor_aplicado_mora)
-                    FROM cuenta_pagada cp2
-                    INNER JOIN pagos_recibidos pr2 ON cp2.id_pago_recibido = pr2.id
-                    WHERE cp2.id_cuenta_por_cobrar = c.id
-                      AND (pr2.anulado = 0 OR pr2.anulado IS NULL)
-                ), 0) AS mora_pagada,
-                c.mora_causada - COALESCE((
-                    SELECT SUM(cp2.valor_aplicado_mora)
-                    FROM cuenta_pagada cp2
-                    INNER JOIN pagos_recibidos pr2 ON cp2.id_pago_recibido = pr2.id
-                    WHERE cp2.id_cuenta_por_cobrar = c.id
-                      AND (pr2.anulado = 0 OR pr2.anulado IS NULL)
-                ), 0) AS saldo_mora,
                 COALESCE(SUM(
                     CASE 
                         WHEN pr.anulado = 0 OR pr.anulado IS NULL THEN cp.valor_aplicado 
@@ -103,8 +87,7 @@ class CuentasPorCobrar
                 c.id = :id AND c.id_tenant = :id_tenant
             GROUP BY 
                 c.id, c.id_producto_servicio, c.id_persona, c.fecha, c.valor, c.detalle, c.id_usuario,
-                c.anulado, c.fecha_anulacion, c.id_usuario_anulacion, c.id_horario_alimentacion,
-                c.mora_causada, c.fecha_calculo_mora
+                c.anulado, c.fecha_anulacion, c.id_usuario_anulacion, c.id_horario_alimentacion
         ");
             $sentence->bindParam(':id', $id);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -147,22 +130,6 @@ class CuentasPorCobrar
                     ELSE 0 
                 END
             ), 0) AS saldo,
-            cpc.mora_causada,
-            cpc.fecha_calculo_mora,
-            COALESCE((
-                SELECT SUM(cp2.valor_aplicado_mora)
-                FROM cuenta_pagada cp2
-                INNER JOIN pagos_recibidos pr2 ON cp2.id_pago_recibido = pr2.id
-                WHERE cp2.id_cuenta_por_cobrar = cpc.id
-                  AND (pr2.anulado = 0 OR pr2.anulado IS NULL)
-            ), 0) AS mora_pagada,
-            cpc.mora_causada - COALESCE((
-                SELECT SUM(cp2.valor_aplicado_mora)
-                FROM cuenta_pagada cp2
-                INNER JOIN pagos_recibidos pr2 ON cp2.id_pago_recibido = pr2.id
-                WHERE cp2.id_cuenta_por_cobrar = cpc.id
-                  AND (pr2.anulado = 0 OR pr2.anulado IS NULL)
-            ), 0) AS saldo_mora,
             cpc.detalle,
             ps.nombre AS nombre_producto_servicio,
             ps.id_periodicidad_cobro,
@@ -197,8 +164,7 @@ class CuentasPorCobrar
             cpc.id, cpc.fecha, cpc.valor, cpc.detalle, ps.nombre, cps.nombre, cps.codigo, 
             p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido,
             cpc.anulado, cpc.fecha_anulacion, cpc.id_usuario_anulacion, cpc.id_horario_alimentacion,
-            ha.id, ha.nombre, ps.id_periodicidad_cobro, pc.id, pc.nombre,
-            cpc.mora_causada, cpc.fecha_calculo_mora
+            ha.id, ha.nombre, ps.id_periodicidad_cobro, pc.id, pc.nombre
         ORDER BY 
             cpc.fecha, cps.nombre, ps.nombre 
     ");
