@@ -543,11 +543,37 @@ class ContratosMatricula
             $configuracion[$row['clave']] = $row['valor_texto'];
         }
 
+        // Mora del producto de pension del contrato. Es la que se anuncia en la
+        // clausula de valor y forma de pago: al contrato entra una sola pension,
+        // asi que el tipo de cobro del producto la deja bien definida.
+        // Se mira primero la foto de la linea y despues el producto.
+        $sentencePension = $db->prepare("
+            SELECT cmp.id_producto_servicio
+            FROM contratos_matricula_productos cmp
+            INNER JOIN productos_servicios ps ON cmp.id_producto_servicio = ps.id
+            LEFT JOIN tipos_cobro_producto tcl ON cmp.id_tipo_cobro = tcl.id
+            LEFT JOIN tipos_cobro_producto tcp ON ps.id_tipo_cobro = tcp.id
+            WHERE cmp.id_contrato_matricula = :id_contrato
+              AND cmp.id_tenant = :id_tenant
+              AND COALESCE(tcl.codigo, tcp.codigo) = 'PENSION'
+            ORDER BY cmp.orden
+            LIMIT 1
+        ");
+        $sentencePension->bindParam(':id_contrato', $idContrato);
+        $sentencePension->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentencePension->execute();
+        $productoPension = $sentencePension->fetch(PDO::FETCH_ASSOC);
+
+        $moraPension = $productoPension
+            ? MoraConfiguracion::obtenerVigente($db, $productoPension['id_producto_servicio'])
+            : null;
+
         Flight::json(array(
             'contrato' => $contrato,
             'estudiante' => $estudiante,
             'acudientes' => $acudientes,
-            'configuracion' => $configuracion
+            'configuracion' => $configuracion,
+            'mora_pension' => $moraPension
         ));
     }
 
