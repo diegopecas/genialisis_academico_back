@@ -58,6 +58,7 @@ Flight::route('GET /pagos-recibidos-comprobante-colaborador/@id', [PagosRecibido
 
 Flight::route('GET /cuenta-pagada', [CuentaPagada::class, 'getAll']);
 Flight::route('GET /cuenta-pagada/@id', [CuentaPagada::class, 'getById']);
+Flight::route('GET /cuenta-pagada/aplicaciones-anio/@anio', [CuentaPagada::class, 'getAplicacionesAnio']);
 Flight::route('GET /cuenta-pagada/pago-recibido/@id_pago_recibido', [CuentaPagada::class, 'getByPagoRecibido']);
 Flight::route('GET /cuenta-pagada/cuenta-por-cobrar/@id_cuenta', [CuentaPagada::class, 'getByCuentaPorCobrar']);
 Flight::route('POST /cuenta-pagada', [CuentaPagada::class, 'new']);

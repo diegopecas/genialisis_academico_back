@@ -49,6 +49,78 @@ class CuentaPagada
         Flight::json($response);
     }
 
+    /**
+     * Aplicaciones de pago de todo un anio, para el tab "Pagos Estudiantes" del
+     * reporte de cartera. Se trae todo en una sola llamada y el front lo indexa
+     * por persona y mes, para no ir al backend en cada clic de la matriz.
+     *
+     * El mes que se devuelve es el de la CUENTA POR COBRAR (el mes de la pension),
+     * no el de la fecha del pago: asi es como el jardin lleva su Excel y asi es
+     * como sp_reporte_anual_cuentas_por_cobrar calcula 'Saldo {Mes}', de modo que
+     * el total del detalle cuadra exactamente con el valor de la celda.
+     *
+     * Se excluyen cuentas y pagos anulados, igual que el SP.
+     */
+    public static function getAplicacionesAnio($anio)
+    {
+        JWTService::requerirAutenticacion();
+
+        try {
+            if (!is_numeric($anio) || $anio < 2000 || $anio > 2100) {
+                Flight::json([
+                    'error' => true,
+                    'message' => 'Anio invalido'
+                ], 400);
+                return;
+            }
+
+            $db = Flight::db();
+            $sentence = $db->prepare("
+                SELECT
+                    c.id_persona,
+                    MONTH(c.fecha) AS mes_cuenta,
+                    c.fecha AS fecha_cuenta,
+                    c.id AS id_cuenta_por_cobrar,
+                    c.detalle AS detalle_cuenta,
+                    cp.valor_aplicado,
+                    pr.id AS id_pago_recibido,
+                    pr.fecha AS fecha_pago,
+                    pr.referencia_bancaria,
+                    tp.nombre AS tipo_pago,
+                    ps.id AS id_producto_servicio,
+                    ps.nombre AS nombre_producto,
+                    cps.nombre AS nombre_clasificacion
+                FROM cuenta_pagada cp
+                INNER JOIN cuentas_por_cobrar c ON c.id = cp.id_cuenta_por_cobrar
+                INNER JOIN pagos_recibidos pr ON pr.id = cp.id_pago_recibido
+                INNER JOIN productos_servicios ps ON ps.id = c.id_producto_servicio
+                LEFT JOIN clasificacion_productos_servicios cps ON cps.id = ps.id_clasificacion_productos_servicios
+                LEFT JOIN tipos_pagos tp ON tp.id = pr.id_tipo_pago
+                WHERE cp.id_tenant = :id_tenant_cp
+                    AND c.id_tenant = :id_tenant
+                    AND YEAR(c.fecha) = :anio
+                    AND (c.anulado = 0 OR c.anulado IS NULL)
+                    AND (pr.anulado = 0 OR pr.anulado IS NULL)
+                ORDER BY c.id_persona, MONTH(c.fecha), pr.fecha, ps.nombre
+            ");
+
+            $sentence->bindValue(':id_tenant_cp', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindValue(':anio', $anio, PDO::PARAM_INT);
+            $sentence->execute();
+            $response = $sentence->fetchAll();
+
+            Flight::json($response);
+        } catch (Exception $e) {
+            error_log('Error en getAplicacionesAnio: ' . $e->getMessage());
+            Flight::json([
+                'error' => true,
+                'message' => 'Error al obtener las aplicaciones de pago del anio',
+                'detalles' => $e->getMessage()
+            ], 500);
+        }
+    }
+
     public static function getByCuentaPorCobrar($id_cuenta_por_cobrar)
     {
         $db = Flight::db();
