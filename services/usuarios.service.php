@@ -131,6 +131,57 @@ class Usuarios
         }
     }
 
+    /**
+     * Asigna al usuario el rol parametrizado en configuracion_global con la clave
+     * 'rol_default_acudiente'. Si el parámetro no existe o el rol ya está asignado,
+     * no hace nada: la creación del usuario no debe fallar por esto.
+     */
+    private static function asignarRolDefaultAcudiente($db, $idUsuario)
+    {
+        try {
+            $stmtRol = $db->prepare("
+                SELECT valor_texto
+                FROM configuracion_global
+                WHERE clave = 'rol_default_acudiente' AND id_tenant = :id_tenant
+                LIMIT 1
+            ");
+            $stmtRol->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtRol->execute();
+            $idRol = $stmtRol->fetchColumn();
+
+            if (!$idRol) {
+                error_log("⚠️ No hay rol por defecto para acudientes (configuracion_global.rol_default_acudiente)");
+                return;
+            }
+
+            $stmtExiste = $db->prepare("
+                SELECT id FROM roles_x_usuario
+                WHERE id_usuario = :id_usuario AND id_rol = :id_rol AND id_tenant = :id_tenant
+            ");
+            $stmtExiste->bindParam(':id_usuario', $idUsuario);
+            $stmtExiste->bindParam(':id_rol', $idRol);
+            $stmtExiste->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtExiste->execute();
+            if ($stmtExiste->fetch()) {
+                return;
+            }
+
+            $stmtInsert = $db->prepare("
+                INSERT INTO roles_x_usuario (id, id_tenant, id_rol, id_usuario)
+                VALUES (:id, :id_tenant, :id_rol, :id_usuario)
+            ");
+            $stmtInsert->bindValue(':id', Uuid::generar());
+            $stmtInsert->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtInsert->bindParam(':id_rol', $idRol);
+            $stmtInsert->bindParam(':id_usuario', $idUsuario);
+            $stmtInsert->execute();
+
+            error_log("✅ Rol de acudiente asignado al usuario {$idUsuario}");
+        } catch (Exception $e) {
+            error_log("❌ Error asignando el rol por defecto de acudiente: " . $e->getMessage());
+        }
+    }
+
     public static function getAll()
     {
         try {
@@ -406,6 +457,11 @@ class Usuarios
             $sentence->execute();
 
             $id_usuario = $idUsr;
+
+            // Los usuarios del portal de padres arrancan con el rol parametrizado
+            if ($acceso_portal_padres == 1) {
+                self::asignarRolDefaultAcudiente($db, $id_usuario);
+            }
 
             $db->commit();
 
