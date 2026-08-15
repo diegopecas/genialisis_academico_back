@@ -6,7 +6,7 @@ class Roles
     {
         $db = Flight::db();
         // Incluye conteos para que el front pueda mostrar uso del rol
-        $sentence = $db->prepare("SELECT r.id, r.nombre,
+        $sentence = $db->prepare("SELECT r.id, r.nombre, r.portal,
                 (SELECT COUNT(*) FROM roles_x_usuario rxu WHERE rxu.id_rol = r.id) usuarios_asignados,
                 (SELECT COUNT(*) FROM permisos_x_rol pxr WHERE pxr.id_rol = r.id) permisos_asignados
                 FROM roles r
@@ -21,7 +21,7 @@ class Roles
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, nombre FROM roles WHERE id = :id AND id_tenant = :id_tenant");
+        $sentence = $db->prepare("SELECT id, nombre, portal FROM roles WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
@@ -33,6 +33,8 @@ class Roles
     {
         $db = Flight::db();
         $nombre = trim(Flight::request()->data['nombre']);
+        // Portal al que pertenece el rol: institucional, padres o ambos
+        $portal = isset(Flight::request()->data['portal']) ? Flight::request()->data['portal'] : 'institucional';
 
         // Evitar roles con el mismo nombre en el tenant
         $check = $db->prepare("SELECT id FROM roles WHERE nombre = :nombre AND id_tenant = :id_tenant");
@@ -46,10 +48,11 @@ class Roles
 
         // El id se genera en PHP (UUID) porque la PK es CHAR(36) y lastInsertId() no la devuelve
         $id = Uuid::generar();
-        $sentence = $db->prepare("INSERT INTO roles(id, id_tenant, nombre) VALUES (:id, :id_tenant, :nombre)");
+        $sentence = $db->prepare("INSERT INTO roles(id, id_tenant, nombre, portal) VALUES (:id, :id_tenant, :nombre, :portal)");
         $sentence->bindValue(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
+        $sentence->bindParam(':portal', $portal);
         $sentence->execute();
         Flight::json(array('id' => $id));
     }
@@ -59,6 +62,8 @@ class Roles
         $db = Flight::db();
         $id = Flight::request()->data['id'];
         $nombre = trim(Flight::request()->data['nombre']);
+        // Portal al que pertenece el rol: institucional, padres o ambos
+        $portal = isset(Flight::request()->data['portal']) ? Flight::request()->data['portal'] : 'institucional';
 
         $check = $db->prepare("SELECT id FROM roles WHERE nombre = :nombre AND id_tenant = :id_tenant AND id <> :id");
         $check->bindParam(':nombre', $nombre);
@@ -70,8 +75,9 @@ class Roles
             return;
         }
 
-        $sentence = $db->prepare("UPDATE roles SET nombre = :nombre WHERE id = :id AND id_tenant = :id_tenant");
+        $sentence = $db->prepare("UPDATE roles SET nombre = :nombre, portal = :portal WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':nombre', $nombre);
+        $sentence->bindParam(':portal', $portal);
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();

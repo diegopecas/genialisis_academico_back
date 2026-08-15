@@ -4,6 +4,7 @@ Flight::route('GET /personas', [Personas::class, 'getAll']);
 Flight::route('GET /personas/@id', [Personas::class, 'getById']);
 Flight::route('POST /personas', [Personas::class, 'new']);
 Flight::route('PUT /personas', [Personas::class, 'replace']);
+Flight::route('PUT /personas/correo', [Personas::class, 'updateCorreo']);
 Flight::route('DELETE /personas', [Personas::class, 'delete']);
 Flight::route('GET /personas-x-identificacion/@id_tipo_identificacion/@numero_identificacion', [Personas::class, 'getByIdentificacion']);
 Flight::route('POST /personas/@id/foto', [Personas::class, 'uploadFoto']);

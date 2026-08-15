@@ -847,7 +847,7 @@ class Estudiantes
                 $id_acudiente = $acudienteExistente['id'];
             } else {
                 $idAcudiente = Uuid::generar();
-                $stmt = $db->prepare("INSERT INTO acudientes (id, id_tenant, id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo) 
+                $stmt = $db->prepare("INSERT INTO acudientes (id, id_tenant, id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, ve_en_portal_padres, activo) 
                     VALUES (:id, :id_tenant, :id_estudiante, :id_persona, :id_tipo_acudiente, 1, 1, 1, 1)");
                 $stmt->bindValue(':id', $idAcudiente);
                 $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -1470,7 +1470,7 @@ class Estudiantes
      *       id_tipo_identificacion, numero_identificacion, primer_nombre,
      *       segundo_nombre, primer_apellido, segundo_apellido,
      *       telefono, correo_electronico, id_tipo_acudiente,
-     *       es_responsable_pago, autorizado_recoger, autorizado_sistema
+     *       es_responsable_pago, autorizado_recoger, ve_en_portal_padres
      *   } ]
      * }
      */
@@ -1639,7 +1639,7 @@ class Estudiantes
                 $id_tipo_acudiente = isset($ac['id_tipo_acudiente']) ? $ac['id_tipo_acudiente'] : null;
                 $es_responsable_pago = isset($ac['es_responsable_pago']) ? intval($ac['es_responsable_pago']) : 1;
                 $autorizado_recoger = isset($ac['autorizado_recoger']) ? intval($ac['autorizado_recoger']) : 1;
-                $autorizado_sistema = isset($ac['autorizado_sistema']) ? intval($ac['autorizado_sistema']) : 1;
+                $ve_en_portal_padres = isset($ac['ve_en_portal_padres']) ? intval($ac['ve_en_portal_padres']) : 1;
 
                 $stmt = $db->prepare("SELECT id FROM acudientes WHERE id_estudiante = :id_estudiante AND id_persona = :id_persona AND id_tipo_acudiente = :id_tipo_acudiente AND id_tenant = :id_tenant");
                 $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
@@ -1653,8 +1653,8 @@ class Estudiantes
                     $id_acudiente = $acudienteExistente['id'];
                 } else {
                     $idAcudiente = Uuid::generar();
-                    $stmt = $db->prepare("INSERT INTO acudientes (id, id_tenant, id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo)
-                        VALUES (:id, :id_tenant, :id_estudiante, :id_persona, :id_tipo_acudiente, :es_responsable_pago, :autorizado_recoger, :autorizado_sistema, 1)");
+                    $stmt = $db->prepare("INSERT INTO acudientes (id, id_tenant, id_estudiante, id_persona, id_tipo_acudiente, es_responsable_pago, autorizado_recoger, ve_en_portal_padres, activo)
+                        VALUES (:id, :id_tenant, :id_estudiante, :id_persona, :id_tipo_acudiente, :es_responsable_pago, :autorizado_recoger, :ve_en_portal_padres, 1)");
                     $stmt->bindValue(':id', $idAcudiente);
                     $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
                     $stmt->bindParam(':id_estudiante', $id_estudiante);
@@ -1662,7 +1662,7 @@ class Estudiantes
                     $stmt->bindValue(':id_tipo_acudiente', $id_tipo_acudiente);
                     $stmt->bindParam(':es_responsable_pago', $es_responsable_pago);
                     $stmt->bindParam(':autorizado_recoger', $autorizado_recoger);
-                    $stmt->bindParam(':autorizado_sistema', $autorizado_sistema);
+                    $stmt->bindParam(':ve_en_portal_padres', $ve_en_portal_padres);
                     $stmt->execute();
                     $id_acudiente = $idAcudiente;
                 }

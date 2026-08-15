@@ -136,6 +136,41 @@ class Usuarios
      * 'rol_default_acudiente'. Si el parámetro no existe o el rol ya está asignado,
      * no hace nada: la creación del usuario no debe fallar por esto.
      */
+    /**
+     * Asigna al usuario la lista de roles que llegó desde el front.
+     * Ignora los que ya estén asignados; no borra los existentes.
+     */
+    private static function asignarRoles($db, $idUsuario, $roles)
+    {
+        try {
+            $stmtExiste = $db->prepare("SELECT id FROM roles_x_usuario
+                WHERE id_usuario = :id_usuario AND id_rol = :id_rol AND id_tenant = :id_tenant");
+            $stmtInsert = $db->prepare("INSERT INTO roles_x_usuario (id, id_tenant, id_rol, id_usuario)
+                VALUES (:id, :id_tenant, :id_rol, :id_usuario)");
+
+            foreach ($roles as $idRol) {
+                if (!$idRol) {
+                    continue;
+                }
+                $stmtExiste->bindParam(':id_usuario', $idUsuario);
+                $stmtExiste->bindParam(':id_rol', $idRol);
+                $stmtExiste->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmtExiste->execute();
+                if ($stmtExiste->fetch()) {
+                    continue;
+                }
+
+                $stmtInsert->bindValue(':id', Uuid::generar());
+                $stmtInsert->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmtInsert->bindParam(':id_rol', $idRol);
+                $stmtInsert->bindParam(':id_usuario', $idUsuario);
+                $stmtInsert->execute();
+            }
+        } catch (Exception $e) {
+            error_log("❌ Error asignando roles al usuario {$idUsuario}: " . $e->getMessage());
+        }
+    }
+
     private static function asignarRolDefaultAcudiente($db, $idUsuario)
     {
         try {
@@ -186,15 +221,18 @@ class Usuarios
     {
         try {
             $db = Flight::db();
-            $sentence = $db->prepare("SELECT u.id, u.id_persona, u.usuario, u.correo_electronico, p.primer_nombre, p.segundo_nombre,
+            $sentence = $db->prepare("SELECT u.id, u.id_persona, u.usuario, u.correo_electronico, p.razon_social, p.primer_nombre, p.segundo_nombre,
                     p.primer_apellido, p.segundo_apellido, p.id_tipo_identificacion, ti.nombre tipo_identificacion,
                     p.numero_identificacion, p.fecha_nacimiento, p.id_genero, g.nombre nombre_genero, p.direccion, 
                     u.activo, u.acceso_institucional, u.acceso_chat_wa, u.acceso_portal_padres, u.super_admin,
-                    (SELECT GROUP_CONCAT(r.nombre ORDER BY r.nombre SEPARATOR ', ') FROM roles_x_usuario rxu INNER JOIN roles r ON r.id = rxu.id_rol WHERE rxu.id_usuario = u.id) roles
+                    (SELECT GROUP_CONCAT(r.nombre ORDER BY r.nombre SEPARATOR ', ') FROM roles_x_usuario rxu INNER JOIN roles r ON r.id = rxu.id_rol WHERE rxu.id_usuario = u.id) roles,
+                    EXISTS(SELECT 1 FROM colaboradores co WHERE co.id_persona = p.id AND co.id_tenant = p.id_tenant) es_colaborador,
+                    EXISTS(SELECT 1 FROM estudiantes es  WHERE es.id_persona = p.id AND es.id_tenant = p.id_tenant) es_estudiante,
+                    EXISTS(SELECT 1 FROM acudientes ac   WHERE ac.id_persona = p.id AND ac.id_tenant = p.id_tenant) es_acudiente
                     FROM usuarios u 
                     INNER JOIN personas p ON u.id_persona = p.id
-                    INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
-                    INNER JOIN generos g ON p.id_genero = g.id
+                    LEFT JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
+                    LEFT JOIN generos g ON p.id_genero = g.id
                     WHERE u.id_tenant = :id_tenant");
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
@@ -438,7 +476,19 @@ class Usuarios
                 return;
             }
 
-            $usuario = $persona['numero_identificacion'];
+            // El front puede mandar un usuario propio; si no manda, se usa la identificación
+            $usuarioEnviado = isset(Flight::request()->data['usuario']) ? trim(Flight::request()->data['usuario']) : '';
+            $usuario = $usuarioEnviado !== '' ? $usuarioEnviado : $persona['numero_identificacion'];
+
+            $checkUsuario = $db->prepare("SELECT id FROM usuarios WHERE usuario = :usuario AND id_tenant = :id_tenant");
+            $checkUsuario->bindParam(':usuario', $usuario);
+            $checkUsuario->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $checkUsuario->execute();
+            if ($checkUsuario->fetch()) {
+                $db->rollBack();
+                Flight::json(['error' => 'Ya existe un usuario con ese nombre de usuario'], 400);
+                return;
+            }
 
             $sentence = $db->prepare("INSERT INTO usuarios(id, id_tenant, id_persona, usuario, clave, correo_electronico, activo, acceso_institucional, acceso_chat_wa, acceso_portal_padres, super_admin) 
                                      VALUES (:id, :id_tenant, :id_persona, :usuario, :clave, :correo_electronico, :activo, :acceso_institucional, :acceso_chat_wa, :acceso_portal_padres, :super_admin)");
@@ -459,7 +509,12 @@ class Usuarios
             $id_usuario = $idUsr;
 
             // Los usuarios del portal de padres arrancan con el rol parametrizado
-            if ($acceso_portal_padres == 1) {
+            // Si el front mandó roles, esos mandan. Si no, se aplica el rol
+            // por defecto de acudiente para no dejar al usuario sin permisos.
+            $rolesEnviados = isset(Flight::request()->data['roles']) ? Flight::request()->data['roles'] : null;
+            if (is_array($rolesEnviados) && count($rolesEnviados) > 0) {
+                self::asignarRoles($db, $id_usuario, $rolesEnviados);
+            } elseif ($acceso_portal_padres == 1) {
                 self::asignarRolDefaultAcudiente($db, $id_usuario);
             }
 
@@ -504,11 +559,32 @@ class Usuarios
                 return;
             }
 
+            // El nombre de usuario solo se cambia si el front lo manda y viene distinto
+            $usuarioNuevo = isset(Flight::request()->data['usuario']) ? trim(Flight::request()->data['usuario']) : '';
+            $sqlUsuario = '';
+            if ($usuarioNuevo !== '') {
+                $checkNombre = $db->prepare("SELECT id FROM usuarios WHERE usuario = :usuario AND id <> :id AND id_tenant = :id_tenant");
+                $checkNombre->bindParam(':usuario', $usuarioNuevo);
+                $checkNombre->bindParam(':id', $id);
+                $checkNombre->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $checkNombre->execute();
+                if ($checkNombre->fetch()) {
+                    $db->rollBack();
+                    Flight::json(['error' => 'Ya existe un usuario con ese nombre de usuario'], 400);
+                    return;
+                }
+                $sqlUsuario = ", usuario = :usuario";
+            }
+
             if ($clave !== null && $clave !== '') {
-                $sentence = $db->prepare("UPDATE usuarios SET correo_electronico = :correo_electronico, clave = :clave, activo = :activo, acceso_institucional = :acceso_institucional, acceso_chat_wa = :acceso_chat_wa, acceso_portal_padres = :acceso_portal_padres" . $sqlSuper . " WHERE id = :id AND id_tenant = :id_tenant");
+                $sentence = $db->prepare("UPDATE usuarios SET correo_electronico = :correo_electronico, clave = :clave, activo = :activo, acceso_institucional = :acceso_institucional, acceso_chat_wa = :acceso_chat_wa, acceso_portal_padres = :acceso_portal_padres" . $sqlUsuario . $sqlSuper . " WHERE id = :id AND id_tenant = :id_tenant");
                 $sentence->bindParam(':clave', $clave);
             } else {
-                $sentence = $db->prepare("UPDATE usuarios SET correo_electronico = :correo_electronico, activo = :activo, acceso_institucional = :acceso_institucional, acceso_chat_wa = :acceso_chat_wa, acceso_portal_padres = :acceso_portal_padres" . $sqlSuper . " WHERE id = :id AND id_tenant = :id_tenant");
+                $sentence = $db->prepare("UPDATE usuarios SET correo_electronico = :correo_electronico, activo = :activo, acceso_institucional = :acceso_institucional, acceso_chat_wa = :acceso_chat_wa, acceso_portal_padres = :acceso_portal_padres" . $sqlUsuario . $sqlSuper . " WHERE id = :id AND id_tenant = :id_tenant");
+            }
+
+            if ($sqlUsuario !== '') {
+                $sentence->bindParam(':usuario', $usuarioNuevo);
             }
 
             $sentence->bindParam(':correo_electronico', $correo_electronico);

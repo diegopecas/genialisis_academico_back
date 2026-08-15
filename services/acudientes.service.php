@@ -4,7 +4,7 @@ class Acudientes
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, id_estudiante, id_persona, id_tipo_acudiente, empresa, cargo, telefono_oficina, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo FROM acudientes WHERE id_tenant = :id_tenant");
+        $sentence = $db->prepare("SELECT id, id_estudiante, id_persona, id_tipo_acudiente, empresa, cargo, telefono_oficina, es_responsable_pago, autorizado_recoger, ve_en_portal_padres, activo FROM acudientes WHERE id_tenant = :id_tenant");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
@@ -14,7 +14,7 @@ class Acudientes
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, id_estudiante, id_persona, id_tipo_acudiente, empresa, cargo, telefono_oficina, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo FROM acudientes WHERE id = :id AND id_tenant = :id_tenant");
+        $sentence = $db->prepare("SELECT id, id_estudiante, id_persona, id_tipo_acudiente, empresa, cargo, telefono_oficina, es_responsable_pago, autorizado_recoger, ve_en_portal_padres, activo FROM acudientes WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
@@ -35,7 +35,7 @@ class Acudientes
                                   a.id_tipo_acudiente,
                                   a.es_responsable_pago,
                                   a.autorizado_recoger,
-                                  a.autorizado_sistema,
+                                  a.ve_en_portal_padres,
                                   a.activo,
                                   ta.nombre AS nombre_tipo_acudiente,
                                   TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_persona,
@@ -71,12 +71,12 @@ class Acudientes
             $telefono_oficina = Flight::request()->data['telefono_oficina'] ?? null;
             $es_responsable_pago = Flight::request()->data['es_responsable_pago'];
             $autorizado_recoger = Flight::request()->data['autorizado_recoger'];
-            $autorizado_sistema = Flight::request()->data['autorizado_sistema'];
+            $ve_en_portal_padres = Flight::request()->data['ve_en_portal_padres'];
             $activo = Flight::request()->data['activo'];
 
             $idNew = Uuid::generar();
-            $sentence = $db->prepare("INSERT INTO acudientes(id, id_tenant, id_estudiante, id_persona, id_tipo_acudiente, empresa, cargo, telefono_oficina, es_responsable_pago, autorizado_recoger, autorizado_sistema, activo) 
-                                 VALUES (:id, :id_tenant, :id_estudiante, :id_persona, :id_tipo_acudiente, :empresa, :cargo, :telefono_oficina, :es_responsable_pago, :autorizado_recoger, :autorizado_sistema, :activo)");
+            $sentence = $db->prepare("INSERT INTO acudientes(id, id_tenant, id_estudiante, id_persona, id_tipo_acudiente, empresa, cargo, telefono_oficina, es_responsable_pago, autorizado_recoger, ve_en_portal_padres, activo) 
+                                 VALUES (:id, :id_tenant, :id_estudiante, :id_persona, :id_tipo_acudiente, :empresa, :cargo, :telefono_oficina, :es_responsable_pago, :autorizado_recoger, :ve_en_portal_padres, :activo)");
             $sentence->bindValue(':id', $idNew);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_estudiante', $id_estudiante);
@@ -87,7 +87,7 @@ class Acudientes
             $sentence->bindParam(':telefono_oficina', $telefono_oficina);
             $sentence->bindParam(':es_responsable_pago', $es_responsable_pago);
             $sentence->bindParam(':autorizado_recoger', $autorizado_recoger);
-            $sentence->bindParam(':autorizado_sistema', $autorizado_sistema);
+            $sentence->bindParam(':ve_en_portal_padres', $ve_en_portal_padres);
             $sentence->bindParam(':activo', $activo);
             $sentence->execute();
             $id = $idNew;
@@ -119,7 +119,7 @@ class Acudientes
             $telefono_oficina = Flight::request()->data['telefono_oficina'] ?? null;
             $es_responsable_pago = Flight::request()->data['es_responsable_pago'];
             $autorizado_recoger = Flight::request()->data['autorizado_recoger'];
-            $autorizado_sistema = Flight::request()->data['autorizado_sistema'];
+            $ve_en_portal_padres = Flight::request()->data['ve_en_portal_padres'];
             $activo = Flight::request()->data['activo'];
 
             $sentence = $db->prepare("UPDATE acudientes SET 
@@ -131,7 +131,7 @@ class Acudientes
                                 telefono_oficina = :telefono_oficina,
                                 es_responsable_pago = :es_responsable_pago,
                                 autorizado_recoger = :autorizado_recoger,
-                                autorizado_sistema = :autorizado_sistema,
+                                ve_en_portal_padres = :ve_en_portal_padres,
                                 activo = :activo 
                                 WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
@@ -144,7 +144,7 @@ class Acudientes
             $sentence->bindParam(':telefono_oficina', $telefono_oficina);
             $sentence->bindParam(':es_responsable_pago', $es_responsable_pago);
             $sentence->bindParam(':autorizado_recoger', $autorizado_recoger);
-            $sentence->bindParam(':autorizado_sistema', $autorizado_sistema);
+            $sentence->bindParam(':ve_en_portal_padres', $ve_en_portal_padres);
             $sentence->bindParam(':activo', $activo);
             $sentence->execute();
 
@@ -167,7 +167,7 @@ class Acudientes
                               a.id_tipo_acudiente,
                               a.es_responsable_pago,
                               a.autorizado_recoger,
-                              a.autorizado_sistema,
+                              a.ve_en_portal_padres,
                               a.activo,
                               ta.nombre AS nombre_tipo_acudiente,
                               CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) AS nombre_persona,
@@ -241,7 +241,7 @@ class Acudientes
         $db = Flight::db();
 
         // Debug: verificar acudientes de esta persona
-        $checkAcudiente = $db->prepare("SELECT id, id_estudiante, id_persona, autorizado_sistema, activo FROM acudientes WHERE id_persona = :id_persona AND id_tenant = :id_tenant");
+        $checkAcudiente = $db->prepare("SELECT id, id_estudiante, id_persona, ve_en_portal_padres, activo FROM acudientes WHERE id_persona = :id_persona AND id_tenant = :id_tenant");
         $checkAcudiente->bindParam(':id_persona', $idPersona);
         $checkAcudiente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $checkAcudiente->execute();
@@ -285,7 +285,7 @@ class Acudientes
                             LEFT JOIN grupos grp ON eg.id_grupo = grp.id
                             WHERE a.id_persona = :id_persona 
                             AND a.activo = 1 
-                            AND a.autorizado_sistema = 1
+                            AND a.ve_en_portal_padres = 1
                             AND e.activo = 1
                             AND a.id_tenant = :id_tenant
                             ORDER BY grp.orden ASC, p.primer_apellido ASC, p.primer_nombre ASC");
@@ -306,7 +306,7 @@ class Acudientes
                                 INNER JOIN estudiantes e ON a.id_estudiante = e.id
                                 WHERE a.id_persona = :id_persona 
                                 AND a.activo = 1 
-                                AND a.autorizado_sistema = 1
+                                AND a.ve_en_portal_padres = 1
                                 AND e.activo = 1
                                 AND a.id_tenant = :id_tenant");
 

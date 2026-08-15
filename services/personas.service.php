@@ -26,7 +26,11 @@ class Personas
             p.*, 
             ti.nombre AS tipo_identificacion,
             g.nombre AS nombre_genero,
-            c.nombre AS nombre_ciudad
+            c.nombre AS nombre_ciudad,
+            EXISTS(SELECT 1 FROM colaboradores co WHERE co.id_persona = p.id AND co.id_tenant = p.id_tenant) AS es_colaborador,
+            EXISTS(SELECT 1 FROM estudiantes es  WHERE es.id_persona = p.id AND es.id_tenant = p.id_tenant) AS es_estudiante,
+            EXISTS(SELECT 1 FROM acudientes ac   WHERE ac.id_persona = p.id AND ac.id_tenant = p.id_tenant) AS es_acudiente,
+            EXISTS(SELECT 1 FROM usuarios us    WHERE us.id_persona = p.id AND us.id_tenant = p.id_tenant) AS tiene_usuario
         FROM personas p
         INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
         LEFT JOIN generos g ON p.id_genero = g.id
@@ -307,6 +311,36 @@ class Personas
         } catch (Exception $e) {
             error_log("Error en la ejecución del método replace: " . $e->getMessage());
             Flight::json(array('error' => 'Hubo un problema al actualizar la persona. Inténtalo más tarde.'), 500);
+        }
+    }
+
+    /**
+     * Actualiza solo el correo electrónico de la persona.
+     * Existe para que las pantallas de usuarios puedan completar el correo
+     * sin tener que reenviar toda la persona con replace().
+     */
+    public static function updateCorreo()
+    {
+        try {
+            $db = Flight::db();
+            $id = Flight::request()->data['id'];
+            $correo_electronico = isset(Flight::request()->data['correo_electronico']) ? trim(Flight::request()->data['correo_electronico']) : '';
+
+            if (!$id) {
+                Flight::json(['error' => 'Falta el identificador de la persona'], 400);
+                return;
+            }
+
+            $sentence = $db->prepare("UPDATE personas SET correo_electronico = :correo_electronico WHERE id = :id AND id_tenant = :id_tenant");
+            $sentence->bindParam(':correo_electronico', $correo_electronico);
+            $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->execute();
+
+            Flight::json(['id' => $id, 'message' => 'Correo actualizado correctamente']);
+        } catch (Exception $e) {
+            error_log("Error en updateCorreo: " . $e->getMessage());
+            Flight::json(['error' => 'Ocurrió un error al actualizar el correo'], 500);
         }
     }
 
