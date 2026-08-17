@@ -51,6 +51,63 @@ class PushNotificationService
     }
 
     /**
+     * Envía push notification a un conjunto concreto de usuarios dentro de un
+     * portal determinado.
+     *
+     * El portal importa porque el endpoint se genera por origen: una misma
+     * persona con acceso institucional y de acudiente tiene dos suscripciones
+     * distintas. Sin filtrar, un aviso dirigido a los papás también alcanzaría
+     * su sesión institucional.
+     *
+     * A diferencia de notificarATodos, aquí no se exige acceso_chat_wa: esa
+     * bandera pertenece al chat de WhatsApp y no tiene relación con la central
+     * de notificaciones.
+     *
+     * @param  array  $idsUsuarios Lista de id de usuarios destinatarios
+     * @param  string $titulo      Título de la notificación
+     * @param  string $cuerpo      Cuerpo del mensaje
+     * @param  array  $datosExtra  Datos adicionales (id_notificacion, url, etc.)
+     * @param  string $portal      Portal destino (ver JWTService::PORTAL_*)
+     * @return array  Conteo de envíos exitosos y fallidos
+     */
+    public function notificarAUsuarios(array $idsUsuarios, string $titulo, string $cuerpo, array $datosExtra = [], string $portal = ''): array
+    {
+        $reporteVacio = ['enviadas' => 0, 'fallidas' => 0, 'sin_suscripcion' => 0];
+
+        if (empty($this->vapidPublicKey) || empty($this->vapidPrivateKey)) {
+            error_log('[Push] Claves VAPID no configuradas');
+            return $reporteVacio;
+        }
+
+        $idsUsuarios = array_values(array_unique(array_filter($idsUsuarios)));
+
+        if (empty($idsUsuarios)) {
+            return $reporteVacio;
+        }
+
+        if ($portal === '') {
+            $portal = JWTService::PORTAL_INSTITUCIONAL;
+        }
+
+        $suscripciones = $this->obtenerSuscripcionesPorUsuarios($idsUsuarios, $portal);
+
+        if (empty($suscripciones)) {
+            $reporteVacio['sin_suscripcion'] = count($idsUsuarios);
+            return $reporteVacio;
+        }
+
+        $usuariosConSuscripcion = [];
+        foreach ($suscripciones as $suscripcion) {
+            $usuariosConSuscripcion[$suscripcion['id_usuario']] = true;
+        }
+
+        $reporte = $this->enviarPushConReporte($suscripciones, $titulo, $cuerpo, $datosExtra);
+        $reporte['sin_suscripcion'] = count($idsUsuarios) - count($usuariosConSuscripcion);
+
+        return $reporte;
+    }
+
+    /**
      * Obtiene todas las suscripciones push activas
      */
     private function obtenerSuscripcionesActivas(): array
@@ -63,8 +120,10 @@ class PushNotificationService
                 WHERE wps.activo = 1
                 AND u.activo = 1
                 AND u.acceso_chat_wa = 1
+                AND wps.portal = :portal
                 AND wps.id_tenant = :id_tenant
             ");
+            $stmt->bindValue(':portal', JWTService::PORTAL_INSTITUCIONAL);
             $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -75,10 +134,53 @@ class PushNotificationService
     }
 
     /**
+     * Obtiene las suscripciones activas de un conjunto de usuarios dentro de
+     * un portal.
+     */
+    private function obtenerSuscripcionesPorUsuarios(array $idsUsuarios, string $portal): array
+    {
+        try {
+            $marcadores = implode(',', array_fill(0, count($idsUsuarios), '?'));
+
+            $sql = "
+                SELECT wps.id, wps.id_usuario, wps.endpoint, wps.p256dh, wps.auth
+                FROM wa_push_subscriptions wps
+                INNER JOIN usuarios u ON u.id = wps.id_usuario
+                WHERE wps.activo = 1
+                AND u.activo = 1
+                AND wps.portal = ?
+                AND wps.id_tenant = ?
+                AND wps.id_usuario IN ($marcadores)
+            ";
+
+            $parametros = array_merge([$portal, TenantContext::id()], $idsUsuarios);
+
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute($parametros);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Exception $e) {
+            error_log('[Push] Error obteniendo suscripciones por usuarios: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
      * Envía las notificaciones push usando la librería web-push
      */
     private function enviarPush(array $suscripciones, string $titulo, string $cuerpo, array $datosExtra): void
     {
+        $this->enviarPushConReporte($suscripciones, $titulo, $cuerpo, $datosExtra);
+    }
+
+    /**
+     * Envía las notificaciones push y devuelve el conteo de resultados.
+     *
+     * @return array ['enviadas' => int, 'fallidas' => int]
+     */
+    private function enviarPushConReporte(array $suscripciones, string $titulo, string $cuerpo, array $datosExtra): array
+    {
+        $reporte = ['enviadas' => 0, 'fallidas' => 0];
+
         try {
             $auth = [
                 'VAPID' => [
@@ -91,12 +193,20 @@ class PushNotificationService
             $webPush = new WebPush($auth);
             $webPush->setAutomaticPadding(false);
 
+            // El tag agrupa la notificación en el sistema operativo. Para los
+            // mensajes de WhatsApp se agrupa por conversación; para la central
+            // de notificaciones, por notificación, de modo que dos circulares
+            // distintas no se reemplacen entre sí en la bandeja del celular.
+            $referenciaTag = $datosExtra['id_notificacion']
+                ?? $datosExtra['id_conversacion']
+                ?? time();
+
             $payload = json_encode(array_merge([
                 'title' => $titulo,
                 'body'  => $cuerpo,
                 'icon'  => '/assets/images/logo_app.png',
                 'badge' => '/assets/images/logo_app.png',
-                'tag'   => 'wa-msg-' . ($datosExtra['id_conversacion'] ?? time()),
+                'tag'   => 'wa-msg-' . $referenciaTag,
             ], $datosExtra));
 
             // Encolar todas las notificaciones
@@ -116,8 +226,9 @@ class PushNotificationService
                 $endpoint = $report->getRequest()->getUri()->__toString();
 
                 if ($report->isSuccess()) {
-                    // OK
+                    $reporte['enviadas']++;
                 } else {
+                    $reporte['fallidas']++;
                     $reason = $report->getReason();
                     error_log("[Push] Error enviando a endpoint: {$reason}");
 
@@ -130,6 +241,8 @@ class PushNotificationService
         } catch (Exception $e) {
             error_log('[Push] Error general enviando push: ' . $e->getMessage());
         }
+
+        return $reporte;
     }
 
     /**

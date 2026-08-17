@@ -15,6 +15,12 @@ class WaPushSubscriptions
             $p256dh    = $data['p256dh'] ?? null;
             $auth      = $data['auth'] ?? null;
 
+            // El portal se normaliza contra los valores validos de JWTService:
+            // cualquier cosa desconocida cae en institucional, nunca en padres.
+            // Es lo que permite que un mismo usuario tenga una suscripcion por
+            // portal sin que un envio dirigido alcance al portal equivocado.
+            $portal = JWTService::normalizarPortal($data['portal'] ?? null);
+
             if (!$idUsuario || !$endpoint || !$p256dh || !$auth) {
                 Flight::json(['error' => 'Faltan campos requeridos'], 400);
                 return;
@@ -22,10 +28,11 @@ class WaPushSubscriptions
 
             // Upsert: si el endpoint ya existe, actualizar; si no, insertar
             $stmt = $db->prepare("
-                INSERT INTO wa_push_subscriptions (id, id_tenant, id_usuario, endpoint, p256dh, auth, activo)
-                VALUES (:id, :id_tenant, :id_usuario, :endpoint, :p256dh, :auth, 1)
+                INSERT INTO wa_push_subscriptions (id, id_tenant, portal, id_usuario, endpoint, p256dh, auth, activo)
+                VALUES (:id, :id_tenant, :portal, :id_usuario, :endpoint, :p256dh, :auth, 1)
                 ON DUPLICATE KEY UPDATE
                     id_usuario = VALUES(id_usuario),
+                    portal = VALUES(portal),
                     p256dh = VALUES(p256dh),
                     auth = VALUES(auth),
                     activo = 1,
@@ -34,6 +41,7 @@ class WaPushSubscriptions
             $stmt->execute([
                 'id'         => Uuid::generar(),
                 'id_tenant'  => TenantContext::id(),
+                'portal'     => $portal,
                 'id_usuario' => $idUsuario,
                 'endpoint'   => $endpoint,
                 'p256dh'     => $p256dh,
