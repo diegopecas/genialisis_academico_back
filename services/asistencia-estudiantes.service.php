@@ -137,8 +137,24 @@ class AsistenciaEstudiantes
         $sentence->bindParam(':observacion', $observacion);
         $sentence->bindParam(':id_usuario_ingreso', $id_usuario_ingreso);
         $sentence->execute();
+
+        // Si la docente escribió una observación al recibir al niño, queda
+        // también en el observador del estudiante. Lo resuelve el servicio de
+        // observaciones (tipo por código y sprint por fecha) y nunca interrumpe
+        // el registro de asistencia: si algo falta lo reporta en el resultado y
+        // lo deja en el log.
+        $observacionEstudiante = ObservacionesEstudiantes::crearAutomatica(
+            $db,
+            $id_estudiante,
+            'ingreso',
+            $observacion ? 'Observacion de ingreso: ' . $observacion : null,
+            $id_usuario_ingreso
+        );
+
         $id = $idNew;
-        Flight::json(array('id' => $id));
+        // La clave `observacion_estudiante` es un agregado: `id` sigue igual
+        // para quien ya consumia esta respuesta.
+        Flight::json(array('id' => $id, 'observacion_estudiante' => $observacionEstudiante));
     }
 
     public static function replace()
@@ -154,7 +170,42 @@ class AsistenciaEstudiantes
         $sentence->bindParam(':id', $id);
         $sentence->bindParam(':id_usuario_salida', $id_usuario_salida);
         $sentence->execute();
-        self::getById($id);
+
+        // Igual que en el ingreso. El id_estudiante no viene en la petición de
+        // salida (solo llega el id del registro de asistencia), así que se lee
+        // de la fila que se acabó de actualizar.
+        $sentenceEst = $db->prepare("select id_estudiante from asistencia_estudiantes where id = :id AND id_tenant = :id_tenant");
+        $sentenceEst->bindParam(':id', $id);
+        $sentenceEst->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentenceEst->execute();
+        $filaAsistencia = $sentenceEst->fetch();
+
+        $observacionEstudiante = null;
+        if ($filaAsistencia) {
+            $observacionEstudiante = ObservacionesEstudiantes::crearAutomatica(
+                $db,
+                $filaAsistencia['id_estudiante'],
+                'salida',
+                $observacion ? 'Observacion de salida: ' . $observacion : null,
+                $id_usuario_salida
+            );
+        }
+
+        // Aquí no se llama a getById() para no cambiar la forma de la
+        // respuesta: se devuelve el mismo arreglo de filas de asistencia que
+        // antes, con `observacion_estudiante` agregado en la primera fila. Así
+        // quien ya leia estas filas sigue leyendo lo mismo.
+        $sentence = $db->prepare("select id, id_estudiante, fecha_ingreso, fecha_salida, observacion_ingreso, observacion_salida from asistencia_estudiantes where id = :id AND id_tenant = :id_tenant");
+        $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $response = $sentence->fetchAll();
+
+        if (!empty($response)) {
+            $response[0]['observacion_estudiante'] = $observacionEstudiante;
+        }
+
+        Flight::json($response);
     }
 
     public static function delete()

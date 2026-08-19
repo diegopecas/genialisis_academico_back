@@ -212,6 +212,121 @@ class ObservacionesEstudiantes
         self::getById($id);
     }
 
+    /**
+     * Crea una observación disparada por otro módulo, no por un formulario.
+     * Hoy la usa el registro de asistencia para dejar la observación de
+     * ingreso y de salida.
+     *
+     * A diferencia de new(), aquí no hay un usuario llenando campos: el tipo
+     * llega como código ('ingreso', 'salida') y el sprint se resuelve por la
+     * fecha, porque quien registra la asistencia no está escogiendo ninguna
+     * de las dos cosas.
+     *
+     * NO responde por HTTP ni valida permisos: la petición que la invoca ya
+     * hizo lo suyo. Nunca lanza: un problema aquí no puede tumbar el registro
+     * de asistencia, que es lo importante para quien está en la puerta.
+     *
+     * Devuelve un arreglo con:
+     *   creada => true si quedó la observación
+     *   id     => id de la observación creada, o null
+     *   motivo => null si no había nada que guardar (sin observación escrita),
+     *             o un código para que el front le explique a la usuaria por
+     *             qué no quedó: 'tipo_no_configurado', 'sin_sprint', 'error'.
+     */
+    public static function crearAutomatica($db, $id_estudiante, $codigo_tipo, $descripcion, $id_usuario)
+    {
+        try {
+            // Sin texto no hay observación que guardar. No es un error: la
+            // docente simplemente no escribió nada al recibir al niño.
+            if (empty($descripcion) || trim($descripcion) === '') {
+                return array('creada' => false, 'id' => null, 'motivo' => null);
+            }
+
+            if (empty($id_estudiante)) {
+                error_log("ObservacionesEstudiantes::crearAutomatica - llamada sin id_estudiante.");
+                return array('creada' => false, 'id' => null, 'motivo' => 'error');
+            }
+
+            $sentence = $db->prepare("SELECT id FROM tipos_observaciones_estudiantes
+                                      WHERE codigo = :codigo
+                                      AND id_tenant = :id_tenant
+                                      LIMIT 1");
+            $sentence->bindParam(':codigo', $codigo_tipo);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->execute();
+            $tipo = $sentence->fetch();
+
+            if (!$tipo) {
+                error_log("ObservacionesEstudiantes::crearAutomatica - el tenant " . TenantContext::id()
+                    . " no tiene el tipo de observacion con codigo '$codigo_tipo'; no se crea la observacion.");
+                return array('creada' => false, 'id' => null, 'motivo' => 'tipo_no_configurado');
+            }
+
+            $fecha = date('Y-m-d');
+            $id_sprint = self::resolverSprintPorFecha($db, $fecha);
+
+            if (empty($id_sprint)) {
+                error_log("ObservacionesEstudiantes::crearAutomatica - el tenant " . TenantContext::id()
+                    . " no tiene un sprint que cubra $fecha ni uno marcado como actual; no se crea la observacion.");
+                return array('creada' => false, 'id' => null, 'motivo' => 'sin_sprint');
+            }
+
+            $idNew = Uuid::generar();
+            $sentence = $db->prepare("INSERT INTO observaciones_estudiantes(id, id_tenant, id_estudiante, id_tipo_observacion_estudiante, descripcion, fecha, id_sprint, para_informe, id_usuario)
+                                      VALUES (:id, :id_tenant, :id_estudiante, :id_tipo_observacion_estudiante, :descripcion, :fecha, :id_sprint, 0, :id_usuario)");
+            $sentence->bindValue(':id', $idNew);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindParam(':id_estudiante', $id_estudiante);
+            $sentence->bindValue(':id_tipo_observacion_estudiante', $tipo['id']);
+            $sentence->bindParam(':descripcion', $descripcion);
+            $sentence->bindParam(':fecha', $fecha);
+            $sentence->bindValue(':id_sprint', $id_sprint);
+            $sentence->bindParam(':id_usuario', $id_usuario);
+            $sentence->execute();
+
+            return array('creada' => true, 'id' => $idNew, 'motivo' => null);
+        } catch (Exception $e) {
+            error_log("Error en ObservacionesEstudiantes::crearAutomatica: " . $e->getMessage());
+            return array('creada' => false, 'id' => null, 'motivo' => 'error');
+        }
+    }
+
+    /**
+     * Devuelve el id del sprint que corresponde a una fecha en el tenant
+     * actual. Primero el sprint cuyo rango la contenga; si ninguno la
+     * contiene, el marcado como actual. null si el tenant no tiene sprints.
+     *
+     * Es el mismo criterio de preseleccionarSprintPorFecha() en el front, en
+     * crear-observaciones.component.ts, para que una observación creada por
+     * asistencia caiga en el mismo sprint que si la registraran a mano.
+     */
+    private static function resolverSprintPorFecha($db, $fecha)
+    {
+        $sentence = $db->prepare("SELECT id FROM sprints
+                                  WHERE :fecha BETWEEN fecha_inicial AND fecha_final
+                                  AND id_tenant = :id_tenant
+                                  ORDER BY numero_sprint DESC
+                                  LIMIT 1");
+        $sentence->bindParam(':fecha', $fecha);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $sprint = $sentence->fetch();
+
+        if ($sprint) {
+            return $sprint['id'];
+        }
+
+        $sentence = $db->prepare("SELECT id FROM sprints
+                                  WHERE actual = 1
+                                  AND id_tenant = :id_tenant
+                                  LIMIT 1");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $sprint = $sentence->fetch();
+
+        return $sprint ? $sprint['id'] : null;
+    }
+
     public static function delete()
     {
         $userData = JWTService::requerirAutenticacion();
