@@ -49,7 +49,7 @@ class RegistroUtilesDiarios
         $db = Flight::db();
 
         // Si ya tiene el dia armado, eso es lo que manda.
-        $sentence = $db->prepare("SELECT i.id, i.id_util_diario, i.nombre_libre, i.trajo, i.regreso,
+        $sentence = $db->prepare("SELECT i.id, i.id_util_diario, i.nombre_libre, i.trajo, i.regreso, i.observacion,
                                          COALESCE(u.nombre, i.nombre_libre) AS nombre, u.icono,
                                          COALESCE(u.orden, 999) AS orden, 1 AS existe
                                   FROM utiles_diarios_registro i
@@ -70,7 +70,7 @@ class RegistroUtilesDiarios
         $fechaAnterior = self::getFechaUltimoRegistro($db, $id_estudiante, $fecha);
 
         if ($fechaAnterior) {
-            $sentence = $db->prepare("SELECT NULL AS id, i.id_util_diario, i.nombre_libre, 0 AS trajo, NULL AS regreso,
+            $sentence = $db->prepare("SELECT NULL AS id, i.id_util_diario, i.nombre_libre, 0 AS trajo, NULL AS regreso, NULL AS observacion,
                                              COALESCE(u.nombre, i.nombre_libre) AS nombre, u.icono,
                                              COALESCE(u.orden, 999) AS orden, 0 AS existe
                                       FROM utiles_diarios_registro i
@@ -85,7 +85,7 @@ class RegistroUtilesDiarios
             return;
         }
 
-        $sentence = $db->prepare("SELECT NULL AS id, u.id AS id_util_diario, NULL AS nombre_libre, 0 AS trajo, NULL AS regreso,
+        $sentence = $db->prepare("SELECT NULL AS id, u.id AS id_util_diario, NULL AS nombre_libre, 0 AS trajo, NULL AS regreso, NULL AS observacion,
                                          u.nombre, u.icono, u.orden, 0 AS existe
                                   FROM utiles_diarios u
                                   INNER JOIN estudiantes_x_grupos exg ON exg.id_estudiante = :id_estudiante AND exg.activo = 1
@@ -121,9 +121,9 @@ class RegistroUtilesDiarios
             }
 
             $sentence = $db->prepare("INSERT INTO utiles_diarios_registro
-                (id, id_tenant, id_estudiante, fecha, id_asistencia_estudiante, id_util_diario, nombre_libre, clave_util, trajo, id_usuario_entrada)
-                VALUES (:id, :id_tenant, :id_estudiante, :fecha, :id_asistencia, :id_util, :nombre_libre, :clave_util, :trajo, :id_usuario)
-                ON DUPLICATE KEY UPDATE trajo = VALUES(trajo), id_usuario_entrada = VALUES(id_usuario_entrada)");
+                (id, id_tenant, id_estudiante, fecha, id_asistencia_estudiante, id_util_diario, nombre_libre, clave_util, trajo, observacion, id_usuario_entrada)
+                VALUES (:id, :id_tenant, :id_estudiante, :fecha, :id_asistencia, :id_util, :nombre_libre, :clave_util, :trajo, :observacion, :id_usuario)
+                ON DUPLICATE KEY UPDATE trajo = VALUES(trajo), observacion = VALUES(observacion), id_usuario_entrada = VALUES(id_usuario_entrada)");
 
             $creadas = 0;
             foreach ($utiles as $util) {
@@ -150,6 +150,11 @@ class RegistroUtilesDiarios
                 $sentence->bindValue(':nombre_libre', $nombre_libre);
                 $sentence->bindValue(':clave_util', self::calcularClaveUtil($id_util, $nombre_libre));
                 $sentence->bindValue(':trajo', $trajo, $trajo === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+
+                $nota = isset($util['observacion']) ? trim((string) $util['observacion']) : '';
+                $nota = $nota === '' ? null : mb_substr($nota, 0, 200);
+                $sentence->bindValue(':observacion', $nota, $nota === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+
                 $sentence->bindValue(':id_usuario', !empty($id_usuario) ? $id_usuario : null);
                 $sentence->execute();
                 $creadas++;
@@ -489,8 +494,19 @@ class RegistroUtilesDiarios
         $cambios = isset(Flight::request()->data['cambios']) ? Flight::request()->data['cambios'] : array();
         $id_usuario = isset(Flight::request()->data['id_usuario']) ? Flight::request()->data['id_usuario'] : null;
 
-        if (!is_array($cambios) || count($cambios) === 0) {
-            Flight::json(array('actualizados' => 0));
+        // Utiles que la usuaria agrego con el + y todavia no existen en la
+        // base, y filas que quito. Los dos viajan aqui para que todo el
+        // guardado sea un solo viaje y una sola transaccion: mientras no
+        // presione Grabar, en la base no se toca nada.
+        $nuevos = isset(Flight::request()->data['nuevos']) ? Flight::request()->data['nuevos'] : array();
+        $eliminados = isset(Flight::request()->data['eliminados']) ? Flight::request()->data['eliminados'] : array();
+
+        $hayCambios = is_array($cambios) && count($cambios) > 0;
+        $hayNuevos = is_array($nuevos) && count($nuevos) > 0;
+        $hayEliminados = is_array($eliminados) && count($eliminados) > 0;
+
+        if (!$hayCambios && !$hayNuevos && !$hayEliminados) {
+            Flight::json(array('actualizados' => 0, 'creados' => 0, 'eliminados' => 0));
             return;
         }
 
@@ -502,14 +518,23 @@ class RegistroUtilesDiarios
         try {
             $db->beginTransaction();
 
+            // Dos sentencias: una que solo mueve el estado y otra que ademas
+            // guarda la nota. La nota solo se toca cuando el cambio trae la
+            // clave, para no borrar la que ya estaba escrita.
             if ($modo === 'entrada') {
                 $sentence = $db->prepare("UPDATE utiles_diarios_registro
                                           SET trajo = :valor, id_usuario_entrada = :id_usuario
                                           WHERE id = :id AND id_tenant = :id_tenant");
+                $sentenceNota = $db->prepare("UPDATE utiles_diarios_registro
+                                              SET trajo = :valor, observacion = :observacion, id_usuario_entrada = :id_usuario
+                                              WHERE id = :id AND id_tenant = :id_tenant");
             } else {
                 $sentence = $db->prepare("UPDATE utiles_diarios_registro
                                           SET regreso = :valor, id_usuario_salida = :id_usuario
                                           WHERE id = :id AND id_tenant = :id_tenant");
+                $sentenceNota = $db->prepare("UPDATE utiles_diarios_registro
+                                              SET regreso = :valor, observacion = :observacion, id_usuario_salida = :id_usuario
+                                              WHERE id = :id AND id_tenant = :id_tenant");
             }
 
             $actualizados = 0;
@@ -522,16 +547,85 @@ class RegistroUtilesDiarios
                 if (isset($cambio['valor']) && $cambio['valor'] !== null && $cambio['valor'] !== '') {
                     $valor = $cambio['valor'] ? 1 : 0;
                 }
-                $sentence->bindValue(':valor', $valor, $valor === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
-                $sentence->bindValue(':id_usuario', !empty($id_usuario) ? $id_usuario : null);
-                $sentence->bindValue(':id', $cambio['id']);
-                $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-                $sentence->execute();
-                $actualizados += $sentence->rowCount();
+                $sentenceUsar = array_key_exists('observacion', $cambio) ? $sentenceNota : $sentence;
+
+                $sentenceUsar->bindValue(':valor', $valor, $valor === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                $sentenceUsar->bindValue(':id_usuario', !empty($id_usuario) ? $id_usuario : null);
+                $sentenceUsar->bindValue(':id', $cambio['id']);
+                $sentenceUsar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+
+                if (array_key_exists('observacion', $cambio)) {
+                    $nota = trim((string) $cambio['observacion']);
+                    $nota = $nota === '' ? null : mb_substr($nota, 0, 200);
+                    $sentenceUsar->bindValue(':observacion', $nota, $nota === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+                }
+
+                $sentenceUsar->execute();
+                $actualizados += $sentenceUsar->rowCount();
+            }
+
+            // Los utiles agregados con el +. Entran con el estado que la
+            // usuaria les haya dejado en pantalla.
+            $creados = 0;
+            if ($hayNuevos) {
+                $sentenceNuevo = $db->prepare("INSERT INTO utiles_diarios_registro
+                    (id, id_tenant, id_estudiante, fecha, id_util_diario, nombre_libre, clave_util, trajo, observacion, id_usuario_entrada)
+                    VALUES (:id, :id_tenant, :id_estudiante, :fecha, :id_util, :nombre_libre, :clave_util, :trajo, :observacion, :id_usuario)
+                    ON DUPLICATE KEY UPDATE trajo = VALUES(trajo), observacion = VALUES(observacion)");
+
+                foreach ($nuevos as $nuevo) {
+                    $id_util = !empty($nuevo['id_util_diario']) ? $nuevo['id_util_diario'] : null;
+                    $nombre_libre = !empty($nuevo['nombre_libre']) ? trim($nuevo['nombre_libre']) : null;
+
+                    if (empty($nuevo['id_estudiante']) || empty($nuevo['fecha'])) {
+                        continue;
+                    }
+
+                    if (empty($id_util) && empty($nombre_libre)) {
+                        continue;
+                    }
+
+                    $valorNuevo = null;
+                    if (isset($nuevo['valor']) && $nuevo['valor'] !== null && $nuevo['valor'] !== '') {
+                        $valorNuevo = $nuevo['valor'] ? 1 : 0;
+                    }
+
+                    $sentenceNuevo->bindValue(':id', Uuid::generar());
+                    $sentenceNuevo->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $sentenceNuevo->bindValue(':id_estudiante', $nuevo['id_estudiante']);
+                    $sentenceNuevo->bindValue(':fecha', $nuevo['fecha']);
+                    $sentenceNuevo->bindValue(':id_util', $id_util);
+                    $sentenceNuevo->bindValue(':nombre_libre', $nombre_libre);
+                    $sentenceNuevo->bindValue(':clave_util', self::calcularClaveUtil($id_util, $nombre_libre));
+                    $sentenceNuevo->bindValue(':trajo', $valorNuevo, $valorNuevo === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+
+                    $notaNueva = isset($nuevo['observacion']) ? trim((string) $nuevo['observacion']) : '';
+                    $notaNueva = $notaNueva === '' ? null : mb_substr($notaNueva, 0, 200);
+                    $sentenceNuevo->bindValue(':observacion', $notaNueva, $notaNueva === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+
+                    $sentenceNuevo->bindValue(':id_usuario', !empty($id_usuario) ? $id_usuario : null);
+                    $sentenceNuevo->execute();
+                    $creados++;
+                }
+            }
+
+            // Los que quito con la equis del chip.
+            $borrados = 0;
+            if ($hayEliminados) {
+                $sentenceBorrar = $db->prepare("DELETE FROM utiles_diarios_registro WHERE id = :id AND id_tenant = :id_tenant");
+                foreach ($eliminados as $idFila) {
+                    if (empty($idFila)) {
+                        continue;
+                    }
+                    $sentenceBorrar->bindValue(':id', $idFila);
+                    $sentenceBorrar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $sentenceBorrar->execute();
+                    $borrados += $sentenceBorrar->rowCount();
+                }
             }
 
             $db->commit();
-            Flight::json(array('actualizados' => $actualizados));
+            Flight::json(array('actualizados' => $actualizados, 'creados' => $creados, 'eliminados' => $borrados));
         } catch (Exception $e) {
             $db->rollBack();
             error_log("Error en RegistroUtilesDiarios::guardarLote: " . $e->getMessage());
