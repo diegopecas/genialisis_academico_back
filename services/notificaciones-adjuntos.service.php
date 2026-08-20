@@ -42,7 +42,7 @@ class NotificacionesAdjuntos
         try {
             $db = Flight::db();
             $userData = JWTService::requerirAutenticacion();
-            $idUsuarioSubio = $userData->data->id ?? null;
+            $idUsuarioSubio = $userData->id ?? null;
 
             $idNotificacion = $_POST['id_notificacion'] ?? null;
 
@@ -137,7 +137,7 @@ class NotificacionesAdjuntos
         try {
             $db = Flight::db();
             $userData = JWTService::requerirAutenticacion();
-            $idUsuario = $userData->data->id ?? null;
+            $idUsuario = $userData->id ?? null;
             $portal = isset($userData->portal) ? $userData->portal : JWTService::PORTAL_INSTITUCIONAL;
 
             $sentence = $db->prepare("SELECT id, id_notificacion, nombre_archivo, ruta_archivo FROM notificaciones_adjuntos WHERE id = :id AND id_tenant = :id_tenant AND activo = 1");

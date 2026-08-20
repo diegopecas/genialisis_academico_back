@@ -115,7 +115,7 @@ class Notificaciones
 
         try {
             $userData = JWTService::requerirAutenticacion();
-            $idUsuarioEnvio = $userData->data->id ?? null;
+            $idUsuarioEnvio = $userData->id ?? null;
 
             if (!$idUsuarioEnvio) {
                 Flight::json(array('error' => 'No se pudo identificar el usuario que envía'), 401);

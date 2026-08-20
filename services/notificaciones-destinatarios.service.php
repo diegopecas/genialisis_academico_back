@@ -52,7 +52,7 @@ class NotificacionesDestinatarios
         try {
             $db = Flight::db();
             $userData = JWTService::requerirAutenticacion();
-            $idUsuario = $userData->data->id ?? null;
+            $idUsuario = $userData->id ?? null;
 
             if (!$idUsuario) {
                 Flight::json(array('error' => 'No se pudo identificar el usuario'), 401);
@@ -109,7 +109,7 @@ class NotificacionesDestinatarios
         try {
             $db = Flight::db();
             $userData = JWTService::requerirAutenticacion();
-            $idUsuario = $userData->data->id ?? null;
+            $idUsuario = $userData->id ?? null;
 
             if (!$idUsuario) {
                 Flight::json(array('error' => 'No se pudo identificar el usuario'), 401);
@@ -146,7 +146,7 @@ class NotificacionesDestinatarios
         try {
             $db = Flight::db();
             $userData = JWTService::requerirAutenticacion();
-            $idUsuario = $userData->data->id ?? null;
+            $idUsuario = $userData->id ?? null;
             $idDestinatario = Flight::request()->data['id_destinatario'] ?? null;
 
             if (!$idUsuario) {
@@ -191,7 +191,7 @@ class NotificacionesDestinatarios
         try {
             $db = Flight::db();
             $userData = JWTService::requerirAutenticacion();
-            $idUsuario = $userData->data->id ?? null;
+            $idUsuario = $userData->id ?? null;
             $idDestinatario = Flight::request()->data['id_destinatario'] ?? null;
             $idOpcion = Flight::request()->data['id_respuesta_opcion'] ?? null;
 

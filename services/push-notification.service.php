@@ -9,6 +9,69 @@ Requiere: composer require minishlink/web-push
 use Minishlink\WebPush\WebPush;
 use Minishlink\WebPush\Subscription;
 
+// El index.php principal no carga el autoload de Composer, por eso el
+// namespace de web-push no esta disponible cuando se llama desde la API.
+//
+// No se puede hacer require de vendor/autoload.php: el composer.json declara
+// "autoload.files" con flight/Flight.php, y como index.php ya lo cargo por
+// ruta relativa, el require_once de Composer no lo reconoce como el mismo
+// archivo y revienta con "Cannot declare class Flight".
+//
+// La salida es registrar los mapas de Composer (PSR-4, PSR-0 y classmap) sin
+// ejecutar autoload_files, que es la parte que incluye Flight. Asi quedan
+// resueltas web-push y todas sus dependencias (web-token, guzzle, brick, psr)
+// sin tocar index.php.
+//
+// El webhook carga el autoload completo por su cuenta; este registro es
+// adicional y no le interfiere.
+if (!class_exists('Minishlink\WebPush\WebPush', false)) {
+    $rutaVendorPush = dirname(__DIR__) . '/vendor';
+
+    if (is_file($rutaVendorPush . '/composer/autoload_psr4.php')) {
+        $mapaPsr4      = require $rutaVendorPush . '/composer/autoload_psr4.php';
+        $mapaPsr0      = is_file($rutaVendorPush . '/composer/autoload_namespaces.php')
+                       ? require $rutaVendorPush . '/composer/autoload_namespaces.php'
+                       : array();
+        $mapaClassmap  = is_file($rutaVendorPush . '/composer/autoload_classmap.php')
+                       ? require $rutaVendorPush . '/composer/autoload_classmap.php'
+                       : array();
+
+        spl_autoload_register(function ($clase) use ($mapaPsr4, $mapaPsr0, $mapaClassmap) {
+            if (isset($mapaClassmap[$clase]) && file_exists($mapaClassmap[$clase])) {
+                require_once $mapaClassmap[$clase];
+                return;
+            }
+
+            foreach ($mapaPsr4 as $prefijo => $directorios) {
+                if (strncmp($clase, $prefijo, strlen($prefijo)) !== 0) {
+                    continue;
+                }
+                $relativa = substr($clase, strlen($prefijo));
+                foreach ((array)$directorios as $directorio) {
+                    $archivo = $directorio . '/' . str_replace('\\', '/', $relativa) . '.php';
+                    if (file_exists($archivo)) {
+                        require_once $archivo;
+                        return;
+                    }
+                }
+            }
+
+            foreach ($mapaPsr0 as $prefijo => $directorios) {
+                if (strncmp($clase, $prefijo, strlen($prefijo)) !== 0) {
+                    continue;
+                }
+                foreach ((array)$directorios as $directorio) {
+                    $archivo = $directorio . '/' . str_replace('\\', '/', $clase) . '.php';
+                    if (file_exists($archivo)) {
+                        require_once $archivo;
+                        return;
+                    }
+                }
+            }
+        });
+    }
+}
+
 class PushNotificationService
 {
     private $db;
