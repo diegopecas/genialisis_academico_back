@@ -331,13 +331,15 @@ class RegistroUtilesDiarios
         $userData = JWTService::requerirAutenticacion();
         $db = Flight::db();
 
-        $id_grupo = Flight::request()->data['id_grupo'];
+        // id_grupo vacio significa todos los grupos: la docente ve el jardin
+        // completo y filtra en pantalla.
+        $id_grupo = isset(Flight::request()->data['id_grupo']) ? Flight::request()->data['id_grupo'] : null;
         $fecha = Flight::request()->data['fecha'];
         $solo_presentes = isset(Flight::request()->data['solo_presentes']) ? Flight::request()->data['solo_presentes'] : 0;
         $id_usuario = isset(Flight::request()->data['id_usuario']) ? Flight::request()->data['id_usuario'] : null;
 
-        if (empty($id_grupo) || empty($fecha)) {
-            Flight::json(array('error' => 'El grupo y la fecha son obligatorios'), 400);
+        if (empty($fecha)) {
+            Flight::json(array('error' => 'La fecha es obligatoria'), 400);
             return;
         }
 
@@ -350,6 +352,7 @@ class RegistroUtilesDiarios
         // `id_asistencia_estudiante` es el de la primera entrada del dia, que
         // es la que amarra el registro.
         $sql = "SELECT e.id AS id_estudiante, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido,
+                       exg.id_grupo, g.nombre AS nombre_grupo, g.orden AS orden_grupo,
                        MIN(ae.id) AS id_asistencia_estudiante,
                        COUNT(ae.id) AS total_jornadas,
                        MIN(ae.fecha_ingreso) AS fecha_ingreso,
@@ -366,15 +369,20 @@ class RegistroUtilesDiarios
                 FROM estudiantes e
                 INNER JOIN personas p ON e.id_persona = p.id
                 INNER JOIN estudiantes_x_grupos exg ON e.id = exg.id_estudiante
+                INNER JOIN grupos g ON g.id = exg.id_grupo
                 LEFT JOIN asistencia_estudiantes ae ON ae.id_estudiante = e.id
                      AND DATE(ae.fecha_ingreso) = :fecha_asistencia
                      AND ae.id_tenant = :id_tenant_asis
-                WHERE exg.id_grupo = :id_grupo
-                AND exg.activo = 1
+                WHERE exg.activo = 1
                 AND e.activo = 1
                 AND e.id_tenant = :id_tenant";
 
-        $sql .= " GROUP BY e.id, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido";
+        if (!empty($id_grupo)) {
+            $sql .= " AND exg.id_grupo = :id_grupo";
+        }
+
+        $sql .= " GROUP BY e.id, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido,
+                          exg.id_grupo, g.nombre, g.orden";
 
         // El registro de asistencia es el punto de control del modulo: si el
         // nino no tiene entrada registrada ese dia, no aparece en la grilla.
@@ -388,13 +396,15 @@ class RegistroUtilesDiarios
             $sql .= " AND jornadas_abiertas > 0";
         }
 
-        $sql .= " ORDER BY p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido";
+        $sql .= " ORDER BY g.orden, g.nombre, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido";
 
         $sentence = $db->prepare($sql);
         $sentence->bindParam(':fecha_asistencia', $fecha);
         $sentence->bindValue(':id_tenant_asis', TenantContext::id(), PDO::PARAM_INT);
-        $sentence->bindParam(':id_grupo', $id_grupo);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        if (!empty($id_grupo)) {
+            $sentence->bindParam(':id_grupo', $id_grupo);
+        }
         $sentence->execute();
         $estudiantes = $sentence->fetchAll();
 
@@ -405,32 +415,51 @@ class RegistroUtilesDiarios
         // Columnas de la grilla: los útiles del catálogo que aplican al
         // grupo. Los útiles sueltos de cada niño no son columna, van como
         // chip en su fila.
-        $sentence = $db->prepare("SELECT e.id, e.nombre, e.icono, e.orden
-                                  FROM utiles_diarios e
-                                  WHERE e.id_tenant = :id_tenant
-                                  AND e.activo = 1
-                                  AND (
-                                      NOT EXISTS (SELECT 1 FROM utiles_diarios_grupos g WHERE g.id_util_diario = e.id)
-                                      OR EXISTS (SELECT 1 FROM utiles_diarios_grupos g WHERE g.id_util_diario = e.id AND g.id_grupo = :id_grupo)
-                                  )
-                                  ORDER BY e.orden, e.nombre");
+        $sqlColumnas = "SELECT e.id, e.nombre, e.icono, e.orden
+                        FROM utiles_diarios e
+                        WHERE e.id_tenant = :id_tenant
+                        AND e.activo = 1";
+
+        // Con un grupo puntual solo entran los utiles que le aplican. Con
+        // todos los grupos entra el catalogo completo, porque en pantalla hay
+        // ninos de secciones distintas.
+        if (!empty($id_grupo)) {
+            $sqlColumnas .= " AND (
+                                  NOT EXISTS (SELECT 1 FROM utiles_diarios_grupos g WHERE g.id_util_diario = e.id)
+                                  OR EXISTS (SELECT 1 FROM utiles_diarios_grupos g WHERE g.id_util_diario = e.id AND g.id_grupo = :id_grupo)
+                              )";
+        }
+
+        $sqlColumnas .= " ORDER BY e.orden, e.nombre";
+
+        $sentence = $db->prepare($sqlColumnas);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-        $sentence->bindParam(':id_grupo', $id_grupo);
+        if (!empty($id_grupo)) {
+            $sentence->bindParam(':id_grupo', $id_grupo);
+        }
         $sentence->execute();
         $columnas = $sentence->fetchAll();
 
-        $sentence = $db->prepare("SELECT i.id, i.id_estudiante, i.id_util_diario, i.nombre_libre, i.trajo, i.regreso, i.observacion,
-                                         COALESCE(el.nombre, i.nombre_libre) AS nombre, COALESCE(el.orden, 999) AS orden
-                                  FROM utiles_diarios_registro i
-                                  LEFT JOIN utiles_diarios el ON el.id = i.id_util_diario
-                                  INNER JOIN estudiantes_x_grupos exg ON exg.id_estudiante = i.id_estudiante AND exg.activo = 1
-                                  WHERE i.id_tenant = :id_tenant
-                                  AND i.fecha = :fecha
-                                  AND exg.id_grupo = :id_grupo
-                                  ORDER BY orden, nombre");
+        $sqlFilas = "SELECT i.id, i.id_estudiante, i.id_util_diario, i.nombre_libre, i.trajo, i.regreso, i.observacion,
+                            COALESCE(el.nombre, i.nombre_libre) AS nombre, el.icono, COALESCE(el.orden, 999) AS orden
+                     FROM utiles_diarios_registro i
+                     LEFT JOIN utiles_diarios el ON el.id = i.id_util_diario
+                     INNER JOIN estudiantes_x_grupos exg ON exg.id_estudiante = i.id_estudiante AND exg.activo = 1
+                     WHERE i.id_tenant = :id_tenant
+                     AND i.fecha = :fecha";
+
+        if (!empty($id_grupo)) {
+            $sqlFilas .= " AND exg.id_grupo = :id_grupo";
+        }
+
+        $sqlFilas .= " ORDER BY orden, nombre";
+
+        $sentence = $db->prepare($sqlFilas);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':fecha', $fecha);
-        $sentence->bindParam(':id_grupo', $id_grupo);
+        if (!empty($id_grupo)) {
+            $sentence->bindParam(':id_grupo', $id_grupo);
+        }
         $sentence->execute();
         $filas = $sentence->fetchAll();
 
