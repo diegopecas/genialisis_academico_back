@@ -152,9 +152,27 @@ class AsistenciaEstudiantes
         );
 
         $id = $idNew;
+
+        // Utiles y accesorios del dia. El panel manda lo que la docente marco.
+        // Regla de todo o nada: si no marco nada, no se crea ninguna fila,
+        // porque eso significa que no alcanzo a revisar la maleta y lo hara
+        // despues la docente principal desde la grilla de Operaciones.
+        $utiles = isset(Flight::request()->data['utiles_diarios'])
+            ? Flight::request()->data['utiles_diarios']
+            : array();
+
+        $utilesCreados = RegistroUtilesDiarios::guardarDesdeAsistencia(
+            $db,
+            $id_estudiante,
+            date('Y-m-d'),
+            $id,
+            $utiles,
+            $id_usuario_ingreso
+        );
+
         // La clave `observacion_estudiante` es un agregado: `id` sigue igual
         // para quien ya consumia esta respuesta.
-        Flight::json(array('id' => $id, 'observacion_estudiante' => $observacionEstudiante));
+        Flight::json(array('id' => $id, 'observacion_estudiante' => $observacionEstudiante, 'utiles_creados' => $utilesCreados));
     }
 
     public static function replace()
@@ -181,6 +199,7 @@ class AsistenciaEstudiantes
         $filaAsistencia = $sentenceEst->fetch();
 
         $observacionEstudiante = null;
+        $utilesMarcados = 0;
         if ($filaAsistencia) {
             $observacionEstudiante = ObservacionesEstudiantes::crearAutomatica(
                 $db,
@@ -189,20 +208,39 @@ class AsistenciaEstudiantes
                 $observacion ? 'Observacion de salida: ' . $observacion : null,
                 $id_usuario_salida
             );
+
+            // La salida cierra los utiles del día: lo que el niño trajo queda
+            // con regreso = 1, salvo lo que venga en utiles_no_regresa, que
+            // son los ids de las filas que la usuaria desmarcó en el panel.
+            $utiles_no_regresa = isset(Flight::request()->data['utiles_no_regresa'])
+                ? Flight::request()->data['utiles_no_regresa']
+                : array();
+
+            try {
+                $utilesMarcados = RegistroUtilesDiarios::registrarSalidaEstudiante(
+                    $db,
+                    $filaAsistencia['id_estudiante'],
+                    date('Y-m-d'),
+                    $utiles_no_regresa,
+                    $id_usuario_salida
+                );
+            } catch (Exception $e) {
+                error_log("Error marcando los utiles diarios en la salida: " . $e->getMessage());
+            }
         }
 
         // Aquí no se llama a getById() para no cambiar la forma de la
         // respuesta: se devuelve el mismo arreglo de filas de asistencia que
         // antes, con `observacion_estudiante` agregado en la primera fila. Así
         // quien ya leia estas filas sigue leyendo lo mismo.
-        $sentence = $db->prepare("select id, id_estudiante, fecha_ingreso, fecha_salida, observacion_ingreso, observacion_salida from asistencia_estudiantes where id = :id AND id_tenant = :id_tenant");
-        $sentence->bindParam(':id', $id);
+        $sentence = $db->prepare("select id, id_estudiante, fecha_ingreso, fecha_salida, observacion_ingreso, observacion_salida from asistencia_estudiantes where id = :id AND id_tenant = :id_tenant");        $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
 
         if (!empty($response)) {
             $response[0]['observacion_estudiante'] = $observacionEstudiante;
+            $response[0]['utiles_marcados'] = $utilesMarcados;
         }
 
         Flight::json($response);
