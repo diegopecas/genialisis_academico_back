@@ -106,32 +106,17 @@ class RegistroUtilesDiarios
     /**
      * Guarda lo que la docente marco en el panel de asistencia.
      *
-     * Regla de todo o nada: si no marco absolutamente nada, no se crea
-     * ninguna fila, porque eso significa que no alcanzo a revisar la maleta y
-     * lo hara despues la docente principal desde la grilla. Si marco aunque
-     * sea uno, se crean todas las filas de la propuesta: las marcadas con
-     * trajo = 1 y las demas con trajo = 0, porque haber tocado algo es la
-     * senal de que si reviso.
+     * Cada util llega con su estado: 1 lo trajo, 0 no lo trajo, null todavia
+     * no se reviso. Se crean las filas de todos, incluidas las que quedan en
+     * null, para que la grilla de Operaciones ya las tenga y la docente
+     * principal solo tenga que completarlas en clase.
      *
-     * $utiles es un arreglo con id_util_diario o nombre_libre y su marcado.
      * Nunca lanza: un problema aqui no puede tumbar el registro de asistencia.
      */
     public static function guardarDesdeAsistencia($db, $id_estudiante, $fecha, $id_asistencia_estudiante, $utiles, $id_usuario)
     {
         try {
             if (!is_array($utiles) || count($utiles) === 0) {
-                return 0;
-            }
-
-            $algunoMarcado = false;
-            foreach ($utiles as $util) {
-                if (!empty($util['marcado'])) {
-                    $algunoMarcado = true;
-                    break;
-                }
-            }
-
-            if (!$algunoMarcado) {
                 return 0;
             }
 
@@ -149,6 +134,13 @@ class RegistroUtilesDiarios
                     continue;
                 }
 
+                // El estado llega como 1, 0 o null. Cualquier otra cosa se
+                // trata como sin verificar.
+                $trajo = null;
+                if (isset($util['trajo']) && $util['trajo'] !== null && $util['trajo'] !== '') {
+                    $trajo = $util['trajo'] ? 1 : 0;
+                }
+
                 $sentence->bindValue(':id', Uuid::generar());
                 $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentence->bindValue(':id_estudiante', $id_estudiante);
@@ -157,7 +149,7 @@ class RegistroUtilesDiarios
                 $sentence->bindValue(':id_util', $id_util);
                 $sentence->bindValue(':nombre_libre', $nombre_libre);
                 $sentence->bindValue(':clave_util', self::calcularClaveUtil($id_util, $nombre_libre));
-                $sentence->bindValue(':trajo', !empty($util['marcado']) ? 1 : 0, PDO::PARAM_INT);
+                $sentence->bindValue(':trajo', $trajo, $trajo === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                 $sentence->bindValue(':id_usuario', !empty($id_usuario) ? $id_usuario : null);
                 $sentence->execute();
                 $creadas++;
@@ -177,7 +169,7 @@ class RegistroUtilesDiarios
      *
      * Copia del último día con registro. Si el estudiante nunca ha tenido
      * registro, arranca con los útiles del catálogo que apliquen a su
-     * grupo. Todo entra con trajo = 1, que es el precargado marcado.
+     * grupo. Todo entra con trajo en NULL: sin verificar hasta que alguien lo marque.
      *
      * La usa la grilla al abrir el día y también el registro de ingreso de
      * asistencia. Devuelve la cantidad de filas creadas.
@@ -243,7 +235,7 @@ class RegistroUtilesDiarios
 
         $sentence = $db->prepare("INSERT INTO utiles_diarios_registro
             (id, id_tenant, id_estudiante, fecha, id_asistencia_estudiante, id_util_diario, nombre_libre, clave_util, trajo, id_usuario_entrada)
-            VALUES (:id, :id_tenant, :id_estudiante, :fecha, :id_asistencia, :id_util, :nombre_libre, :clave_util, 1, :id_usuario)");
+            VALUES (:id, :id_tenant, :id_estudiante, :fecha, :id_asistencia, :id_util, :nombre_libre, :clave_util, NULL, :id_usuario)");
 
         $creadas = 0;
         foreach ($origen as $item) {
@@ -349,8 +341,28 @@ class RegistroUtilesDiarios
             return;
         }
 
+        // Una sola fila por estudiante, aunque tenga varias entradas ese dia.
+        // El inventario es uno solo por nino y fecha, asi que duplicar la fila
+        // daria dos filas identicas editando el mismo dato. Las horas de todas
+        // sus entradas y salidas se devuelven agrupadas en `jornadas`, para
+        // mostrarlas debajo del nombre.
+        //
+        // `id_asistencia_estudiante` es el de la primera entrada del dia, que
+        // es la que amarra el registro.
         $sql = "SELECT e.id AS id_estudiante, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido,
-                       ae.id AS id_asistencia_estudiante, ae.fecha_ingreso, ae.fecha_salida
+                       MIN(ae.id) AS id_asistencia_estudiante,
+                       COUNT(ae.id) AS total_jornadas,
+                       MIN(ae.fecha_ingreso) AS fecha_ingreso,
+                       MAX(ae.fecha_salida) AS fecha_salida,
+                       GROUP_CONCAT(
+                           CONCAT(
+                               TIME_FORMAT(ae.fecha_ingreso, '%H:%i'),
+                               ' - ',
+                               COALESCE(TIME_FORMAT(ae.fecha_salida, '%H:%i'), '')
+                           )
+                           ORDER BY ae.fecha_ingreso SEPARATOR ' | '
+                       ) AS jornadas,
+                       SUM(CASE WHEN ae.fecha_salida IS NULL THEN 1 ELSE 0 END) AS jornadas_abiertas
                 FROM estudiantes e
                 INNER JOIN personas p ON e.id_persona = p.id
                 INNER JOIN estudiantes_x_grupos exg ON e.id = exg.id_estudiante
@@ -362,15 +374,18 @@ class RegistroUtilesDiarios
                 AND e.activo = 1
                 AND e.id_tenant = :id_tenant";
 
+        $sql .= " GROUP BY e.id, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido";
+
         // El registro de asistencia es el punto de control del modulo: si el
         // nino no tiene entrada registrada ese dia, no aparece en la grilla.
         // Asi no se pueden registrar utiles de un nino que no llego.
-        $sql .= " AND ae.id IS NOT NULL";
+        // Va en HAVING porque ahora la consulta esta agrupada.
+        $sql .= " HAVING total_jornadas > 0";
 
         // Ademas del filtro anterior, solo_presentes deja unicamente a los que
-        // todavia no han salido.
+        // siguen en el jardin, o sea con alguna jornada sin hora de salida.
         if ($solo_presentes == 1) {
-            $sql .= " AND ae.fecha_salida IS NULL";
+            $sql .= " AND jornadas_abiertas > 0";
         }
 
         $sql .= " ORDER BY p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido";
@@ -473,8 +488,12 @@ class RegistroUtilesDiarios
                 if (empty($cambio['id'])) {
                     continue;
                 }
-                $valor = isset($cambio['valor']) && $cambio['valor'] ? 1 : 0;
-                $sentence->bindValue(':valor', $valor, PDO::PARAM_INT);
+                // El valor puede ser 1, 0 o null (sin verificar).
+                $valor = null;
+                if (isset($cambio['valor']) && $cambio['valor'] !== null && $cambio['valor'] !== '') {
+                    $valor = $cambio['valor'] ? 1 : 0;
+                }
+                $sentence->bindValue(':valor', $valor, $valor === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                 $sentence->bindValue(':id_usuario', !empty($id_usuario) ? $id_usuario : null);
                 $sentence->bindValue(':id', $cambio['id']);
                 $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);

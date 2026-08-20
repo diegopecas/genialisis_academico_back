@@ -206,9 +206,9 @@ function convertirNumerosEnArray(&$array) {
             // devuelve 1 y cualquier comparacion de version se rompe.
             $camposString = ['telefono', 'celular', 'documento', 'ruc', 'codigo_postal', 'nit', 'clave', 'fecha',
                              'version', 'version_actual', 'version_politica', 'hd_v', 'referencia', 'referencia_bancaria',
-                             // El nombre de usuario suele ser la cedula. Sin esto vuelve
-                             // como int y el front revienta al hacerle .trim().
-                             'usuario'];
+                             // Estos dos suelen ser la cedula. Sin esto vuelven como int y
+                             // el front revienta al hacerles .trim() o .toLowerCase().
+                             'usuario', 'numero_identificacion'];
             
             if (!in_array($key, $camposString)) {
                 $value = strpos($value, '.') !== false ? (float)$value : (int)$value;
