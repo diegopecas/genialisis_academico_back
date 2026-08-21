@@ -170,9 +170,30 @@ class AsistenciaEstudiantes
             $id_usuario_ingreso
         );
 
-        // La clave `observacion_estudiante` es un agregado: `id` sigue igual
-        // para quien ya consumia esta respuesta.
-        Flight::json(array('id' => $id, 'observacion_estudiante' => $observacionEstudiante, 'utiles_creados' => $utilesCreados));
+        // Notificacion al portal de padres. Solo se dispara aqui cuando no
+        // hay cobros por ejecutar: si los hay, el front llama enseguida al
+        // motor de cobros y es ese el que notifica, para que el mensaje
+        // alcance a incluirlos.
+        //
+        // El front lo indica con `notificar`. Si no viene, se notifica: es el
+        // comportamiento seguro para cualquier otro consumidor del endpoint.
+        $notificar = !isset(Flight::request()->data['notificar'])
+            || filter_var(Flight::request()->data['notificar'], FILTER_VALIDATE_BOOLEAN);
+
+        $notificacion = null;
+        if ($notificar) {
+            $notificacion = NotificacionesAsistencia::enviar(
+                $db,
+                $id,
+                NotificacionesAsistencia::TIPO_INGRESO,
+                $id_usuario_ingreso
+            );
+        }
+
+        // Las claves `observacion_estudiante`, `utiles_creados` y
+        // `notificacion` son agregados: `id` sigue igual para quien ya
+        // consumia esta respuesta.
+        Flight::json(array('id' => $id, 'observacion_estudiante' => $observacionEstudiante, 'utiles_creados' => $utilesCreados, 'notificacion' => $notificacion));
     }
 
     public static function replace()
@@ -238,9 +259,25 @@ class AsistenciaEstudiantes
         $sentence->execute();
         $response = $sentence->fetchAll();
 
+        // Misma regla que en el ingreso: si el front va a ejecutar cobros,
+        // la notificacion la dispara el motor para incluirlos.
+        $notificar = !isset(Flight::request()->data['notificar'])
+            || filter_var(Flight::request()->data['notificar'], FILTER_VALIDATE_BOOLEAN);
+
+        $notificacion = null;
+        if ($notificar && $filaAsistencia) {
+            $notificacion = NotificacionesAsistencia::enviar(
+                $db,
+                $id,
+                NotificacionesAsistencia::TIPO_SALIDA,
+                $id_usuario_salida
+            );
+        }
+
         if (!empty($response)) {
             $response[0]['observacion_estudiante'] = $observacionEstudiante;
             $response[0]['utiles_marcados'] = $utilesMarcados;
+            $response[0]['notificacion'] = $notificacion;
         }
 
         Flight::json($response);

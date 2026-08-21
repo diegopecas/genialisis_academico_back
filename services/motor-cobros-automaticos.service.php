@@ -467,10 +467,30 @@ class MotorCobrosAutomaticos
 
             $db->commit();
 
+            // Notificacion al portal de padres. Se dispara aqui, despues del
+            // commit, para que el mensaje incluya los cobros que se acaban de
+            // generar: el registro de asistencia se hizo en una peticion
+            // anterior y en ese momento todavia no existian.
+            //
+            // El tipo de movimiento lo indica el front en `tipo_asistencia`.
+            // Si no viene, se deduce de la fila de asistencia: si ya tiene
+            // fecha_salida, el movimiento fue una salida.
+            $notificacion = null;
+            $id_asistencia = isset($cobros[0]['id_asistencia']) ? $cobros[0]['id_asistencia'] : null;
+
+            if (!empty($id_asistencia)) {
+                $tipo = isset($data['tipo_asistencia'])
+                    ? $data['tipo_asistencia']
+                    : self::deducirTipoAsistencia($db, $id_asistencia);
+
+                $notificacion = NotificacionesAsistencia::enviar($db, $id_asistencia, $tipo, $id_usuario);
+            }
+
             Flight::json([
                 'success' => true,
                 'cobros_generados' => count($resultados),
-                'resultados' => $resultados
+                'resultados' => $resultados,
+                'notificacion' => $notificacion
             ]);
         } catch (Exception $e) {
             if ($db->inTransaction()) {
@@ -478,6 +498,28 @@ class MotorCobrosAutomaticos
             }
             error_log('Error en MotorCobrosAutomaticos::ejecutar: ' . $e->getMessage());
             Flight::json(['error' => 'Error al ejecutar cobros automáticos'], 500);
+        }
+    }
+
+    /**
+     * Deduce si el movimiento fue ingreso o salida a partir de la fila de
+     * asistencia. Se usa solo cuando el front no manda `tipo_asistencia`.
+     */
+    private static function deducirTipoAsistencia(PDO $db, $id_asistencia)
+    {
+        try {
+            $stmt = $db->prepare("SELECT fecha_salida FROM asistencia_estudiantes WHERE id = :id AND id_tenant = :id_tenant");
+            $stmt->bindValue(':id', $id_asistencia);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmt->execute();
+            $fila = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            return ($fila && !empty($fila['fecha_salida']))
+                ? NotificacionesAsistencia::TIPO_SALIDA
+                : NotificacionesAsistencia::TIPO_INGRESO;
+        } catch (Exception $e) {
+            error_log('Error deduciendo el tipo de asistencia: ' . $e->getMessage());
+            return NotificacionesAsistencia::TIPO_INGRESO;
         }
     }
 }

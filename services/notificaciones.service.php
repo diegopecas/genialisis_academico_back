@@ -132,6 +132,7 @@ class Notificaciones
             $enviarCorreo    = Flight::request()->data['enviar_correo'] ?? 0;
             $estudiantes     = Flight::request()->data['estudiantes'] ?? array();
             $seleccionados   = Flight::request()->data['destinatarios'] ?? array();
+            $idPlantilla     = Flight::request()->data['id_plantilla'] ?? null;
 
             if (!$titulo || !$cuerpo || !$idCategoria) {
                 Flight::json(array('error' => 'El título, el cuerpo y la categoría son obligatorios'), 400);
@@ -152,10 +153,10 @@ class Notificaciones
             $idNotificacion = Uuid::generar();
             $insertar = $db->prepare("
                 INSERT INTO notificaciones
-                    (id, id_tenant, titulo, cuerpo, id_categoria, id_respuesta_tipo, criterio_texto,
+                    (id, id_tenant, titulo, cuerpo, id_categoria, id_respuesta_tipo, id_plantilla, criterio_texto,
                      incluir_whatsapp, whatsapp_numero, enviar_correo, id_usuario_envio)
                 VALUES
-                    (:id, :id_tenant, :titulo, :cuerpo, :id_categoria, :id_respuesta_tipo, :criterio_texto,
+                    (:id, :id_tenant, :titulo, :cuerpo, :id_categoria, :id_respuesta_tipo, :id_plantilla, :criterio_texto,
                      :incluir_whatsapp, :whatsapp_numero, :enviar_correo, :id_usuario_envio)
             ");
             $insertar->bindValue(':id', $idNotificacion);
@@ -164,6 +165,7 @@ class Notificaciones
             $insertar->bindParam(':cuerpo', $cuerpo);
             $insertar->bindParam(':id_categoria', $idCategoria);
             $insertar->bindValue(':id_respuesta_tipo', $idRespuestaTipo);
+            $insertar->bindValue(':id_plantilla', empty($idPlantilla) ? null : $idPlantilla);
             $insertar->bindParam(':criterio_texto', $criterioTexto);
             $insertar->bindValue(':incluir_whatsapp', $incluirWhatsapp ? 1 : 0, PDO::PARAM_INT);
             $insertar->bindParam(':whatsapp_numero', $whatsappNumero);
@@ -229,14 +231,20 @@ class Notificaciones
 
             $db->commit();
 
+            NotificacionesPlantillas::registrarUso($db, $idPlantilla);
+
             $resultadoPush = array('enviadas' => 0, 'sin_suscripcion' => 0);
 
             if (count($idsUsuarios) > 0) {
+                // El aviso del push lleva el texto sin resolver: el payload es
+                // uno solo para todos los destinatarios, y personalizarlo
+                // obligaria a un envio por familia. Las variables se ven
+                // resueltas al abrir la notificacion en el portal.
                 $pushService = new PushNotificationService($db);
                 $resultadoPush = $pushService->notificarAUsuarios(
                     array_keys($idsUsuarios),
-                    $titulo,
-                    self::generarPreview($cuerpo),
+                    self::limpiarVariables($titulo),
+                    self::generarPreview(self::limpiarVariables($cuerpo)),
                     array(
                         'id_notificacion' => $idNotificacion,
                         'tipo'            => 'notificacion',
@@ -470,5 +478,18 @@ class Notificaciones
         }
 
         return $texto;
+    }
+
+    /**
+     * Quita los marcadores de variable del texto que viaja en el push.
+     *
+     * En el aviso del sistema operativo no se pueden resolver (es un unico
+     * payload para todas las familias), y mostrar "{nombre_estudiante}" en
+     * crudo se ve peor que no mostrar nada.
+     */
+    private static function limpiarVariables($texto)
+    {
+        $sinMarcadores = preg_replace('/\s*\{[a-z0-9_]+\}/i', '', (string)$texto);
+        return trim(preg_replace('/\s{2,}/', ' ', $sinMarcadores));
     }
 }

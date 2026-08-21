@@ -176,6 +176,11 @@ Responde ÚNICAMENTE con JSON válido (sin markdown, sin backticks). Estructura:
 Responde SOLO con el array JSON.
 PROMPT;
 
+            // Se precargan los catalogos ANTES de llamar a la IA: despues de la
+            // llamada la conexion a MySQL puede estar caida por wait_timeout.
+            $idsAmbientes = self::idsDelCatalogo($db, 'ambientes');
+            $idsTiposActividad = self::idsDelCatalogo($db, 'tipos_actividades_academicas');
+
             $config = self::obtenerConfiguracion($db);
             $inicio_tiempo = microtime(true);
             $respuesta_ia = self::llamarIA($config, $prompt);
@@ -233,8 +238,8 @@ PROMPT;
                 $act['indicadores_ids'] = array_column($indicadoresEnriquecidos, 'id');
                 // id_ambiente e id_tipo_actividad_academica tambien son llaves foraneas:
                 // si la IA los inventa se anulan y los resuelve el grabado (tipo por defecto).
-                $act['id_ambiente'] = self::idValidoONull($db, 'ambientes', $act['id_ambiente'] ?? null);
-                $act['id_tipo_actividad_academica'] = self::idValidoONull($db, 'tipos_actividades_academicas', $act['id_tipo_actividad_academica'] ?? null);
+                $act['id_ambiente'] = self::idValidoEnLista($act['id_ambiente'] ?? null, $idsAmbientes);
+                $act['id_tipo_actividad_academica'] = self::idValidoEnLista($act['id_tipo_actividad_academica'] ?? null, $idsTiposActividad);
             }
             unset($act);
 
@@ -458,6 +463,41 @@ PROMPT;
         $encontrados = self::idsExistentes($db, $tabla, [$id]);
 
         return !empty($encontrados) ? $encontrados[0] : null;
+    }
+
+    /**
+     * Todos los ids de un catalogo del tenant, en un arreglo.
+     *
+     * Se usa para precargarlos ANTES de llamar a la IA. El problema: la
+     * llamada a la IA puede tardar hasta 120 segundos, y en ese rato MySQL
+     * cierra la conexion por wait_timeout. Al volver, cualquier consulta
+     * revienta con "MySQL server has gone away". Por eso ya no se consulta la
+     * base despues de la llamada: se valida contra esta lista en memoria.
+     */
+    private static function idsDelCatalogo($db, $tabla)
+    {
+        if (!in_array($tabla, self::$catalogosVerificables, true)) {
+            throw new Exception("Catalogo no verificable: $tabla");
+        }
+
+        $stmt = $db->prepare("SELECT id FROM $tabla WHERE id_tenant = ?");
+        $stmt->bindValue(1, TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+
+        return array_map('strval', array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'id'));
+    }
+
+    /**
+     * Igual que idValidoONull pero contra una lista ya cargada en memoria, sin
+     * tocar la base. Para usar despues de la llamada a la IA.
+     */
+    private static function idValidoEnLista($id, array $idsValidos)
+    {
+        if (empty($id)) {
+            return null;
+        }
+
+        return in_array((string) $id, $idsValidos, true) ? (string) $id : null;
     }
 
     /**
@@ -748,6 +788,11 @@ INSTRUCCIONES:
 Usa materiales disponibles cuando sea posible. Selecciona indicadores usando sus IDs exactos. Para id_ambiente e id_tipo_actividad_academica usa los IDs exactos. Sé conciso.
 PROMPT;
 
+            // Se precargan los catalogos ANTES de llamar a la IA: despues de la
+            // llamada la conexion a MySQL puede estar caida por wait_timeout.
+            $idsAmbientes = self::idsDelCatalogo($db, 'ambientes');
+            $idsTiposActividad = self::idsDelCatalogo($db, 'tipos_actividades_academicas');
+
             $config = self::obtenerConfiguracion($db);
             $inicio_tiempo = microtime(true);
             $respuesta_ia = self::llamarIA($config, $prompt);
@@ -796,8 +841,8 @@ PROMPT;
             // que existen realmente entre los indicadores del grupo/area consultados.
             $sugerencia['indicadores_ids'] = array_column($indicadoresEnriquecidos, 'id');
             // id_ambiente e id_tipo_actividad_academica tambien son llaves foraneas.
-            $sugerencia['id_ambiente'] = self::idValidoONull($db, 'ambientes', $sugerencia['id_ambiente'] ?? null);
-            $sugerencia['id_tipo_actividad_academica'] = self::idValidoONull($db, 'tipos_actividades_academicas', $sugerencia['id_tipo_actividad_academica'] ?? null);
+            $sugerencia['id_ambiente'] = self::idValidoEnLista($sugerencia['id_ambiente'] ?? null, $idsAmbientes);
+            $sugerencia['id_tipo_actividad_academica'] = self::idValidoEnLista($sugerencia['id_tipo_actividad_academica'] ?? null, $idsTiposActividad);
 
             Flight::json([
                 "success" => true,
@@ -1119,6 +1164,11 @@ Responde ÚNICAMENTE con JSON válido (sin markdown, sin backticks). Estructura:
 Responde SOLO con el array JSON.
 PROMPT;
 
+            // Se precargan los catalogos ANTES de llamar a la IA: despues de la
+            // llamada la conexion a MySQL puede estar caida por wait_timeout.
+            $idsAmbientes = self::idsDelCatalogo($db, 'ambientes');
+            $idsTiposActividad = self::idsDelCatalogo($db, 'tipos_actividades_academicas');
+
             $config = self::obtenerConfiguracion($db);
             $inicio_tiempo = microtime(true);
             $respuesta_ia = self::llamarIA($config, $prompt);
@@ -1187,9 +1237,9 @@ PROMPT;
                     'nivel_uno' => $act['nivel_uno'] ?? '',
                     'nivel_dos' => $act['nivel_dos'] ?? '',
                     'minutos_duracion' => $act['minutos_duracion'] ?? 45,
-                    'id_tipo_actividad_academica' => self::idValidoONull($db, 'tipos_actividades_academicas', !empty($act['id_tipo_actividad_academica']) ? $act['id_tipo_actividad_academica'] : $id_tipo_actividad),
+                    'id_tipo_actividad_academica' => self::idValidoEnLista(!empty($act['id_tipo_actividad_academica']) ? $act['id_tipo_actividad_academica'] : $id_tipo_actividad, $idsTiposActividad),
                     'materiales_sugeridos' => $act['materiales_sugeridos'] ?? [],
-                    'id_ambiente' => self::idValidoONull($db, 'ambientes', $act['id_ambiente'] ?? null),
+                    'id_ambiente' => self::idValidoEnLista($act['id_ambiente'] ?? null, $idsAmbientes),
                     'indicadores_ids' => $idsIndicadores,
                     'indicadores' => $indicadoresEnriquecidos
                 ];

@@ -79,12 +79,28 @@ class NotificacionesDestinatarios
                     c.color             AS categoria_color,
                     pes.primer_nombre   AS estudiante_primer_nombre,
                     pes.primer_apellido AS estudiante_primer_apellido,
+                    pac.primer_nombre   AS acudiente_primer_nombre,
+                    pac.primer_apellido AS acudiente_primer_apellido,
+                    (SELECT g.nombre
+                       FROM estudiantes_x_grupos exg
+                       INNER JOIN grupos g ON g.id = exg.id_grupo
+                      WHERE exg.id_estudiante = d.id_estudiante
+                        AND exg.activo = 1
+                        AND exg.id_tenant = d.id_tenant
+                      ORDER BY exg.anio DESC
+                      LIMIT 1)                                                        AS grupo_nombre,
+                    (SELECT COALESCE(pi.razon_social, TRIM(CONCAT(COALESCE(pi.primer_nombre, ''), ' ', COALESCE(pi.primer_apellido, ''))))
+                       FROM instituciones i
+                       INNER JOIN personas pi ON pi.id = i.id_persona
+                      WHERE i.id_tenant = d.id_tenant AND i.activo = 1
+                      LIMIT 1)                                                        AS institucion_nombre,
                     (SELECT COUNT(*) FROM notificaciones_adjuntos a WHERE a.id_notificacion = n.id AND a.activo = 1) AS total_adjuntos
                 FROM notificaciones_destinatarios d
                 INNER JOIN notificaciones n            ON n.id = d.id_notificacion
                 INNER JOIN notificaciones_categorias c ON c.id = n.id_categoria
                 INNER JOIN estudiantes e               ON e.id = d.id_estudiante
                 INNER JOIN personas pes                ON pes.id = e.id_persona
+                INNER JOIN personas pac                ON pac.id = d.id_persona
                 WHERE d.id_usuario = :id_usuario
                   AND d.id_tenant = :id_tenant
                   AND n.activo = 1
@@ -93,7 +109,7 @@ class NotificacionesDestinatarios
             $sentence->bindParam(':id_usuario', $idUsuario);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
-            $response = $sentence->fetchAll();
+            $response = self::resolverVariables($sentence->fetchAll());
             Flight::json($response);
         } catch (Exception $e) {
             error_log("Error en NotificacionesDestinatarios::getMisNotificaciones: " . $e->getMessage());
@@ -299,5 +315,36 @@ class NotificacionesDestinatarios
             error_log("Error en NotificacionesDestinatarios::getResumen: " . $e->getMessage());
             Flight::json(array('error' => 'Error al consultar el resumen'), 500);
         }
+    }
+
+    /**
+     * Reemplaza las variables automaticas por los datos de cada destinatario.
+     *
+     * Se hace al leer y no al guardar porque una notificacion es una sola fila
+     * compartida por muchas familias: el mismo texto tiene que decir un nombre
+     * distinto para cada una.
+     *
+     * Las variables de llenado (hora, lugar, etc.) no llegan aqui: quien envia
+     * ya las reemplazo en el formulario, asi que el cuerpo almacenado solo
+     * conserva las automaticas.
+     */
+    private static function resolverVariables(array $filas)
+    {
+        foreach ($filas as &$fila) {
+            $reemplazos = array(
+                '{nombre_estudiante}' => trim(($fila['estudiante_primer_nombre'] ?? '') . ' ' . ($fila['estudiante_primer_apellido'] ?? '')),
+                '{nombre_acudiente}'  => trim(($fila['acudiente_primer_nombre'] ?? '') . ' ' . ($fila['acudiente_primer_apellido'] ?? '')),
+                '{grupo}'             => $fila['grupo_nombre'] ?? '',
+                '{nombre_colegio}'    => $fila['institucion_nombre'] ?? '',
+            );
+
+            foreach (array('titulo', 'cuerpo') as $campo) {
+                if (!empty($fila[$campo])) {
+                    $fila[$campo] = strtr($fila[$campo], $reemplazos);
+                }
+            }
+        }
+
+        return $filas;
     }
 }
