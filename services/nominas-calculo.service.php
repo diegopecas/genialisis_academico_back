@@ -476,16 +476,23 @@ class NominasCalculo
         $total = floatval($stmt->fetch(PDO::FETCH_ASSOC)['total']);
         
         // Crear pago recibido (tipo 7 = Efectivo - Nómina)
+        // El descuento de nomina tambien es un recibo de caja: el colaborador
+        // esta pagando productos, solo que se le descuenta del sueldo. Por eso
+        // consume el mismo consecutivo que los demas pagos. Ya venimos dentro
+        // de la transaccion abierta en calcularNomina().
+        $anioPago = (int) date('Y');
+        $numeroPago = PagosRecibidos::siguienteNumeroRecibo($db, $anioPago);
+
         $stmt = $db->prepare("
             INSERT INTO pagos_recibidos (
                 id, id_tenant,
                 id_estudiante, id_colaborador, id_acudiente,
-                fecha, id_tipo_pago, valor_recibido, 
+                fecha, anio, numero, id_tipo_pago, valor_recibido, 
                 observaciones, id_usuario_registro
-            ) VALUES (?, ?, NULL, ?, NULL, NOW(), 7, ?, 'Descuento nómina', 1)
+            ) VALUES (?, ?, NULL, ?, NULL, NOW(), ?, ?, 7, ?, 'Descuento nómina', 1)
         ");
         $idPagoRecibido = Uuid::generar();
-        $stmt->execute([$idPagoRecibido, TenantContext::id(), $id_colaborador, $total]);
+        $stmt->execute([$idPagoRecibido, TenantContext::id(), $id_colaborador, $anioPago, $numeroPago, $total]);
         $id_pago_recibido = $idPagoRecibido;
         
         // Aplicar pago a cada cuenta

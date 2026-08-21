@@ -41,7 +41,9 @@ Flight::route('POST /pagos-recibidos', [PagosRecibidos::class, 'new']);
 Flight::route('PUT /pagos-recibidos', [PagosRecibidos::class, 'replace']);
 Flight::route('PUT /pagos-recibidos/anular', [PagosRecibidos::class, 'anular']);
 Flight::route('PUT /pagos-recibidos/contabilizar', [PagosRecibidos::class, 'contabilizar']);
-Flight::route('DELETE /pagos-recibidos', [PagosRecibidos::class, 'delete']);
+// El borrado fisico de pagos se retiro a proposito: un pago numerado que
+// desaparece de la tabla hace que el siguiente reutilice su consecutivo. Los
+// pagos se anulan con PUT /pagos-recibidos/anular, que conserva la fila y el numero.
 Flight::route('GET /pagos-recibidos/pendientes-contabilizar', [PagosRecibidos::class, 'getPendientesContabilizar']);
 Flight::route('PUT /pagos-recibidos/contabilizar-multiple', [PagosRecibidos::class, 'contabilizarMultiple']);
 Flight::route('GET /pagos-recibidos/datos-registro-rapido', [PagosRecibidos::class, 'getDatosRegistroRapido']);

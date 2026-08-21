@@ -1,6 +1,143 @@
 <?php
 class PagosRecibidos
 {
+    /**
+     * Lee de configuracion_global los parametros con los que se arma el numero
+     * de recibo del tenant actual. Si alguna clave no esta creada se usan los
+     * mismos valores que siembra 01-consecutivo-estructura.sql, para que el
+     * comprobante nunca quede sin numero por una configuracion faltante.
+     */
+    private static function configuracionRecibo($db)
+    {
+        $sentence = $db->prepare("
+            SELECT clave, valor_texto, valor_numero
+            FROM configuracion_global
+            WHERE id_tenant = :id_tenant
+              AND clave IN ('recibo_caja_prefijo', 'recibo_caja_digitos', 'recibo_caja_reinicia_anual')
+        ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+
+        $config = array(
+            'prefijo' => 'RC',
+            'digitos' => 5,
+            'reinicia_anual' => true
+        );
+
+        foreach ($sentence->fetchAll(PDO::FETCH_ASSOC) as $fila) {
+            if ($fila['clave'] === 'recibo_caja_prefijo' && $fila['valor_texto'] !== null) {
+                $config['prefijo'] = trim($fila['valor_texto']);
+            }
+            if ($fila['clave'] === 'recibo_caja_digitos' && $fila['valor_numero'] !== null) {
+                $config['digitos'] = (int) $fila['valor_numero'];
+            }
+            if ($fila['clave'] === 'recibo_caja_reinicia_anual' && $fila['valor_texto'] !== null) {
+                $config['reinicia_anual'] = strtolower(trim($fila['valor_texto'])) === 'true';
+            }
+        }
+
+        return $config;
+    }
+
+    /**
+     * Devuelve el siguiente consecutivo de recibo para el tenant actual.
+     *
+     * IMPORTANTE: debe llamarse DENTRO de una transaccion ya abierta por quien
+     * inserta el pago. El FOR UPDATE solo serializa a las otras cajeras
+     * mientras esa transaccion siga viva; si se llama fuera, el bloqueo se
+     * suelta de inmediato y dos pagos simultaneos pueden pedir el mismo numero.
+     * La red de seguridad es el indice unico (id_tenant, anio, numero): si dos
+     * llegaran a coincidir, el insert falla en vez de duplicar en silencio.
+     *
+     * @param PDO $db   Conexion con la transaccion abierta
+     * @param int $anio Anio de la serie (sale de la fecha del pago)
+     * @return int
+     */
+    public static function siguienteNumeroRecibo($db, $anio)
+    {
+        $config = self::configuracionRecibo($db);
+
+        $filtroAnio = $config['reinicia_anual'] ? ' AND anio = :anio' : '';
+
+        $sentence = $db->prepare("
+            SELECT COALESCE(MAX(numero), 0) + 1 AS siguiente
+            FROM pagos_recibidos
+            WHERE id_tenant = :id_tenant" . $filtroAnio . "
+            FOR UPDATE
+        ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        if ($config['reinicia_anual']) {
+            $sentence->bindValue(':anio', $anio, PDO::PARAM_INT);
+        }
+        $sentence->execute();
+
+        return (int) $sentence->fetch(PDO::FETCH_ASSOC)['siguiente'];
+    }
+
+    /**
+     * Agrega la clave numero_comprobante a cada fila de un listado de pagos.
+     * Lee la configuracion una sola vez, no una por fila.
+     *
+     * @param PDO   $db
+     * @param array $filas Filas con las claves anio y numero
+     * @return array Las mismas filas con numero_comprobante agregado
+     */
+    private static function agregarNumeroComprobante($db, $filas)
+    {
+        if (!is_array($filas) || count($filas) === 0) {
+            return $filas;
+        }
+
+        $config = self::configuracionRecibo($db);
+
+        foreach ($filas as $indice => $fila) {
+            $anio = isset($fila['anio']) ? $fila['anio'] : null;
+            $numero = isset($fila['numero']) ? $fila['numero'] : null;
+            $filas[$indice]['numero_comprobante'] = self::armarNumero($config, $anio, $numero);
+        }
+
+        return $filas;
+    }
+
+    /**
+     * Union de prefijo, anio y consecutivo con los parametros ya leidos.
+     * Separado de formatearNumeroRecibo para poder formatear listados sin
+     * volver a consultar configuracion_global en cada fila.
+     */
+    private static function armarNumero($config, $anio, $numero)
+    {
+        if ($numero === null || $numero === '') {
+            return null;
+        }
+
+        $partes = array();
+        if ($config['prefijo'] !== '') {
+            $partes[] = $config['prefijo'];
+        }
+        if ($config['reinicia_anual'] && $anio !== null) {
+            $partes[] = (string) $anio;
+        }
+        $partes[] = str_pad((string) (int) $numero, $config['digitos'], '0', STR_PAD_LEFT);
+
+        return implode('-', $partes);
+    }
+
+    /**
+     * Arma el numero visible del recibo a partir de anio y numero guardados.
+     * No se persiste: si cambian los parametros de configuracion, cambia el
+     * texto de todos los comprobantes.
+     *
+     * @return string|null null si el pago todavia no tiene numero
+     */
+    public static function formatearNumeroRecibo($db, $anio, $numero)
+    {
+        if ($numero === null || $numero === '') {
+            return null;
+        }
+
+        return self::armarNumero(self::configuracionRecibo($db), $anio, $numero);
+    }
+
 
     public static function getAll()
     {
@@ -12,6 +149,8 @@ class PagosRecibidos
             SELECT 
                 pr.id, 
                 pr.fecha, 
+                pr.anio,
+                pr.numero,
                 pr.id_estudiante,
                 pr.id_colaborador,
                 pr.id_acudiente, 
@@ -80,7 +219,7 @@ class PagosRecibidos
                 cuenta_pagada cp ON pr.id = cp.id_pago_recibido
             WHERE pr.id_tenant = :id_tenant
             GROUP BY 
-                pr.id, pr.fecha, pr.id_estudiante, pr.id_colaborador, pr.id_acudiente, 
+                pr.id, pr.fecha, pr.anio, pr.numero, pr.id_estudiante, pr.id_colaborador, pr.id_acudiente, 
                 a.id_estudiante, p.primer_nombre, p.segundo_nombre,
                 p.primer_apellido, p.segundo_apellido, ta.nombre,
                 pe.primer_nombre, pe.segundo_nombre, pe.primer_apellido, pe.segundo_apellido,
@@ -96,7 +235,7 @@ class PagosRecibidos
         ");
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
-            $response = $sentence->fetchAll();
+            $response = self::agregarNumeroComprobante($db, $sentence->fetchAll());
             Flight::json($response);
         } catch (Exception $e) {
             error_log('Error en getAll pagos_recibidos: ' . $e->getMessage());
@@ -116,6 +255,8 @@ class PagosRecibidos
         SELECT 
             pr.id, 
             pr.fecha, 
+            pr.anio,
+            pr.numero,
             pr.id_estudiante,
             pr.id_colaborador,
             pr.id_acudiente, 
@@ -158,7 +299,7 @@ class PagosRecibidos
         WHERE 
             pr.id = :id AND pr.id_tenant = :id_tenant
         GROUP BY 
-            pr.id, pr.fecha, pr.id_estudiante, pr.id_colaborador, pr.id_acudiente, pr.id_tipo_pago, pr.valor_recibido,
+            pr.id, pr.fecha, pr.anio, pr.numero, pr.id_estudiante, pr.id_colaborador, pr.id_acudiente, pr.id_tipo_pago, pr.valor_recibido,
             pr.observaciones, pr.referencia_bancaria, pr.fecha_registro,
             pr.id_usuario_registro, u.usuario, p_ur.primer_nombre, p_ur.segundo_nombre, 
             p_ur.primer_apellido, p_ur.segundo_apellido, pr.fecha_contabilizacion, pr.id_usuario_contable, 
@@ -169,7 +310,7 @@ class PagosRecibidos
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
-        $response = $sentence->fetchAll();
+        $response = self::agregarNumeroComprobante($db, $sentence->fetchAll());
         Flight::json($response);
     }
     public static function getByEstudiante($idEstudiante)
@@ -181,6 +322,8 @@ class PagosRecibidos
             SELECT 
                     pr.id, 
                     pr.fecha, 
+                    pr.anio,
+                    pr.numero,
                     pr.id_acudiente, 
                     a.id_estudiante,
                     CONCAT(p.primer_nombre, ' ', COALESCE(p.segundo_nombre, ''), ' ', 
@@ -237,7 +380,7 @@ class PagosRecibidos
                 WHERE 
                     pr.id_estudiante = :id AND pr.id_tenant = :id_tenant
                 GROUP BY 
-                    pr.id, pr.fecha, pr.id_acudiente, a.id_estudiante, p.primer_nombre, p.segundo_nombre,
+                    pr.id, pr.fecha, pr.anio, pr.numero, pr.id_acudiente, a.id_estudiante, p.primer_nombre, p.segundo_nombre,
                     p.primer_apellido, p.segundo_apellido, ta.nombre, pr.id_tipo_pago, tp.nombre,
                     pr.valor_recibido, pr.observaciones, pr.referencia_bancaria, 
                     pr.fecha_registro, pr.id_usuario_registro, u.usuario, p_ur.primer_nombre, p_ur.segundo_nombre, 
@@ -251,7 +394,7 @@ class PagosRecibidos
         $sentence->bindParam(':id', $idEstudiante);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
-        $response = $sentence->fetchAll();
+        $response = self::agregarNumeroComprobante($db, $sentence->fetchAll());
         Flight::json($response);
     }
     public static function getByColaborador($idColaborador)
@@ -263,6 +406,8 @@ class PagosRecibidos
         SELECT 
             pr.id, 
             pr.fecha, 
+            pr.anio,
+            pr.numero,
             pr.id_colaborador,
             pr.id_acudiente, 
             CONCAT(pc.primer_nombre, ' ', COALESCE(pc.segundo_nombre, ''), ' ', 
@@ -315,7 +460,7 @@ class PagosRecibidos
         WHERE 
             pr.id_colaborador = :id AND pr.id_tenant = :id_tenant
         GROUP BY 
-            pr.id, pr.fecha, pr.id_colaborador, pr.id_acudiente, pc.primer_nombre, pc.segundo_nombre,
+            pr.id, pr.fecha, pr.anio, pr.numero, pr.id_colaborador, pr.id_acudiente, pc.primer_nombre, pc.segundo_nombre,
             pc.primer_apellido, pc.segundo_apellido, pr.id_tipo_pago, tp.nombre,
             pr.valor_recibido, pr.observaciones, pr.referencia_bancaria, 
             pr.fecha_registro, pr.id_usuario_registro, u.usuario, p_ur.primer_nombre, p_ur.segundo_nombre, 
@@ -329,7 +474,7 @@ class PagosRecibidos
         $sentence->bindParam(':id', $idColaborador);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
-        $response = $sentence->fetchAll();
+        $response = self::agregarNumeroComprobante($db, $sentence->fetchAll());
         Flight::json($response);
     }
     public static function new()
@@ -362,8 +507,17 @@ class PagosRecibidos
                 throw new Exception('Debe especificar id_estudiante o id_colaborador, pero no ambos');
             }
 
-            $query = "INSERT INTO pagos_recibidos(id, id_tenant, fecha, id_estudiante, id_colaborador, id_acudiente, id_tipo_pago, valor_recibido, observaciones, referencia_bancaria, fecha_registro, id_usuario_registro, fecha_contabilizacion, id_usuario_contable, id_documento_persona) 
-                 VALUES (:id, :id_tenant, :fecha, :id_estudiante, :id_colaborador, :id_acudiente, :id_tipo_pago, :valor_recibido, :observaciones, :referencia_bancaria, :fecha_registro, :id_usuario_registro, :fecha_contabilizacion, :id_usuario_contable, :id_documento_persona)";
+            // El anio de la serie sale de la fecha del pago, que es la que se
+            // imprime en el comprobante, y queda congelado en la fila.
+            $anio = (int) date('Y', strtotime($fecha));
+
+            // El consecutivo se toma dentro de la transaccion para que dos
+            // cajeras registrando al tiempo no saquen el mismo numero.
+            $db->beginTransaction();
+            $numero = self::siguienteNumeroRecibo($db, $anio);
+
+            $query = "INSERT INTO pagos_recibidos(id, id_tenant, fecha, anio, numero, id_estudiante, id_colaborador, id_acudiente, id_tipo_pago, valor_recibido, observaciones, referencia_bancaria, fecha_registro, id_usuario_registro, fecha_contabilizacion, id_usuario_contable, id_documento_persona) 
+                 VALUES (:id, :id_tenant, :fecha, :anio, :numero, :id_estudiante, :id_colaborador, :id_acudiente, :id_tipo_pago, :valor_recibido, :observaciones, :referencia_bancaria, :fecha_registro, :id_usuario_registro, :fecha_contabilizacion, :id_usuario_contable, :id_documento_persona)";
 
             $sentence = $db->prepare($query);
 
@@ -372,6 +526,8 @@ class PagosRecibidos
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             // Vincular parámetros
             $sentence->bindParam(':fecha', $fecha);
+            $sentence->bindValue(':anio', $anio, PDO::PARAM_INT);
+            $sentence->bindValue(':numero', $numero, PDO::PARAM_INT);
             $sentence->bindParam(':id_estudiante', $id_estudiante);
             $sentence->bindParam(':id_colaborador', $id_colaborador);
             $sentence->bindParam(':id_acudiente', $id_acudiente);
@@ -387,12 +543,27 @@ class PagosRecibidos
 
             $sentence->execute();
 
+            $db->commit();
+
             $id = $idPagoNew;
-            Flight::json(array('id' => $id));
+            // Se conserva 'id' tal cual para no romper a quien ya consume esto;
+            // el numero llega como claves adicionales.
+            Flight::json(array(
+                'id' => $id,
+                'anio' => $anio,
+                'numero' => $numero,
+                'numero_comprobante' => self::formatearNumeroRecibo($db, $anio, $numero)
+            ));
         } catch (PDOException $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
             error_log("Error PDO en new(): " . $e->getMessage());
             Flight::json(array('error' => $e->getMessage()), 500);
         } catch (Exception $e) {
+            if (isset($db) && $db->inTransaction()) {
+                $db->rollBack();
+            }
             error_log("Error general en new(): " . $e->getMessage());
             Flight::json(array('error' => $e->getMessage()), 500);
         }
@@ -448,18 +619,10 @@ class PagosRecibidos
             Flight::json(array('error' => $e->getMessage()), 500);
         }
     }
-    public static function delete()
-    {
-        $userData = JWTService::requerirAutenticacion();
-
-        $db = Flight::db();
-        $id = Flight::request()->data['id'];
-        $sentence = $db->prepare("DELETE FROM pagos_recibidos WHERE id = :id AND id_tenant = :id_tenant");
-        $sentence->bindParam(':id', $id);
-        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-        $sentence->execute();
-        Flight::json(array('id' => $id));
-    }
+    // delete() se retiro a proposito. Borrar fisicamente un pago ya numerado
+    // hace que el siguiente reutilice su consecutivo, y el indice unico no lo
+    // detecta porque la fila original ya no existe. Para dar de baja un pago se
+    // usa anular(), que conserva la fila con su numero y la serie queda continua.
     public static function anular()
     {
         $userData = JWTService::requerirAutenticacion();
@@ -572,6 +735,8 @@ class PagosRecibidos
             SELECT 
                 pr.id, 
                 pr.fecha, 
+                pr.anio,
+                pr.numero,
                 pr.id_estudiante,
                 pr.id_acudiente, 
                 pr.id_tipo_pago, 
@@ -727,6 +892,8 @@ class PagosRecibidos
 
         // Añadir las cuentas aplicadas al objeto de pago
         $pago['cuentas_aplicadas'] = $cuentasAplicadas;
+        // Numero visible del recibo, armado con los parametros del tenant
+        $pago['numero_comprobante'] = self::formatearNumeroRecibo($db, $pago['anio'], $pago['numero']);
         $respuesta['pago'] = $pago;
 
         return Flight::json($respuesta);
@@ -742,6 +909,8 @@ class PagosRecibidos
                 SELECT 
                     pr.id, 
                     pr.fecha, 
+                    pr.anio,
+                    pr.numero,
                     pr.id_colaborador,
                     pr.id_tipo_pago, 
                     pr.valor_recibido, 
@@ -872,6 +1041,8 @@ class PagosRecibidos
 
         // Añadir las cuentas aplicadas al objeto de pago
         $pago['cuentas_aplicadas'] = $cuentasAplicadas;
+        // Numero visible del recibo, armado con los parametros del tenant
+        $pago['numero_comprobante'] = self::formatearNumeroRecibo($db, $pago['anio'], $pago['numero']);
         $respuesta['pago'] = $pago;
 
         return Flight::json($respuesta);
@@ -1451,12 +1622,12 @@ class PagosRecibidos
 
                 $stmtPago = $db->prepare("
                     INSERT INTO pagos_recibidos 
-                    (id, id_tenant, fecha, id_estudiante, id_colaborador, id_acudiente, id_tipo_pago, 
+                    (id, id_tenant, fecha, anio, numero, id_estudiante, id_colaborador, id_acudiente, id_tipo_pago, 
                      valor_recibido, observaciones, referencia_bancaria, 
                      fecha_registro, id_usuario_registro, 
                      fecha_contabilizacion, id_usuario_contable, id_documento_persona) 
                     VALUES 
-                    (:id, :id_tenant, :fecha, :id_estudiante, NULL, :id_acudiente, :id_tipo_pago, 
+                    (:id, :id_tenant, :fecha, :anio, :numero, :id_estudiante, NULL, :id_acudiente, :id_tipo_pago, 
                      :valor_recibido, :observaciones, :referencia_bancaria, 
                      :fecha_registro, :id_usuario_registro, 
                      NULL, NULL, :id_documento_persona)
@@ -1505,10 +1676,17 @@ class PagosRecibidos
                     $referencia_bancaria = !empty($pago['referencia_bancaria']) ? $pago['referencia_bancaria'] : '';
                     $id_documento_persona = !empty($pago['id_documento_persona']) ? $pago['id_documento_persona'] : null;
 
+                    // Un consecutivo por cada pago del lote. Como todo el lote va
+                    // en la misma transaccion, el MAX ya ve los pagos anteriores.
+                    $anioPago = (int) date('Y', strtotime($pago['fecha']));
+                    $numeroPago = self::siguienteNumeroRecibo($db, $anioPago);
+
                     $idPagoNew = Uuid::generar();
                     $stmtPago->bindValue(':id', $idPagoNew);
                     $stmtPago->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $stmtPago->bindParam(':fecha', $pago['fecha']);
+                    $stmtPago->bindValue(':anio', $anioPago, PDO::PARAM_INT);
+                    $stmtPago->bindValue(':numero', $numeroPago, PDO::PARAM_INT);
                     $stmtPago->bindParam(':id_estudiante', $pago['id_estudiante']);
                     $stmtPago->bindParam(':id_acudiente', $id_acudiente);
                     $stmtPago->bindParam(':id_tipo_pago', $pago['id_tipo_pago']);
@@ -1569,7 +1747,9 @@ class PagosRecibidos
                             'id_estudiante' => $pago['id_estudiante'],
                             'valor' => $pago['valor_recibido'],
                             'cuentas_aplicadas' => $cuentasInsertadas,
-                            'reporte_asociado' => $reporteAsociado
+                            'reporte_asociado' => $reporteAsociado,
+                            'anio' => $anioPago,
+                            'numero' => $numeroPago
                         );
                     } else {
                         $errores[] = array(
