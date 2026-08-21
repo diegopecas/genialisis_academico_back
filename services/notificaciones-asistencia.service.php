@@ -18,8 +18,16 @@ class NotificacionesAsistencia
     const TIPO_INGRESO = 'ingreso';
     const TIPO_SALIDA  = 'salida';
 
-    /** Codigo de la categoria bajo la que se agrupan estas notificaciones. */
-    const CODIGO_CATEGORIA = 'GENERAL';
+    /**
+     * Categorias propias de asistencia. Van separadas por evento para que el
+     * jardin pueda filtrar y reportar las llegadas aparte de las salidas.
+     *
+     * Si alguna no existe en el tenant se cae a GENERAL, para que la
+     * notificacion salga igual aunque el catalogo no se haya sembrado.
+     */
+    const CODIGO_CATEGORIA_INGRESO = 'ASISTENCIA_INGRESO';
+    const CODIGO_CATEGORIA_SALIDA  = 'ASISTENCIA_SALIDA';
+    const CODIGO_CATEGORIA_RESPALDO = 'GENERAL';
 
     /**
      * Envia la notificacion de asistencia.
@@ -52,11 +60,11 @@ class NotificacionesAsistencia
                 return $resultado;
             }
 
-            $categoria = self::obtenerCategoria($db);
+            $categoria = self::obtenerCategoria($db, $tipo);
 
             if (!$categoria) {
                 $resultado['motivo'] = 'no hay categoria de notificaciones configurada';
-                error_log('[NotificacionesAsistencia] Sin categoria ' . self::CODIGO_CATEGORIA . ' en el tenant ' . TenantContext::id());
+                error_log('[NotificacionesAsistencia] Sin categoria de asistencia ni GENERAL en el tenant ' . TenantContext::id());
                 return $resultado;
             }
 
@@ -136,15 +144,29 @@ class NotificacionesAsistencia
         return $sentence->fetch();
     }
 
-    private static function obtenerCategoria(PDO $db)
+    /**
+     * Categoria segun el evento, con GENERAL como respaldo.
+     */
+    private static function obtenerCategoria(PDO $db, $tipo)
     {
-        $sentence = $db->prepare("SELECT id FROM notificaciones_categorias WHERE codigo = :codigo AND id_tenant = :id_tenant AND activo = 1 LIMIT 1");
-        $sentence->bindValue(':codigo', self::CODIGO_CATEGORIA);
-        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-        $sentence->execute();
-        $fila = $sentence->fetch();
+        $codigo = $tipo === self::TIPO_SALIDA
+            ? self::CODIGO_CATEGORIA_SALIDA
+            : self::CODIGO_CATEGORIA_INGRESO;
 
-        return $fila ? $fila['id'] : null;
+        $sentence = $db->prepare("SELECT id FROM notificaciones_categorias WHERE codigo = :codigo AND id_tenant = :id_tenant AND activo = 1 LIMIT 1");
+
+        foreach (array($codigo, self::CODIGO_CATEGORIA_RESPALDO) as $buscado) {
+            $sentence->bindValue(':codigo', $buscado);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->execute();
+            $fila = $sentence->fetch();
+
+            if ($fila) {
+                return $fila['id'];
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -355,7 +377,7 @@ class NotificacionesAsistencia
         $insertar->bindValue(':titulo', $titulo);
         $insertar->bindValue(':cuerpo', $cuerpo);
         $insertar->bindValue(':id_categoria', $idCategoria);
-        $insertar->bindValue(':criterio_texto', 'Registro de asistencia');
+        $insertar->bindValue(':criterio_texto', 'Acudientes del estudiante');
         $insertar->bindValue(':id_usuario_envio', $idUsuario);
         $insertar->execute();
 
