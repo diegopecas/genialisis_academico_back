@@ -60,8 +60,20 @@ class MotorCobrosAutomaticos
             $horario = $stmtHorario->fetch(PDO::FETCH_ASSOC);
 
             if (!$horario) {
-                $stmtDefault = $db->prepare("SELECT hora_entrada, hora_salida FROM dias_semana WHERE id = :dia_semana");
+                // Sin horario propio del estudiante se usa la jornada del
+                // jardin (jornada_laboral, por tenant). El COALESCE contra
+                // dias_semana cubre al jardin que aun no la ha configurado.
+                $stmtDefault = $db->prepare("
+                    SELECT COALESCE(jl.hora_entrada, ds.hora_entrada) AS hora_entrada,
+                           COALESCE(jl.hora_salida, ds.hora_salida)   AS hora_salida
+                    FROM dias_semana ds
+                    LEFT JOIN jornada_laboral jl
+                           ON jl.id_dia_semana = ds.id
+                          AND jl.id_tenant = :id_tenant
+                    WHERE ds.id = :dia_semana
+                ");
                 $stmtDefault->bindParam(':dia_semana', $dia_semana);
+                $stmtDefault->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtDefault->execute();
                 $horario = $stmtDefault->fetch(PDO::FETCH_ASSOC);
             }
