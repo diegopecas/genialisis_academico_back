@@ -52,15 +52,19 @@ class DocentesXGrupos
                    d.id_persona,
                    CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) AS nombre_docente,
                    p.numero_identificacion,
-                   d.id_nivel_escolaridad,
-                   ne.nombre AS nivel_escolaridad
+                   col.id_nivel_escolaridad,
+                   ne.nombre AS nivel_escolaridad,
+                   car.nombre AS cargo
             FROM docentes_x_grupos dxg
             INNER JOIN docentes d ON dxg.id_docente = d.id
             INNER JOIN personas p ON d.id_persona = p.id
-            INNER JOIN niveles_escolaridad ne ON d.id_nivel_escolaridad = ne.id
+            LEFT JOIN colaboradores col ON col.id = d.id_colaborador
+            LEFT JOIN niveles_escolaridad ne ON ne.id = col.id_nivel_escolaridad
+            LEFT JOIN cargos car ON car.id = col.id_cargo
             WHERE dxg.id_grupo = :id_grupo
             AND dxg.activo = 1
             AND dxg.id_tenant = :id_tenant
+            ORDER BY dxg.es_titular DESC, p.primer_nombre, p.primer_apellido
         ");
         $sentence->bindParam(':id_grupo', $id_grupo);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
