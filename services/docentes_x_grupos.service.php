@@ -98,6 +98,173 @@ class DocentesXGrupos
         Flight::json($response ? $response : null);
     }
 
+    /**
+     * Guarda de una sola vez toda la asignacion de docentes de un grupo.
+     *
+     * La pantalla trabaja en memoria: se agregan docentes, se quita alguno,
+     * se cambia el titular y se asigna el area, y solo al grabar se manda
+     * todo junto. Por eso este metodo recibe el estado completo y no una
+     * operacion suelta.
+     *
+     * Espera:
+     *   id_grupo
+     *   docentes: [ { id_docente, es_titular, id_area_x_grupo } ]
+     *
+     * id_area_x_grupo es la fila de area_academica_x_grupo que dicta ese
+     * docente, o null si no dicta ninguna.
+     *
+     * Va todo en una transaccion: un grupo a medio asignar es peor que uno
+     * sin asignar.
+     *
+     * Los metodos sueltos (new, updateTitular, desactivar, activar) siguen
+     * existiendo sin cambios para quien los este usando.
+     */
+    public static function guardarGrupo()
+    {
+        $db = Flight::db();
+
+        $id_grupo = isset(Flight::request()->data['id_grupo']) ? Flight::request()->data['id_grupo'] : null;
+        $docentes = isset(Flight::request()->data['docentes']) ? Flight::request()->data['docentes'] : array();
+
+        if (empty($id_grupo)) {
+            Flight::json(array('error' => 'Falta el grupo'), 400);
+            return;
+        }
+
+        if (!is_array($docentes)) {
+            Flight::json(array('error' => 'La lista de docentes no es valida'), 400);
+            return;
+        }
+
+        // Solo puede haber un titular por grupo.
+        $titulares = 0;
+        foreach ($docentes as $fila) {
+            if (isset($fila['es_titular']) && (int)$fila['es_titular'] === 1) {
+                $titulares++;
+            }
+        }
+
+        if ($titulares > 1) {
+            Flight::json(array('error' => 'Solo puede haber un titular por grupo'), 400);
+            return;
+        }
+
+        try {
+            $db->beginTransaction();
+
+            // 1. Los que ya no estan en la lista se desactivan. No se borran,
+            //    para no perder el historico de quien estuvo a cargo.
+            $enviados = array();
+            foreach ($docentes as $fila) {
+                if (!empty($fila['id_docente'])) {
+                    $enviados[] = $fila['id_docente'];
+                }
+            }
+
+            $actuales = $db->prepare("SELECT id, id_docente FROM docentes_x_grupos
+                                      WHERE id_grupo = :id_grupo AND activo = 1 AND id_tenant = :id_tenant");
+            $actuales->bindParam(':id_grupo', $id_grupo);
+            $actuales->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $actuales->execute();
+
+            $desactivar = $db->prepare("UPDATE docentes_x_grupos SET activo = 0, es_titular = 0
+                                        WHERE id = :id AND id_tenant = :id_tenant");
+            $liberarArea = $db->prepare("UPDATE area_academica_x_grupo SET id_docente = NULL
+                                         WHERE id_grupo = :id_grupo AND id_docente = :id_docente AND id_tenant = :id_tenant");
+
+            foreach ($actuales->fetchAll() as $actual) {
+                if (in_array($actual['id_docente'], $enviados, true)) {
+                    continue;
+                }
+
+                $desactivar->bindValue(':id', $actual['id']);
+                $desactivar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $desactivar->execute();
+
+                // Si dictaba un area del grupo, esa area queda sin docente.
+                $liberarArea->bindValue(':id_grupo', $id_grupo);
+                $liberarArea->bindValue(':id_docente', $actual['id_docente']);
+                $liberarArea->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $liberarArea->execute();
+            }
+
+            // 2. Los enviados se crean o se actualizan. Si el docente estuvo
+            //    antes en el grupo y se quito, se reactiva su misma fila.
+            $buscar = $db->prepare("SELECT id FROM docentes_x_grupos
+                                    WHERE id_grupo = :id_grupo AND id_docente = :id_docente AND id_tenant = :id_tenant
+                                    LIMIT 1");
+            $actualizar = $db->prepare("UPDATE docentes_x_grupos SET activo = 1, es_titular = :es_titular
+                                        WHERE id = :id AND id_tenant = :id_tenant");
+            $insertar = $db->prepare("INSERT INTO docentes_x_grupos
+                                      (id, id_tenant, es_titular, activo, fecha_asignacion, id_docente, id_grupo)
+                                      VALUES (:id, :id_tenant, :es_titular, 1, :fecha, :id_docente, :id_grupo)");
+
+            foreach ($docentes as $fila) {
+                if (empty($fila['id_docente'])) {
+                    continue;
+                }
+
+                $esTitular = (isset($fila['es_titular']) && (int)$fila['es_titular'] === 1) ? 1 : 0;
+
+                $buscar->bindValue(':id_grupo', $id_grupo);
+                $buscar->bindValue(':id_docente', $fila['id_docente']);
+                $buscar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $buscar->execute();
+                $existente = $buscar->fetch();
+
+                if ($existente) {
+                    $actualizar->bindValue(':es_titular', $esTitular, PDO::PARAM_INT);
+                    $actualizar->bindValue(':id', $existente['id']);
+                    $actualizar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $actualizar->execute();
+                } else {
+                    $insertar->bindValue(':id', Uuid::generar());
+                    $insertar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $insertar->bindValue(':es_titular', $esTitular, PDO::PARAM_INT);
+                    $insertar->bindValue(':fecha', date('Y-m-d'));
+                    $insertar->bindValue(':id_docente', $fila['id_docente']);
+                    $insertar->bindValue(':id_grupo', $id_grupo);
+                    $insertar->execute();
+                }
+            }
+
+            // 3. Areas del grupo. Se limpian todas y se vuelven a asignar con
+            //    lo que trae la lista: asi una area que quedo sin docente en
+            //    la pantalla tambien queda sin docente en la base.
+            $limpiarAreas = $db->prepare("UPDATE area_academica_x_grupo SET id_docente = NULL
+                                          WHERE id_grupo = :id_grupo AND id_tenant = :id_tenant");
+            $limpiarAreas->bindValue(':id_grupo', $id_grupo);
+            $limpiarAreas->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $limpiarAreas->execute();
+
+            $asignarArea = $db->prepare("UPDATE area_academica_x_grupo SET id_docente = :id_docente
+                                         WHERE id = :id AND id_grupo = :id_grupo AND id_tenant = :id_tenant");
+
+            foreach ($docentes as $fila) {
+                if (empty($fila['id_docente']) || empty($fila['id_area_x_grupo'])) {
+                    continue;
+                }
+
+                $asignarArea->bindValue(':id_docente', $fila['id_docente']);
+                $asignarArea->bindValue(':id', $fila['id_area_x_grupo']);
+                $asignarArea->bindValue(':id_grupo', $id_grupo);
+                $asignarArea->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $asignarArea->execute();
+            }
+
+            $db->commit();
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log('[DocentesXGrupos::guardarGrupo] ' . $e->getMessage());
+            Flight::json(array('error' => 'No se pudo guardar la asignacion de docentes'), 500);
+            return;
+        }
+
+        Flight::json(array('id_grupo' => $id_grupo, 'total' => count($docentes)));
+    }
+
     public static function new()
     {
         try {

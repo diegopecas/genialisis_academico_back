@@ -32,6 +32,7 @@ Flight::route('POST /docentes-x-grupos', [DocentesXGrupos::class, 'new']);
 Flight::route('PUT /docentes-x-grupos/titular', [DocentesXGrupos::class, 'updateTitular']);
 Flight::route('PUT /docentes-x-grupos/desactivar', [DocentesXGrupos::class, 'desactivar']);
 Flight::route('PUT /docentes-x-grupos/activar', [DocentesXGrupos::class, 'activar']);
+Flight::route('PUT /docentes-x-grupos/guardar-grupo', [DocentesXGrupos::class, 'guardarGrupo']);
 
 // AREA ACADÉMICA X GRUPO
 Flight::route('GET /area-academica-x-grupo', [AreaAcademicaXGrupo::class, 'getAll']);
@@ -44,3 +45,4 @@ Flight::route('PUT /area-academica-x-grupo/docente', [AreaAcademicaXGrupo::class
 Flight::route('PUT /area-academica-x-grupo/docente-area-grupo', [AreaAcademicaXGrupo::class, 'updateDocenteByAreaGrupo']);
 Flight::route('DELETE /area-academica-x-grupo', [AreaAcademicaXGrupo::class, 'delete']);
 Flight::route('DELETE /area-academica-x-grupo/area-grupo', [AreaAcademicaXGrupo::class, 'deleteByAreaGrupo']);
+Flight::route('PUT /area-academica-x-grupo/guardar-grupo', [AreaAcademicaXGrupo::class, 'guardarGrupo']);

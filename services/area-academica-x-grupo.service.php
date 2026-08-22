@@ -116,6 +116,115 @@ class AreaAcademicaXGrupo
         Flight::json($response);
     }
 
+    /**
+     * Guarda de una sola vez todas las areas del grupo con su docente.
+     *
+     * La pestana trabaja en memoria: se asocian areas, se quitan otras y se
+     * escoge quien dicta cada una, y solo al grabar se manda todo junto. Por
+     * eso este metodo recibe el estado completo y no una operacion suelta.
+     *
+     * Espera:
+     *   id_grupo
+     *   areas: [ { id_area_academica, id_docente } ]
+     *
+     * Va en una transaccion: un grupo con la mitad de las areas guardadas es
+     * peor que uno sin guardar.
+     *
+     * Los metodos sueltos (new, updateDocente, delete...) siguen existiendo
+     * sin cambios para quien los este usando.
+     */
+    public static function guardarGrupo()
+    {
+        $db = Flight::db();
+
+        $id_grupo = isset(Flight::request()->data['id_grupo']) ? Flight::request()->data['id_grupo'] : null;
+        $areas = isset(Flight::request()->data['areas']) ? Flight::request()->data['areas'] : array();
+
+        if (empty($id_grupo)) {
+            Flight::json(array('error' => 'Falta el grupo'), 400);
+            return;
+        }
+
+        if (!is_array($areas)) {
+            Flight::json(array('error' => 'La lista de areas no es valida'), 400);
+            return;
+        }
+
+        try {
+            $db->beginTransaction();
+
+            $enviadas = array();
+            foreach ($areas as $fila) {
+                if (!empty($fila['id_area_academica'])) {
+                    $enviadas[] = $fila['id_area_academica'];
+                }
+            }
+
+            // 1. Las que ya no estan en la lista se desasocian.
+            $actuales = $db->prepare("SELECT id, id_area_academica FROM area_academica_x_grupo
+                                      WHERE id_grupo = :id_grupo AND id_tenant = :id_tenant");
+            $actuales->bindParam(':id_grupo', $id_grupo);
+            $actuales->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $actuales->execute();
+            $filasActuales = $actuales->fetchAll();
+
+            $borrar = $db->prepare("DELETE FROM area_academica_x_grupo
+                                    WHERE id = :id AND id_tenant = :id_tenant");
+
+            $existentes = array();
+            foreach ($filasActuales as $actual) {
+                if (in_array($actual['id_area_academica'], $enviadas, true)) {
+                    $existentes[$actual['id_area_academica']] = $actual['id'];
+                    continue;
+                }
+
+                $borrar->bindValue(':id', $actual['id']);
+                $borrar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $borrar->execute();
+            }
+
+            // 2. Las enviadas se crean o se actualizan con su docente.
+            $insertar = $db->prepare("INSERT INTO area_academica_x_grupo
+                                      (id, id_tenant, id_area_academica, id_docente, id_grupo)
+                                      VALUES (:id, :id_tenant, :id_area_academica, :id_docente, :id_grupo)");
+            $actualizar = $db->prepare("UPDATE area_academica_x_grupo SET id_docente = :id_docente
+                                        WHERE id = :id AND id_tenant = :id_tenant");
+
+            foreach ($areas as $fila) {
+                if (empty($fila['id_area_academica'])) {
+                    continue;
+                }
+
+                $idDocente = !empty($fila['id_docente']) ? $fila['id_docente'] : null;
+
+                if (isset($existentes[$fila['id_area_academica']])) {
+                    $actualizar->bindValue(':id_docente', $idDocente);
+                    $actualizar->bindValue(':id', $existentes[$fila['id_area_academica']]);
+                    $actualizar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $actualizar->execute();
+                } else {
+                    $insertar->bindValue(':id', Uuid::generar());
+                    $insertar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $insertar->bindValue(':id_area_academica', $fila['id_area_academica']);
+                    $insertar->bindValue(':id_docente', $idDocente);
+                    $insertar->bindValue(':id_grupo', $id_grupo);
+                    $insertar->execute();
+                }
+            }
+
+            $db->commit();
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log('[AreaAcademicaXGrupo::guardarGrupo] ' . $e->getMessage());
+            Flight::json(array('error' => 'No se pudieron guardar las areas del grupo'), 500);
+            return;
+        }
+
+        Flight::json(array('id_grupo' => $id_grupo, 'total' => count($areas)));
+    }
+
     public static function new()
     {
         try {
