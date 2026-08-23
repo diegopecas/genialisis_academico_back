@@ -397,6 +397,10 @@ class MiAgenda
             return [];
         }
 
+        // Igual que en galerias: sin esto GROUP_CONCAT corta en 1024 bytes y
+        // una actividad con muchos parametros perderia los ultimos.
+        $db->exec('SET SESSION group_concat_max_len = 100000');
+
         $sentence = $db->prepare("
             SELECT ts.id,
                    ts.fecha_ejecucion,
@@ -410,7 +414,21 @@ class MiAgenda
                    ar.nombre AS nombre_area_academica,
                    ar.color AS color_area_academica,
                    txe.observacion AS observacion_estudiante,
-                   TRIM(CONCAT_WS(' ', pd.primer_nombre, pd.primer_apellido)) AS nombre_docente
+                   TRIM(CONCAT_WS(' ', pd.primer_nombre, pd.primer_apellido)) AS nombre_docente,
+                   -- Calificaciones del estudiante en esa actividad. Van en
+                   -- subconsulta y no en JOIN para no multiplicar la fila de
+                   -- la actividad por cada parametro calificado.
+                   (SELECT GROUP_CONCAT(
+                               CONCAT_WS('|@|', pc.nombre, vpc.valor_cualitativo,
+                                         vpc.valor_cuantitativo, COALESCE(vpc.icono, ''))
+                               ORDER BY pc.nombre
+                               SEPARATOR '|#|')
+                    FROM calificaciones c
+                    INNER JOIN parametros_calificaciones pc ON pc.id = c.id_parametro_calificacion
+                    INNER JOIN valores_parametros_calificaciones vpc ON vpc.id = c.id_valor_parametro_calificacion
+                    WHERE c.id_tarea_x_sprint = ts.id
+                      AND c.id_estudiante = :id_estudiante_calif
+                   ) AS calificaciones_crudas
             FROM tareas_x_sprints ts
             INNER JOIN actividades_academicas aa ON aa.id = ts.id_actividad_academica
             LEFT JOIN tipos_actividades_academicas ta ON ta.id = aa.id_tipo_actividad_academica
@@ -428,6 +446,7 @@ class MiAgenda
         ");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindParam(':id_estudiante_calif', $id_estudiante);
         $sentence->bindValue(':id_grupo', $contexto['id_grupo']);
         $sentence->bindParam(':fecha', $fecha);
         $sentence->bindValue(':estado', self::ESTADO_TAREA_EJECUTADA, PDO::PARAM_INT);
@@ -458,6 +477,7 @@ class MiAgenda
                     'descripcion_actividad'  => $fila['descripcion'],
                     'observacion_estudiante' => $fila['observacion_estudiante'],
                     'observacion_grupo'      => $fila['observacion_grupo'],
+                    'calificaciones'         => self::desarmarCalificaciones($fila['calificaciones_crudas']),
                 ],
             ]);
         }
@@ -1206,6 +1226,38 @@ class MiAgenda
         }
 
         return Acudientes::esEstudianteDelAcudiente($db, $userData->id_persona, $id_estudiante);
+    }
+
+    /**
+     * Convierte el GROUP_CONCAT de calificaciones en una lista utilizable.
+     *
+     * @param string|null $crudas
+     * @return array
+     */
+    private static function desarmarCalificaciones($crudas)
+    {
+        if (empty($crudas)) {
+            return [];
+        }
+
+        $salida = [];
+
+        foreach (explode('|#|', $crudas) as $pedazo) {
+            $partes = explode('|@|', $pedazo);
+
+            if (empty($partes[0])) {
+                continue;
+            }
+
+            $salida[] = [
+                'parametro'   => $partes[0],
+                'cualitativo' => isset($partes[1]) ? $partes[1] : '',
+                'cuantitativo' => isset($partes[2]) ? (int) $partes[2] : null,
+                'icono'       => isset($partes[3]) ? $partes[3] : '',
+            ];
+        }
+
+        return $salida;
     }
 
     /**

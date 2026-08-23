@@ -6,6 +6,7 @@ Flight::route('POST /estudiantes', [Estudiantes::class, 'new']);
 Flight::route('PUT /estudiantes', [Estudiantes::class, 'replace']);
 Flight::route('DELETE /estudiantes', [Estudiantes::class, 'delete']);
 Flight::route('POST /estudiantes/verificar-duplicados', [Estudiantes::class, 'verificarDuplicados']);
+Flight::route('GET /estudiantes/consultar-documento/@numero_identificacion', [Estudiantes::class, 'consultarPorDocumento']);
 Flight::route('POST /estudiantes/actualizacion-masiva', [Estudiantes::class, 'actualizacionMasiva']);
 Flight::route('POST /estudiantes/registro-rapido', [Estudiantes::class, 'registroRapido']);
 Flight::route('POST /estudiantes/analizar-registro-civil', [Estudiantes::class, 'analizarRegistroCivil']);

@@ -231,19 +231,149 @@ class Estudiantes
         Flight::json($response);
     }
 
+    /**
+     * Estudiante de una persona, con su estado. Lectura interna.
+     *
+     * Es la consulta que estaba repetida en verificarDuplicados, en
+     * registroRapido y en registroRapidoCompleto. Queda en un solo lugar.
+     *
+     * @param  PDO    $db
+     * @param  string $id_persona
+     * @return array|null Fila con id y activo, o null si no es estudiante
+     */
+    private static function buscarEstudiantePorPersona(PDO $db, $id_persona)
+    {
+        if (empty($id_persona)) {
+            return null;
+        }
+
+        $sentence = $db->prepare("SELECT id, activo FROM estudiantes
+                                  WHERE id_persona = :id_persona AND id_tenant = :id_tenant
+                                  LIMIT 1");
+        $sentence->bindParam(':id_persona', $id_persona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $fila = $sentence->fetch();
+
+        return $fila ? $fila : null;
+    }
+
+    /**
+     * Resuelve el caso de un documento antes de abrir el registro rapido.
+     *
+     * Devuelve uno de cuatro casos, para que la pantalla sepa que hacer sin
+     * tener que armar la logica por su cuenta:
+     *
+     *   persona_nueva      -> nadie con ese documento. Se registra de cero.
+     *   persona_existente  -> la persona existe pero no es estudiante.
+     *   estudiante_activo  -> ya es estudiante y esta activo. NO se continua:
+     *                         ya aparece en la lista de asistencia.
+     *   estudiante_inactivo-> ya fue estudiante. Se puede reactivar, con sus
+     *                         datos, sus acudientes y su ultimo grupo.
+     *
+     * La busqueda va por numero de documento, sin el tipo, igual que
+     * Personas::getByIdentificacion: el indice unico de personas es
+     * (id_tenant, numero_identificacion).
+     */
+    public static function consultarPorDocumento($numero_identificacion)
+    {
+        JWTService::requerirAutenticacion();
+        $db = Flight::db();
+
+        $numero_identificacion = trim((string)$numero_identificacion);
+
+        if ($numero_identificacion === '') {
+            Flight::json(array('error' => 'Falta el numero de documento'), 400);
+            return;
+        }
+
+        $sentence = $db->prepare("SELECT p.id, p.id_tipo_identificacion, p.numero_identificacion,
+                                         p.primer_nombre, p.segundo_nombre,
+                                         p.primer_apellido, p.segundo_apellido,
+                                         p.fecha_nacimiento, p.id_genero, p.nacionalidad,
+                                         ti.nombre AS tipo_identificacion
+                                  FROM personas p
+                                  LEFT JOIN tipos_identificacion ti ON ti.id = p.id_tipo_identificacion
+                                  WHERE p.numero_identificacion = :numero AND p.id_tenant = :id_tenant
+                                  LIMIT 1");
+        $sentence->bindParam(':numero', $numero_identificacion);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $persona = $sentence->fetch();
+
+        if (!$persona) {
+            Flight::json(array('caso' => 'persona_nueva', 'persona' => null));
+            return;
+        }
+
+        $estudiante = self::buscarEstudiantePorPersona($db, $persona['id']);
+
+        if (!$estudiante) {
+            Flight::json(array('caso' => 'persona_existente', 'persona' => $persona));
+            return;
+        }
+
+        // Grupo actual o el ultimo que tuvo, para poder mostrarlo.
+        $sentence = $db->prepare("SELECT g.id, g.nombre, exg.anio, exg.activo
+                                  FROM estudiantes_x_grupos exg
+                                  INNER JOIN grupos g ON g.id = exg.id_grupo
+                                  WHERE exg.id_estudiante = :id_estudiante AND exg.id_tenant = :id_tenant
+                                  ORDER BY exg.activo DESC, exg.anio DESC
+                                  LIMIT 1");
+        $sentence->bindValue(':id_estudiante', $estudiante['id']);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $grupo = $sentence->fetch();
+
+        if ((int)$estudiante['activo'] === 1) {
+            Flight::json(array(
+                'caso'       => 'estudiante_activo',
+                'persona'    => $persona,
+                'estudiante' => array('id' => $estudiante['id'], 'activo' => 1),
+                'grupo'      => $grupo ? $grupo : null
+            ));
+            return;
+        }
+
+        // Inactivo: se devuelven ademas sus acudientes, para que se pueda
+        // escoger uno de los que ya tenia en lugar de volver a digitarlo.
+        $sentence = $db->prepare("SELECT a.id, a.id_persona, a.id_tipo_acudiente, a.activo,
+                                         ta.nombre AS tipo_acudiente,
+                                         TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_persona,
+                                         p.numero_identificacion,
+                                         p.id_tipo_identificacion,
+                                         p.primer_nombre, p.segundo_nombre,
+                                         p.primer_apellido, p.segundo_apellido,
+                                         p.telefono
+                                  FROM acudientes a
+                                  INNER JOIN personas p ON p.id = a.id_persona
+                                  LEFT JOIN tipos_acudiente ta ON ta.id = a.id_tipo_acudiente
+                                  WHERE a.id_estudiante = :id_estudiante AND a.id_tenant = :id_tenant
+                                  ORDER BY a.activo DESC, p.primer_nombre");
+        $sentence->bindValue(':id_estudiante', $estudiante['id']);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+
+        Flight::json(array(
+            'caso'       => 'estudiante_inactivo',
+            'persona'    => $persona,
+            'estudiante' => array('id' => $estudiante['id'], 'activo' => 0),
+            'grupo'      => $grupo ? $grupo : null,
+            'acudientes' => $sentence->fetchAll()
+        ));
+    }
+
     public static function verificarDuplicados()
     {
         $db = Flight::db();
         $id_persona = Flight::request()->data['id_persona'];
         error_log("Datos recibidos para crear verificarDuplicados: id_persona=$id_persona");
 
-        $sentence = $db->prepare("SELECT COUNT(*) as total FROM estudiantes WHERE id_persona = :id_persona AND id_tenant = :id_tenant");
-        $sentence->bindParam(':id_persona', $id_persona);
-        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-        $sentence->execute();
-        $response = $sentence->fetch();
+        // Misma consulta que usa el registro rapido, en un solo lugar.
+        // La respuesta se mantiene igual porque el front ya la consume asi.
+        $estudiante = self::buscarEstudiantePorPersona($db, $id_persona);
 
-        Flight::json(array('existe' => $response['total'] > 0));
+        Flight::json(array('existe' => $estudiante !== null));
     }
 
     public static function getReporteCompleto()
@@ -733,22 +863,30 @@ class Estudiantes
             // ============================================================
             // 2. ESTUDIANTE: verificar que no exista, crear
             // ============================================================
-            $stmt = $db->prepare("SELECT id, activo FROM estudiantes WHERE id_persona = :id_persona AND id_tenant = :id_tenant");
-            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $stmt->bindParam(':id_persona', $id_persona_nino);
-            $stmt->execute();
-            $estudianteExistente = $stmt->fetch(PDO::FETCH_ASSOC);
+            $estudianteExistente = self::buscarEstudiantePorPersona($db, $id_persona_nino);
 
             $estudiante_ya_existia = false;
+            $estudiante_reactivado = false;
+
             if ($estudianteExistente) {
                 $id_estudiante = $estudianteExistente['id'];
                 $estudiante_ya_existia = true;
 
-                if ($estudianteExistente['activo'] == 0) {
+                if ((int)$estudianteExistente['activo'] === 1) {
+                    // Ya esta activo: no hay nada que registrar y ya aparece
+                    // en la lista de asistencia. Antes se reusaba en silencio
+                    // y el usuario creia haber creado un estudiante nuevo.
                     $db->rollBack();
-                    Flight::json(array('error' => 'Este estudiante existe pero está inactivo. Active el estudiante primero desde el módulo de estudiantes.'), 400);
+                    Flight::json(array('error' => 'Este estudiante ya está registrado y activo. Búsquelo en la lista de asistencia.'), 400);
                     return;
                 }
+
+                // Inactivo: se reactiva y se sigue con el grupo y el acudiente.
+                $stmt = $db->prepare("UPDATE estudiantes SET activo = 1 WHERE id = :id AND id_tenant = :id_tenant");
+                $stmt->bindValue(':id', $id_estudiante);
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmt->execute();
+                $estudiante_reactivado = true;
             } else {
                 $fecha_hoy = date('Y-m-d');
                 $anno_actual = date('Y');
@@ -773,11 +911,22 @@ class Estudiantes
             // ============================================================
             // 3. ASIGNAR GRUPO (si no tiene uno activo)
             // ============================================================
-            $stmt = $db->prepare("SELECT id FROM estudiantes_x_grupos WHERE id_estudiante = :id_estudiante AND activo = 1 AND id_tenant = :id_tenant");
+            $stmt = $db->prepare("SELECT id, id_grupo FROM estudiantes_x_grupos WHERE id_estudiante = :id_estudiante AND activo = 1 AND id_tenant = :id_tenant");
             $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->bindParam(':id_estudiante', $id_estudiante);
             $stmt->execute();
             $grupoActual = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            // Un estudiante reactivado conserva su fila de grupo activa. Si se
+            // escogio otro grupo hay que moverlo, o el cambio se perderia sin
+            // que nadie se entere.
+            if ($grupoActual && $grupoActual['id_grupo'] !== $id_grupo) {
+                $stmt = $db->prepare("UPDATE estudiantes_x_grupos SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
+                $stmt->bindValue(':id', $grupoActual['id']);
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmt->execute();
+                $grupoActual = null;
+            }
 
             if (!$grupoActual) {
                 $anno_actual = date('Y');
@@ -866,6 +1015,7 @@ class Estudiantes
                 'id_persona_acudiente' => $id_persona_acudiente,
                 'id_acudiente' => $id_acudiente,
                 'estudiante_ya_existia' => $estudiante_ya_existia,
+                'estudiante_reactivado' => $estudiante_reactivado,
                 'nombre_estudiante' => trim($nino_primer_nombre . ' ' . $nino_primer_apellido)
             ));
 
@@ -1541,21 +1691,28 @@ class Estudiantes
             // ============================================================
             // 2. ESTUDIANTE: verificar que no exista, crear
             // ============================================================
-            $stmt = $db->prepare("SELECT id, activo FROM estudiantes WHERE id_persona = :id_persona AND id_tenant = :id_tenant");
-            $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
-            $stmt->bindParam(':id_persona', $id_persona_nino);
-            $stmt->execute();
-            $estudianteExistente = $stmt->fetch(PDO::FETCH_ASSOC);
+            $estudianteExistente = self::buscarEstudiantePorPersona($db, $id_persona_nino);
 
             $estudiante_ya_existia = false;
+            $estudiante_reactivado = false;
+
             if ($estudianteExistente) {
-                if ($estudianteExistente['activo'] == 0) {
-                    $db->rollBack();
-                    Flight::json(array('error' => 'Este estudiante existe pero está inactivo. Actívelo primero desde el módulo de estudiantes.'), 400);
-                    return;
-                }
                 $id_estudiante = $estudianteExistente['id'];
                 $estudiante_ya_existia = true;
+
+                if ((int)$estudianteExistente['activo'] === 1) {
+                    $db->rollBack();
+                    Flight::json(array('error' => 'Este estudiante ya está registrado y activo. Búsquelo en el módulo de estudiantes.'), 400);
+                    return;
+                }
+
+                // Inactivo: se reactiva en lugar de mandar al usuario a otro
+                // modulo a hacerlo a mano.
+                $stmt = $db->prepare("UPDATE estudiantes SET activo = 1 WHERE id = :id AND id_tenant = :id_tenant");
+                $stmt->bindValue(':id', $id_estudiante);
+                $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                $stmt->execute();
+                $estudiante_reactivado = true;
             } else {
                 $fecha_ingreso = (isset($nino['fecha_ingreso']) && $nino['fecha_ingreso']) ? $nino['fecha_ingreso'] : date('Y-m-d');
                 $idEstudiante = Uuid::generar();
@@ -1573,11 +1730,20 @@ class Estudiantes
             // ============================================================
             // 3. ASIGNAR GRUPO Y GRADO (si no tiene uno activo)
             // ============================================================
-            $stmt = $db->prepare("SELECT id FROM estudiantes_x_grupos WHERE id_estudiante = :id_estudiante AND activo = 1 AND id_tenant = :id_tenant");
+            $stmt = $db->prepare("SELECT id, id_grupo FROM estudiantes_x_grupos WHERE id_estudiante = :id_estudiante AND activo = 1 AND id_tenant = :id_tenant");
             $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
             $stmt->bindParam(':id_estudiante', $id_estudiante);
             $stmt->execute();
             $grupoActual = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            // Reactivado: si viene otro grupo, se mueve.
+            if ($grupoActual && $grupoActual['id_grupo'] !== $id_grupo) {
+                $stmt = $db->prepare("UPDATE estudiantes_x_grupos SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
+                $stmt->bindValue(':id', $grupoActual['id']);
+                $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                $stmt->execute();
+                $grupoActual = null;
+            }
 
             if (!$grupoActual) {
                 $stmt = $db->prepare("INSERT INTO estudiantes_x_grupos (id_tenant, id_estudiante, id_grupo, id_grado, anio, activo)
@@ -1685,6 +1851,7 @@ class Estudiantes
                 'id_estudiante' => $id_estudiante,
                 'id_persona_nino' => $id_persona_nino,
                 'estudiante_ya_existia' => $estudiante_ya_existia,
+                'estudiante_reactivado' => $estudiante_reactivado,
                 'acudientes' => $acudientesCreados,
                 'nombre_estudiante' => trim(
                     (isset($nino['primer_nombre']) ? $nino['primer_nombre'] : '') . ' ' .

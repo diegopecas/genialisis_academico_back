@@ -119,6 +119,77 @@ class Acudientes
         return trim((string)$acudiente['numero_identificacion']) === trim((string)$estudiante['numero_identificacion']);
     }
 
+    /**
+     * True si esa persona YA es acudiente de ese estudiante.
+     *
+     * No se mira el tipo de acudiente a proposito: la misma persona no puede
+     * estar dos veces en el mismo estudiante, asi la primera vez se haya
+     * registrado como Padre y la segunda como Otro. El endpoint
+     * verificarDuplicados si incluye el tipo y se deja como esta, porque el
+     * front ya lo consume asi.
+     *
+     * @param  PDO    $db
+     * @param  string $id_estudiante
+     * @param  string $id_persona
+     * @param  string $id_excluir Fila que no cuenta, para el caso de editar
+     * @return array|null Fila existente con el parentesco, o null
+     */
+    private static function acudienteYaRegistrado(PDO $db, $id_estudiante, $id_persona, $id_excluir = null)
+    {
+        if (empty($id_estudiante) || empty($id_persona)) {
+            return null;
+        }
+
+        $sql = "SELECT a.id,
+                       a.activo,
+                       ta.nombre AS tipo_acudiente,
+                       TRIM(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido)) AS nombre
+                FROM acudientes a
+                LEFT JOIN tipos_acudiente ta ON ta.id = a.id_tipo_acudiente
+                LEFT JOIN personas p ON p.id = a.id_persona
+                WHERE a.id_estudiante = :id_estudiante
+                  AND a.id_persona = :id_persona
+                  AND a.id_tenant = :id_tenant";
+
+        if (!empty($id_excluir)) {
+            $sql .= " AND a.id <> :id_excluir";
+        }
+
+        $sentence = $db->prepare($sql . " LIMIT 1");
+        $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindParam(':id_persona', $id_persona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+
+        if (!empty($id_excluir)) {
+            $sentence->bindParam(':id_excluir', $id_excluir);
+        }
+
+        $sentence->execute();
+        $fila = $sentence->fetch();
+
+        return $fila ? $fila : null;
+    }
+
+    /**
+     * Mensaje de acudiente repetido, diciendo con que parentesco quedo.
+     */
+    private static function mensajeAcudienteRepetido($existente)
+    {
+        $mensaje = !empty($existente['nombre'])
+            ? $existente['nombre'] . ' ya es acudiente de este estudiante'
+            : 'Esa persona ya es acudiente de este estudiante';
+
+        if (!empty($existente['tipo_acudiente'])) {
+            $mensaje .= ', registrada como ' . $existente['tipo_acudiente'];
+        }
+
+        if (isset($existente['activo']) && (int)$existente['activo'] === 0) {
+            return $mensaje . ', pero esta inactiva. Actívela en lugar de crearla otra vez.';
+        }
+
+        return $mensaje . '.';
+    }
+
     public static function new()
     {
         try {
@@ -142,6 +213,14 @@ class Acudientes
             if (self::esElMismoEstudiante($db, $id_estudiante, $id_persona)) {
                 $db->rollback();
                 Flight::json(['error' => 'El estudiante no puede ser su propio acudiente'], 400);
+                return;
+            }
+
+            $repetido = self::acudienteYaRegistrado($db, $id_estudiante, $id_persona);
+
+            if ($repetido) {
+                $db->rollback();
+                Flight::json(['error' => self::mensajeAcudienteRepetido($repetido)], 400);
                 return;
             }
 
@@ -196,6 +275,14 @@ class Acudientes
             if (self::esElMismoEstudiante($db, $id_estudiante, $id_persona)) {
                 $db->rollback();
                 Flight::json(['error' => 'El estudiante no puede ser su propio acudiente'], 400);
+                return;
+            }
+
+            $repetido = self::acudienteYaRegistrado($db, $id_estudiante, $id_persona, $id);
+
+            if ($repetido) {
+                $db->rollback();
+                Flight::json(['error' => self::mensajeAcudienteRepetido($repetido)], 400);
                 return;
             }
 
