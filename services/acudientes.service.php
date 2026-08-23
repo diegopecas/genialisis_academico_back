@@ -316,4 +316,43 @@ class Acudientes
         $response = $sentence->fetchAll();
         Flight::json($response);
     }
+
+    /**
+     * True si la persona es acudiente activo del estudiante y con permiso de
+     * ver el portal de padres.
+     *
+     * No responde JSON: es una consulta interna pensada para que otros
+     * servicios validen el acceso de un acudiente antes de entregar datos del
+     * nino. Recibe la conexion ya abierta para poder usarse dentro de una
+     * transaccion en curso.
+     *
+     * @param PDO $db
+     * @param string $idPersona Persona del usuario en sesion
+     * @param string $idEstudiante
+     * @return bool
+     */
+    public static function esEstudianteDelAcudiente(PDO $db, $idPersona, $idEstudiante)
+    {
+        if (empty($idPersona) || empty($idEstudiante)) {
+            return false;
+        }
+
+        $sentence = $db->prepare("SELECT COUNT(*) AS total
+                                FROM acudientes a
+                                INNER JOIN estudiantes e ON a.id_estudiante = e.id
+                                WHERE a.id_persona = :id_persona
+                                AND a.id_estudiante = :id_estudiante
+                                AND a.activo = 1
+                                AND a.ve_en_portal_padres = 1
+                                AND e.activo = 1
+                                AND a.id_tenant = :id_tenant");
+
+        $sentence->bindParam(':id_persona', $idPersona);
+        $sentence->bindParam(':id_estudiante', $idEstudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $response = $sentence->fetch();
+
+        return !empty($response) && (int) $response['total'] > 0;
+    }
 }
