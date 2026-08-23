@@ -39,77 +39,77 @@ class MiAgenda
         'asistencia' => [
             'nombre' => 'Entradas y salidas',
             'icono'  => '🚪',
-            'color'  => '#1abc9c',
+            'color'  => '#00B894',
             'metodo' => 'fuenteAsistencia',
             'orden'  => 1,
         ],
         'utiles' => [
             'nombre' => 'Útiles y accesorios',
             'icono'  => '🎒',
-            'color'  => '#e67e22',
+            'color'  => '#0984E3',
             'metodo' => 'fuenteUtiles',
             'orden'  => 2,
         ],
         'actividades' => [
             'nombre' => 'Actividades',
             'icono'  => '🎨',
-            'color'  => '#3498db',
+            'color'  => '#E17055',
             'metodo' => 'fuenteActividades',
             'orden'  => 3,
         ],
         'observaciones' => [
             'nombre' => 'Observaciones',
             'icono'  => '💬',
-            'color'  => '#9b59b6',
+            'color'  => '#6C5CE7',
             'metodo' => 'fuenteObservaciones',
             'orden'  => 4,
         ],
         'alimentacion' => [
             'nombre' => 'Alimentación',
             'icono'  => '🍽️',
-            'color'  => '#27ae60',
+            'color'  => '#00CEC9',
             'metodo' => 'fuenteAlimentacion',
             'orden'  => 5,
         ],
         'solicitudes' => [
             'nombre' => 'Solicitudes',
             'icono'  => '📝',
-            'color'  => '#f39c12',
+            'color'  => '#F39C12',
             'metodo' => 'fuenteSolicitudes',
             'orden'  => 6,
         ],
         'galerias' => [
             'nombre' => 'Fotos del día',
             'icono'  => '📷',
-            'color'  => '#e84393',
+            'color'  => '#E84393',
             'metodo' => 'fuenteGalerias',
             'orden'  => 7,
         ],
         'notificaciones' => [
             'nombre' => 'Notificaciones',
             'icono'  => '🔔',
-            'color'  => '#2980b9',
+            'color'  => '#D63031',
             'metodo' => 'fuenteNotificaciones',
             'orden'  => 8,
         ],
         'medidas' => [
             'nombre' => 'Medidas',
             'icono'  => '📏',
-            'color'  => '#16a085',
+            'color'  => '#16A085',
             'metodo' => 'fuenteMedidas',
             'orden'  => 9,
         ],
         'pagos' => [
             'nombre' => 'Pagos recibidos',
             'icono'  => '💰',
-            'color'  => '#2ecc71',
+            'color'  => '#27AE60',
             'metodo' => 'fuentePagos',
             'orden'  => 10,
         ],
         'cuentas' => [
             'nombre' => 'Cuentas generadas',
             'icono'  => '🧾',
-            'color'  => '#c0392b',
+            'color'  => '#8E44AD',
             'metodo' => 'fuenteCuentas',
             'orden'  => 11,
         ],
@@ -213,7 +213,7 @@ class MiAgenda
             $eventos = array_merge($eventos, $delaFuente);
         }
 
-        usort($eventos, [self::class, 'compararEventos']);
+        $eventos = self::ordenarPorHora($eventos);
 
         Flight::json([
             'id_estudiante'    => $id_estudiante,
@@ -378,7 +378,7 @@ class MiAgenda
                 'detalle'    => !empty($noRegreso)
                     ? 'No regresó: ' . self::listaDeNombres($noRegreso)
                     : self::listaDeNombres($regreso),
-                'orden'      => 890,
+                'orden'      => 910,
                 'meta'       => ['regresaron' => $regreso, 'no_regresaron' => $noRegreso],
             ]);
         }
@@ -654,12 +654,26 @@ class MiAgenda
      */
     private static function fuenteGalerias($db, $id_estudiante, $fecha, $contexto)
     {
+        // Por defecto GROUP_CONCAT corta en 1024 bytes y una galeria con
+        // muchas fotos perderia las ultimas. Solo afecta a esta sesion.
+        $db->exec('SET SESSION group_concat_max_len = 100000');
+
         $sentence = $db->prepare("
             SELECT g.id,
                    g.nombre,
                    g.descripcion,
                    g.es_publica,
-                   COUNT(gi.id) AS total_imagenes
+                   COUNT(gi.id) AS total_imagenes,
+                   -- Las imagenes viajan en el mismo query para no disparar
+                   -- una consulta por galeria. Se manda el guid y no la url:
+                   -- gi.url es relativa y las imagenes se sirven con un token
+                   -- efimero, asi que el front arma la url con el guid.
+                   -- El separador raro evita chocar con el texto del alt.
+                   GROUP_CONCAT(
+                       CONCAT_WS('|@|', gi.guid, COALESCE(gi.alt, ''), gi.tipo_media)
+                       ORDER BY gi.orden, gi.created_at
+                       SEPARATOR '|#|'
+                   ) AS imagenes_crudas
             FROM galerias g
             INNER JOIN galeria_imagenes gi ON gi.id_galeria = g.id
             WHERE g.id_tenant = :id_tenant
@@ -697,7 +711,7 @@ class MiAgenda
                 'meta'       => [
                     'total_imagenes' => $total,
                     'es_publica'     => (int) $fila['es_publica'],
-                    'ruta'           => '/galeria',
+                    'imagenes'       => self::desarmarImagenes($fila['imagenes_crudas']),
                 ],
             ]);
         }
@@ -824,8 +838,8 @@ class MiAgenda
             WHERE pr.id_tenant = :id_tenant
               AND pr.id_estudiante = :id_estudiante
               AND COALESCE(pr.anulado, 0) = 0
-              AND DATE(pr.fecha) = :fecha
-            ORDER BY pr.fecha
+              AND DATE(pr.fecha_registro) = :fecha
+            ORDER BY pr.fecha_registro
         ");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
@@ -836,11 +850,27 @@ class MiAgenda
         $eventos = [];
 
         foreach ($filas as $fila) {
+            // La agenda cuenta lo que paso HOY, y lo que paso hoy es que se
+            // registro el pago. pr.fecha es la fecha contable (puede ser de
+            // otro dia) y va en el texto, no en la linea de tiempo.
+            $partes = ['Pago del ' . self::fechaEnTexto($fila['fecha'])];
+
+            if (!empty($fila['nombre_tipo_pago'])) {
+                $partes[] = $fila['nombre_tipo_pago'];
+            }
+
+            if (!empty($fila['referencia_bancaria'])) {
+                $partes[] = 'Ref. ' . $fila['referencia_bancaria'];
+            }
+
+            if (!empty($fila['observaciones'])) {
+                $partes[] = $fila['observaciones'];
+            }
+
             $eventos[] = self::evento('pagos', 'pago', $fila['id'], [
-                // pr.fecha es la fecha contable del pago y no trae hora real.
-                'fecha_hora' => self::horaDelDia($fila['fecha_registro'], $fecha),
-                'titulo'     => 'Pago registrado',
-                'detalle'    => $fila['observaciones'],
+                'fecha_hora' => $fila['fecha_registro'],
+                'titulo'     => 'Se registró un pago',
+                'detalle'    => implode(' · ', $partes),
                 'etiqueta'   => $fila['nombre_tipo_pago'],
                 'valor'      => (float) $fila['valor_recibido'],
                 'orden'      => 800,
@@ -848,6 +878,8 @@ class MiAgenda
                     'anio'                => $fila['anio'],
                     'numero'              => $fila['numero'],
                     'referencia_bancaria' => $fila['referencia_bancaria'],
+                    'fecha_pago'          => $fila['fecha'],
+                    'observaciones'       => $fila['observaciones'],
                     'ruta'                => '/mi-cuenta',
                 ],
             ]);
@@ -866,17 +898,19 @@ class MiAgenda
         $sentence = $db->prepare("
             SELECT cpc.id,
                    cpc.fecha,
+                   cpc.fecha_generado,
                    cpc.valor,
                    cpc.detalle,
                    cpc.es_mora,
+                   cpc.valor_recargo_mora,
                    ps.nombre AS nombre_producto_servicio
             FROM cuentas_por_cobrar cpc
             INNER JOIN productos_servicios ps ON ps.id = cpc.id_producto_servicio
             WHERE cpc.id_tenant = :id_tenant
               AND cpc.id_persona = :id_persona
               AND COALESCE(cpc.anulado, 0) = 0
-              AND cpc.fecha = :fecha
-            ORDER BY ps.nombre
+              AND DATE(cpc.fecha_generado) = :fecha
+            ORDER BY cpc.fecha_generado
         ");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindValue(':id_persona', $contexto['id_persona']);
@@ -887,16 +921,29 @@ class MiAgenda
         $eventos = [];
 
         foreach ($filas as $fila) {
-            $eventos[] = self::evento('cuentas', (int) $fila['es_mora'] === 1 ? 'mora' : 'cuenta', $fila['id'], [
-                'fecha_hora' => null,
-                'titulo'     => $fila['nombre_producto_servicio'],
-                'detalle'    => $fila['detalle'],
-                'etiqueta'   => (int) $fila['es_mora'] === 1 ? 'Intereses de mora' : null,
+            $esMora = (int) $fila['es_mora'] === 1;
+
+            // Igual que en pagos: la linea de tiempo va por cuando se genero
+            // la cuenta, y la fecha de vencimiento se cuenta en el texto.
+            $partes = ['Vence el ' . self::fechaEnTexto($fila['fecha'])];
+
+            if (!empty($fila['detalle'])) {
+                $partes[] = $fila['detalle'];
+            }
+
+            $eventos[] = self::evento('cuentas', $esMora ? 'mora' : 'cuenta', $fila['id'], [
+                'fecha_hora' => $fila['fecha_generado'],
+                'titulo'     => 'Se generó ' . ($esMora ? 'un recargo por mora' : 'una cuenta') . ': ' . $fila['nombre_producto_servicio'],
+                'detalle'    => implode(' · ', $partes),
+                'etiqueta'   => $esMora ? 'Intereses de mora' : null,
                 'valor'      => (float) $fila['valor'],
                 'orden'      => 810,
                 'meta'       => [
-                    'es_mora' => (int) $fila['es_mora'],
-                    'ruta'    => '/mi-cuenta',
+                    'es_mora'            => (int) $fila['es_mora'],
+                    'producto_servicio'  => $fila['nombre_producto_servicio'],
+                    'fecha_vencimiento'  => $fila['fecha'],
+                    'detalle_cuenta'     => $fila['detalle'],
+                    'ruta'               => '/mi-cuenta',
                 ],
             ]);
         }
@@ -932,10 +979,14 @@ class MiAgenda
             'pie'           => $datos['pie'] ?? null,
             'etiqueta'      => $datos['etiqueta'] ?? null,
             'valor'         => $datos['valor'] ?? null,
-            // El color y el icono propios del registro mandan sobre los de la
-            // fuente: asi una observacion sale con el color de su tipo.
-            'color'         => !empty($datos['color']) ? $datos['color'] : $config['color'],
-            'icono'         => !empty($datos['icono']) ? $datos['icono'] : $config['icono'],
+            // El color y el icono salen SIEMPRE de la fuente, nunca del
+            // registro: asi las tres vistas pintan lo mismo para el mismo
+            // tipo de evento. Antes el tipo de observacion podia traer su
+            // propio color o una clase de Font Awesome, y cada vista lo
+            // resolvia distinto. El color del registro sigue disponible en
+            // meta por si alguna vista lo necesita.
+            'color'         => $config['color'],
+            'icono'         => $config['icono'],
             'nombre_fuente' => $config['nombre'],
             'orden'         => $datos['orden'] ?? $config['orden'] * 100,
             'meta'          => $datos['meta'] ?? new stdClass(),
@@ -943,24 +994,114 @@ class MiAgenda
     }
 
     /**
-     * Orden de la linea de tiempo: primero por hora, y los eventos sin hora
-     * caen en la posicion que les da su `orden`. Asi "llegó al jardín" queda
-     * antes que "llegó con la lonchera" aunque el segundo no tenga hora.
+     * Ordena todos los eventos del dia en una sola linea de tiempo.
+     *
+     * El problema: no todos los eventos tienen hora confiable (los utiles y
+     * las galerias no la tienen). Comparar "por hora si ambos la tienen, si
+     * no por orden" da un comparador no transitivo, y usort con eso devuelve
+     * un orden impredecible: por eso los eventos salian revueltos.
+     *
+     * La solucion es que TODOS tengan un peso comparable antes de ordenar.
+     * Al evento sin hora se le presta la del evento con hora que le queda
+     * mas cerca por debajo segun su `orden`, que es justo donde deberia caer
+     * en el dia: los utiles que trajo se anclan a la entrada (orden 10), los
+     * que devolvio a la salida (orden 900). Si no hay ninguno por debajo, se
+     * ancla al primero del dia. Y si el dia entero viene sin horas, se cae a
+     * `orden`, que ya trae el orden logico de la jornada.
+     *
+     * @param array $eventos
+     * @return array
      */
-    private static function compararEventos($a, $b)
+    private static function ordenarPorHora($eventos)
     {
-        $horaA = $a['fecha_hora'] ? strtotime($a['fecha_hora']) : null;
-        $horaB = $b['fecha_hora'] ? strtotime($b['fecha_hora']) : null;
-
-        if ($horaA !== null && $horaB !== null && $horaA !== $horaB) {
-            return $horaA < $horaB ? -1 : 1;
+        if (empty($eventos)) {
+            return [];
         }
 
-        if ($a['orden'] !== $b['orden']) {
-            return $a['orden'] < $b['orden'] ? -1 : 1;
+        // Eventos con hora, ordenados por su `orden`, para poder buscar el
+        // ancla de cada evento sin hora.
+        $conHora = [];
+
+        foreach ($eventos as $evento) {
+            if (!empty($evento['fecha_hora'])) {
+                $conHora[] = [
+                    'orden' => $evento['orden'],
+                    'peso'  => strtotime($evento['fecha_hora']),
+                ];
+            }
         }
 
-        return strcmp((string) $a['titulo'], (string) $b['titulo']);
+        usort($conHora, function ($a, $b) {
+            return $a['orden'] <=> $b['orden'];
+        });
+
+        $pesoMinimo = null;
+        foreach ($conHora as $referencia) {
+            if ($pesoMinimo === null || $referencia['peso'] < $pesoMinimo) {
+                $pesoMinimo = $referencia['peso'];
+            }
+        }
+
+        foreach ($eventos as $i => $evento) {
+            if (!empty($evento['fecha_hora'])) {
+                $eventos[$i]['peso_orden'] = strtotime($evento['fecha_hora']);
+                continue;
+            }
+
+            $eventos[$i]['peso_orden'] = self::anclarSinHora(
+                $evento['orden'],
+                $conHora,
+                $pesoMinimo
+            );
+        }
+
+        usort($eventos, function ($a, $b) {
+            if ($a['peso_orden'] !== $b['peso_orden']) {
+                return $a['peso_orden'] <=> $b['peso_orden'];
+            }
+
+            if ($a['orden'] !== $b['orden']) {
+                return $a['orden'] <=> $b['orden'];
+            }
+
+            return strcmp((string) $a['titulo'], (string) $b['titulo']);
+        });
+
+        // peso_orden es de uso interno: no tiene por que viajar al front.
+        foreach ($eventos as $i => $evento) {
+            unset($eventos[$i]['peso_orden']);
+        }
+
+        return array_values($eventos);
+    }
+
+    /**
+     * Peso de un evento sin hora: el del ultimo evento con hora que quede
+     * por debajo suyo en la jornada.
+     *
+     * @param int $orden Posicion logica del evento en el dia
+     * @param array $conHora Eventos con hora, ya ordenados por `orden`
+     * @param int|null $pesoMinimo Hora mas temprana del dia
+     * @return int
+     */
+    private static function anclarSinHora($orden, $conHora, $pesoMinimo)
+    {
+        if (empty($conHora)) {
+            return $orden;
+        }
+
+        $ancla = null;
+
+        foreach ($conHora as $referencia) {
+            if ($referencia['orden'] <= $orden) {
+                $ancla = $referencia['peso'];
+            } else {
+                break;
+            }
+        }
+
+        // Nada por debajo: va antes que todo lo del dia.
+        return $ancla !== null ? $ancla : $pesoMinimo - 1;
     }
 
     /**
@@ -991,6 +1132,13 @@ class MiAgenda
         $salida = [];
 
         foreach ($claves as $clave) {
+            // Las fuentes sin eventos no se devuelven: si ese dia no hubo
+            // nada de esa categoria, no tiene por que aparecer en ningun
+            // lado de la pantalla.
+            if (empty($totales[$clave])) {
+                continue;
+            }
+
             $config = self::FUENTES[$clave];
             $salida[] = [
                 'clave'  => $clave,
@@ -998,7 +1146,7 @@ class MiAgenda
                 'icono'  => $config['icono'],
                 'color'  => $config['color'],
                 'orden'  => $config['orden'],
-                'total'  => isset($totales[$clave]) ? $totales[$clave] : 0,
+                'total'  => $totales[$clave],
             ];
         }
 
@@ -1061,6 +1209,41 @@ class MiAgenda
     }
 
     /**
+     * Convierte el GROUP_CONCAT de imagenes en una lista utilizable.
+     *
+     * El limite por defecto de group_concat_max_len (1024) corta la cadena
+     * en galerias grandes, por eso se sube para esta consulta y aqui se
+     * descartan los pedazos que no traigan al menos guid.
+     *
+     * @param string|null $crudas
+     * @return array
+     */
+    private static function desarmarImagenes($crudas)
+    {
+        if (empty($crudas)) {
+            return [];
+        }
+
+        $salida = [];
+
+        foreach (explode('|#|', $crudas) as $pedazo) {
+            $partes = explode('|@|', $pedazo);
+
+            if (empty($partes[0])) {
+                continue;
+            }
+
+            $salida[] = [
+                'guid'       => $partes[0],
+                'alt'        => isset($partes[1]) ? $partes[1] : '',
+                'tipo_media' => isset($partes[2]) ? $partes[2] : 'imagen',
+            ];
+        }
+
+        return $salida;
+    }
+
+    /**
      * Devuelve el timestamp solo si cae dentro del dia consultado.
      *
      * Varias tablas guardan la fecha del hecho sin hora util y la hora real
@@ -1087,6 +1270,40 @@ class MiAgenda
         $d = DateTime::createFromFormat('Y-m-d', $fecha);
 
         return $d && $d->format('Y-m-d') === $fecha;
+    }
+
+    /**
+     * Fecha en texto corto para meter dentro de una frase: "5 de noviembre".
+     *
+     * Los meses van en un arreglo propio y no con strftime ni IntlDateFormatter
+     * porque dependen del locale instalado en el servidor, que no siempre trae
+     * espanol y devolveria los meses en ingles.
+     */
+    private static function fechaEnTexto($fecha)
+    {
+        if (empty($fecha)) {
+            return '';
+        }
+
+        $meses = [
+            1 => 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+            'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+        ];
+
+        $tiempo = strtotime($fecha);
+
+        if ($tiempo === false) {
+            return (string) $fecha;
+        }
+
+        $dia = (int) date('j', $tiempo);
+        $mes = (int) date('n', $tiempo);
+
+        // El anio solo se escribe cuando no es el actual: en la agenda del
+        // dia repetirlo en cada renglon es ruido.
+        $anio = date('Y', $tiempo) !== date('Y') ? ' de ' . date('Y', $tiempo) : '';
+
+        return $dia . ' de ' . $meses[$mes] . $anio;
     }
 
     /** Une los nombres de una lista de items en un texto legible. */
