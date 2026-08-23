@@ -85,6 +85,86 @@ class Personas
         }
     }
 
+    /**
+     * Persona que ya tiene ese numero de documento en el tenant, o null.
+     *
+     * Se compara solo el numero porque asi esta el indice unico. Devuelve la
+     * fila para poder decirle al usuario con que tipo quedo registrada.
+     *
+     * @param  PDO    $db
+     * @param  string $numero_identificacion
+     * @param  string $id_excluir Id que no cuenta, para el caso de editar
+     * @return array|null
+     */
+    private static function buscarPorNumero(PDO $db, $numero_identificacion, $id_excluir = null)
+    {
+        if (empty($numero_identificacion)) {
+            return null;
+        }
+
+        $sql = "SELECT p.id,
+                       p.numero_identificacion,
+                       TRIM(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido)) AS nombre,
+                       ti.nombre AS tipo_identificacion
+                FROM personas p
+                LEFT JOIN tipos_identificacion ti ON ti.id = p.id_tipo_identificacion
+                WHERE p.numero_identificacion = :numero_identificacion
+                  AND p.id_tenant = :id_tenant";
+
+        if (!empty($id_excluir)) {
+            $sql .= " AND p.id <> :id_excluir";
+        }
+
+        $sentence = $db->prepare($sql . " LIMIT 1");
+        $sentence->bindParam(':numero_identificacion', $numero_identificacion);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+
+        if (!empty($id_excluir)) {
+            $sentence->bindParam(':id_excluir', $id_excluir);
+        }
+
+        $sentence->execute();
+        $fila = $sentence->fetch();
+
+        return $fila ? $fila : null;
+    }
+
+    /**
+     * Mensaje de duplicado, diciendo con que tipo quedo registrada la
+     * persona. Sin eso el usuario no entiende por que no lo deja guardar.
+     */
+    private static function mensajeDuplicado($existente)
+    {
+        $mensaje = 'Ya existe una persona con el documento ' . $existente['numero_identificacion'];
+
+        if (!empty($existente['tipo_identificacion'])) {
+            $mensaje .= ', registrada como ' . $existente['tipo_identificacion'];
+        }
+
+        if (!empty($existente['nombre'])) {
+            $mensaje .= ' (' . $existente['nombre'] . ')';
+        }
+
+        return $mensaje . '. Busque el documento para cargar sus datos.';
+    }
+
+    /**
+     * Busca una persona por su documento.
+     *
+     * La busqueda va SOLO por numero, aunque el tipo se siga recibiendo: el
+     * indice unico personas_unique es (id_tenant, numero_identificacion), sin
+     * el tipo, asi que en un tenant no puede haber dos personas con el mismo
+     * numero.
+     *
+     * Antes se filtraba por tipo Y numero, y eso hacia que una persona
+     * registrada como NUIP no apareciera al buscarla como Cedula: el usuario
+     * la daba por nueva, llenaba los datos y el INSERT reventaba contra el
+     * indice con un error de base.
+     *
+     * El parametro del tipo se conserva para no cambiar la firma ni la ruta,
+     * que consumen ocho pantallas. Quien llama recibe la persona con su tipo
+     * real y puede corregir lo que tenga en pantalla.
+     */
     public static function getByIdentificacion($id_tipo_identificacion, $numero_identificacion)
     {
         try {
@@ -100,11 +180,9 @@ class Personas
         INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
         LEFT JOIN generos g ON p.id_genero = g.id
         LEFT JOIN ciudades c ON p.id_ciudad = c.id
-        WHERE p.id_tipo_identificacion = :id_tipo_identificacion 
-        AND p.numero_identificacion = :numero_identificacion
+        WHERE p.numero_identificacion = :numero_identificacion
         AND p.id_tenant = :id_tenant");
 
-            $sentence->bindParam(':id_tipo_identificacion', $id_tipo_identificacion);
             $sentence->bindParam(':numero_identificacion', $numero_identificacion);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
@@ -151,6 +229,15 @@ class Personas
 
             $idTenant = TenantContext::id();
             $id = Uuid::generar();
+
+            // El indice unico personas_unique ya lo impide, pero reventaria
+            // con un error de base. Aqui sale un mensaje que se entiende.
+            $existente = self::buscarPorNumero($db, $numero_identificacion);
+
+            if ($existente) {
+                Flight::json(array('error' => self::mensajeDuplicado($existente)), 400);
+                return;
+            }
 
             // Preparar la sentencia SQL
             $sentence = $db->prepare("INSERT INTO personas (
@@ -259,6 +346,15 @@ class Personas
             // Validar solo los datos mínimos necesarios
             if (!$id || !$id_tipo_identificacion || !$numero_identificacion) {
                 Flight::json(array('error' => 'Faltan datos obligatorios'), 400);
+                return;
+            }
+
+            // Se excluye la propia persona: editarla sin cambiarle el
+            // documento no puede chocar consigo misma.
+            $existente = self::buscarPorNumero($db, $numero_identificacion, $id);
+
+            if ($existente) {
+                Flight::json(array('error' => self::mensajeDuplicado($existente)), 400);
                 return;
             }
 

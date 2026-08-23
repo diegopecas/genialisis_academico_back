@@ -54,6 +54,71 @@ class Acudientes
         Flight::json($response);
     }
 
+    /**
+     * Un estudiante no puede ser su propio acudiente.
+     *
+     * Se revisan dos cosas, porque hay dos formas de caer en el error:
+     *
+     * 1. Que sea literalmente la misma persona (mismo id_persona), que es lo
+     *    que pasa cuando se escoge al estudiante de una lista.
+     *
+     * 2. Que sean dos personas distintas con el MISMO numero de documento.
+     *    Es el caso del registro rapido: si se digita el documento del
+     *    estudiante en el campo del acudiente y esa persona todavia no
+     *    existe, se crean dos personas separadas y el id_persona nunca
+     *    coincide.
+     *
+     * El numero se compara solo, sin el tipo de documento: el mismo numero
+     * registrado una vez como NUIP y otra como Cedula sigue siendo el error
+     * que se quiere evitar.
+     *
+     * @param  PDO    $db
+     * @param  string $id_estudiante
+     * @param  string $id_persona Persona que se quiere dejar como acudiente
+     * @return bool   true si esa persona ES el propio estudiante
+     */
+    private static function esElMismoEstudiante(PDO $db, $id_estudiante, $id_persona)
+    {
+        if (empty($id_estudiante) || empty($id_persona)) {
+            return false;
+        }
+
+        $sentence = $db->prepare("SELECT e.id_persona,
+                                         p.numero_identificacion
+                                  FROM estudiantes e
+                                  INNER JOIN personas p ON p.id = e.id_persona
+                                  WHERE e.id = :id_estudiante AND e.id_tenant = :id_tenant
+                                  LIMIT 1");
+        $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $estudiante = $sentence->fetch();
+
+        if (!$estudiante) {
+            return false;
+        }
+
+        if ($estudiante['id_persona'] === $id_persona) {
+            return true;
+        }
+
+        if (empty($estudiante['numero_identificacion'])) {
+            return false;
+        }
+
+        $sentence = $db->prepare("SELECT numero_identificacion FROM personas
+                                  WHERE id = :id_persona LIMIT 1");
+        $sentence->bindParam(':id_persona', $id_persona);
+        $sentence->execute();
+        $acudiente = $sentence->fetch();
+
+        if (!$acudiente || empty($acudiente['numero_identificacion'])) {
+            return false;
+        }
+
+        return trim((string)$acudiente['numero_identificacion']) === trim((string)$estudiante['numero_identificacion']);
+    }
+
     public static function new()
     {
         try {
@@ -73,6 +138,12 @@ class Acudientes
             $autorizado_recoger = Flight::request()->data['autorizado_recoger'];
             $ve_en_portal_padres = Flight::request()->data['ve_en_portal_padres'];
             $activo = Flight::request()->data['activo'];
+
+            if (self::esElMismoEstudiante($db, $id_estudiante, $id_persona)) {
+                $db->rollback();
+                Flight::json(['error' => 'El estudiante no puede ser su propio acudiente'], 400);
+                return;
+            }
 
             $idNew = Uuid::generar();
             $sentence = $db->prepare("INSERT INTO acudientes(id, id_tenant, id_estudiante, id_persona, id_tipo_acudiente, empresa, cargo, telefono_oficina, es_responsable_pago, autorizado_recoger, ve_en_portal_padres, activo) 
@@ -121,6 +192,12 @@ class Acudientes
             $autorizado_recoger = Flight::request()->data['autorizado_recoger'];
             $ve_en_portal_padres = Flight::request()->data['ve_en_portal_padres'];
             $activo = Flight::request()->data['activo'];
+
+            if (self::esElMismoEstudiante($db, $id_estudiante, $id_persona)) {
+                $db->rollback();
+                Flight::json(['error' => 'El estudiante no puede ser su propio acudiente'], 400);
+                return;
+            }
 
             $sentence = $db->prepare("UPDATE acudientes SET 
                                 id_estudiante = :id_estudiante, 
