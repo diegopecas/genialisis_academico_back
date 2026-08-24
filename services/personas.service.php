@@ -50,6 +50,102 @@ class Personas
         }
     }
 
+    /**
+     * Lista plana de personas para el buscador del menu principal.
+     *
+     * Devuelve una fila por DESTINO, no por persona: una misma persona puede
+     * ser colaboradora y ademas acudiente de dos ninos, y en ese caso salen
+     * tres filas con el mismo id_persona. El front las agrupa y le muestra la
+     * lista al usuario para que escoja a donde ir.
+     *
+     * Solo se traen los campos que el buscador necesita (nombre, documento,
+     * tipo, id del destino, estado y un detalle corto). Nada de foto,
+     * direccion ni telefono, porque esta consulta se carga completa al abrir
+     * la aplicacion y el peso del JSON si importa.
+     *
+     * Los inactivos NO se filtran: vienen con activo = 0 para que el front los
+     * pinte en gris y los ordene de ultimos.
+     *
+     * Tampoco valida permisos. El filtrado por permiso se hace en el front,
+     * igual que en el resto del sistema.
+     */
+    public static function getBuscador()
+    {
+        try {
+            $db = Flight::db();
+
+            // El id_tenant va con tres nombres distintos porque PDO sin
+            // emulacion de prepares no permite repetir un parametro nombrado.
+            $sentence = $db->prepare("
+            SELECT
+                p.id AS id_persona,
+                TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_completo,
+                p.numero_identificacion,
+                'estudiante' AS tipo,
+                e.id AS id_destino,
+                e.activo AS activo,
+                NULL AS detalle
+            FROM estudiantes e
+            INNER JOIN personas p ON p.id = e.id_persona AND p.id_tenant = e.id_tenant
+            WHERE e.id_tenant = :id_tenant_est
+
+            UNION ALL
+
+            SELECT
+                p.id AS id_persona,
+                TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_completo,
+                p.numero_identificacion,
+                'colaborador' AS tipo,
+                c.id AS id_destino,
+                c.activo AS activo,
+                car.nombre AS detalle
+            FROM colaboradores c
+            INNER JOIN personas p ON p.id = c.id_persona AND p.id_tenant = c.id_tenant
+            LEFT JOIN cargos car ON car.id = c.id_cargo AND car.id_tenant = c.id_tenant
+            WHERE c.id_tenant = :id_tenant_col
+
+            UNION ALL
+
+            SELECT
+                p.id AS id_persona,
+                TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_completo,
+                p.numero_identificacion,
+                'acudiente' AS tipo,
+                a.id_estudiante AS id_destino,
+                CASE WHEN a.activo = 1 AND e.activo = 1 THEN 1 ELSE 0 END AS activo,
+                CONCAT(COALESCE(ta.nombre, 'Acudiente'), ' de ', TRIM(CONCAT_WS(' ', pe.primer_nombre, pe.primer_apellido))) AS detalle
+            FROM acudientes a
+            INNER JOIN personas p ON p.id = a.id_persona AND p.id_tenant = a.id_tenant
+            INNER JOIN estudiantes e ON e.id = a.id_estudiante AND e.id_tenant = a.id_tenant
+            INNER JOIN personas pe ON pe.id = e.id_persona AND pe.id_tenant = e.id_tenant
+            LEFT JOIN tipos_acudiente ta ON ta.id = a.id_tipo_acudiente
+            WHERE a.id_tenant = :id_tenant_acu
+
+            ORDER BY nombre_completo, tipo");
+
+            $idTenant = TenantContext::id();
+            $sentence->bindValue(':id_tenant_est', $idTenant, PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant_col', $idTenant, PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant_acu', $idTenant, PDO::PARAM_INT);
+            $sentence->execute();
+            $response = $sentence->fetchAll();
+
+            // PDO devuelve el activo como cadena y en JavaScript la cadena "0"
+            // es verdadera, asi que se entrega como entero para que el front
+            // pueda evaluarlo directo.
+            foreach ($response as $indice => $fila) {
+                $response[$indice]['activo'] = (int) $fila['activo'];
+            }
+
+            error_log("getBuscador: Se devolvieron " . count($response) . " destinos de personas");
+
+            Flight::json($response);
+        } catch (Exception $e) {
+            error_log("Error en getBuscador: " . $e->getMessage());
+            Flight::json(array('error' => 'Ocurrió un error al obtener las personas del buscador'), 500);
+        }
+    }
+
     public static function getById($id)
     {
         try {
