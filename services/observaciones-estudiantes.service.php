@@ -61,14 +61,25 @@ class ObservacionesEstudiantes
             oe.firma_informe_padre_afectado, 
             oe.id_usuario, 
             oe.fecha_registro,
-            CONCAT(p.primer_nombre, ' ', IFNULL(p.segundo_nombre, ''), ' ', p.primer_apellido, ' ', IFNULL(p.segundo_apellido, '')) AS nombre_usuario,
+            -- CONCAT_WS y no CONCAT: en CONCAT un solo NULL vuelve NULL toda
+            -- la cadena, y basta con que la persona no tenga apellido (pasa
+            -- con los usuarios que son una empresa y no una persona) para que
+            -- el nombre llegara vacio y el front mostrara el texto por
+            -- defecto. CONCAT_WS ignora los NULL y NULLIF deja el campo nulo
+            -- solo cuando de verdad no hay ningun nombre.
+            NULLIF(TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)), '') AS nombre_usuario,
             -- Obtener el nombre del estudiante afectado si existe
-            CONCAT(
-                pa.primer_nombre, ' ', 
-                IFNULL(pa.segundo_nombre, ''), ' ', 
-                pa.primer_apellido, ' ', 
-                IFNULL(pa.segundo_apellido, '')
-            ) AS nombre_estudiante_afectado
+            NULLIF(TRIM(CONCAT_WS(' ',
+                pa.primer_nombre,
+                pa.segundo_nombre,
+                pa.primer_apellido,
+                pa.segundo_apellido
+            )), '') AS nombre_estudiante_afectado,
+            -- Marca de cual de los dos lados es el estudiante consultado.
+            -- Con 1 la observacion la protagonizo otro nino y este solo fue
+            -- el afectado.
+            CASE WHEN oe.id_estudiante_afectado = :id_estudiante_marca
+                 THEN 1 ELSE 0 END AS es_afectado
         FROM 
             observaciones_estudiantes oe
         LEFT JOIN 
@@ -86,13 +97,21 @@ class ObservacionesEstudiantes
         LEFT JOIN
             tipos_observaciones_estudiantes toe ON oe.id_tipo_observacion_estudiante = toe.id
         WHERE 
-            oe.id_estudiante = :id_estudiante
+            -- Salen las dos caras: donde el estudiante es el protagonista y
+            -- donde es el afectado. Al papa del afectado tambien le interesa
+            -- saber que paso, aunque el hecho se haya registrado del otro lado.
+            (
+                oe.id_estudiante = :id_estudiante
+                OR oe.id_estudiante_afectado = :id_estudiante_afectado
+            )
             AND oe.id_tenant = :id_tenant
         -- Ordenar por fecha descendente (más reciente primero)
         ORDER BY 
             oe.fecha DESC, oe.fecha_registro DESC
     ");
         $sentence->bindParam(':id_estudiante', $id);
+        $sentence->bindParam(':id_estudiante_afectado', $id);
+        $sentence->bindParam(':id_estudiante_marca', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
