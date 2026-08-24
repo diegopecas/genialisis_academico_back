@@ -5,11 +5,25 @@ class DatosMedicos
     {
         $userData = JWTService::requerirAutenticacion();
         $db = Flight::db();
+        // El JOIN con los tipos va filtrado por tenant. Sin eso, un campo que
+        // apunte a un tipo de otro tenant (o a uno que ya no existe) se cae
+        // del INNER JOIN y desaparece del catalogo sin dar ningun error: el
+        // campo sigue en la tabla pero el front nunca lo ve, asi que no se
+        // puede consultar ni llenar. Pasa tipico despues de copiar datos
+        // entre bases.
+        //
+        // Va LEFT JOIN ademas de filtrado: si el tipo falta, el campo igual
+        // se entrega y se agrupa bajo "Sin clasificar", en vez de quedar
+        // invisible para siempre.
         $sentence = $db->prepare("SELECT dm.id, dm.id_tipo_dato_medico, dm.nombre, 
             dm.es_numero, dm.es_texto, dm.es_parrafo, dm.es_fecha, dm.opciones,
-            dm.orden, dm.activo, tdm.nombre AS nombre_tipo, tdm.icono AS icono_tipo
+            dm.orden, dm.activo,
+            COALESCE(tdm.nombre, 'Sin clasificar') AS nombre_tipo,
+            tdm.icono AS icono_tipo
             FROM datos_medicos dm
-            INNER JOIN tipos_datos_medicos tdm ON dm.id_tipo_dato_medico = tdm.id
+            LEFT JOIN tipos_datos_medicos tdm
+                   ON tdm.id = dm.id_tipo_dato_medico
+                  AND tdm.id_tenant = dm.id_tenant
             WHERE dm.id_tenant = :id_tenant
             ORDER BY tdm.orden, dm.orden, dm.nombre");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);

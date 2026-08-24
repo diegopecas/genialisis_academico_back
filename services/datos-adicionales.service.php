@@ -5,11 +5,25 @@ class DatosAdicionales
     {
         $userData = JWTService::requerirAutenticacion();
         $db = Flight::db();
+        // El JOIN con los tipos va filtrado por tenant. Sin eso, un campo que
+        // apunte a un tipo de otro tenant (o a uno que ya no existe) se cae
+        // del INNER JOIN y desaparece del catalogo sin dar ningun error: el
+        // campo sigue en la tabla pero el front nunca lo ve, asi que no se
+        // puede consultar ni llenar. Pasa tipico despues de copiar datos
+        // entre bases.
+        //
+        // Va LEFT JOIN ademas de filtrado: si el tipo falta, el campo igual
+        // se entrega y se agrupa bajo "Sin clasificar", en vez de quedar
+        // invisible para siempre.
         $sentence = $db->prepare("SELECT da.id, da.id_tipo_dato_adicional, da.nombre, 
             da.es_numero, da.es_texto, da.es_parrafo, da.es_fecha, da.opciones,
-            da.orden, da.activo, tda.nombre AS nombre_tipo, tda.icono AS icono_tipo
+            da.orden, da.activo,
+            COALESCE(tda.nombre, 'Sin clasificar') AS nombre_tipo,
+            tda.icono AS icono_tipo
             FROM datos_adicionales da
-            INNER JOIN tipos_datos_adicionales tda ON da.id_tipo_dato_adicional = tda.id
+            LEFT JOIN tipos_datos_adicionales tda
+                   ON tda.id = da.id_tipo_dato_adicional
+                  AND tda.id_tenant = da.id_tenant
             WHERE da.id_tenant = :id_tenant
             ORDER BY tda.orden, da.orden, da.nombre");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
