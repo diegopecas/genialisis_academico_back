@@ -483,11 +483,13 @@ class MiAgenda
         $eventos = [];
 
         foreach ($filas as $fila) {
-            // La observacion individual pesa mas que la descripcion generica
-            // de la actividad: es lo que el papa quiere leer de su hijo.
-            $detalle = !empty($fila['observacion_estudiante'])
-                ? $fila['observacion_estudiante']
-                : $fila['descripcion'];
+            // El detalle es siempre la descripcion de la actividad: que se
+            // hizo en clase. Antes, cuando habia observacion del estudiante,
+            // esta ocupaba el detalle y la descripcion desaparecia; y la
+            // observacion de la clase viajaba en meta sin que nadie la
+            // pintara. Ahora las dos observaciones van aparte, con su propio
+            // rotulo en la tarjeta, y no se pierde ninguna de las tres cosas.
+            $detalle = $fila['descripcion'];
 
             $eventos[] = self::evento('actividades', 'actividad', $fila['id'], [
                 'fecha_hora' => $fila['fecha_ejecucion'],
