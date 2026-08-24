@@ -931,4 +931,99 @@ class Logros
             Flight::json(['error' => 'Error al obtener mapa de logros: ' . $e->getMessage()], 500);
         }
     }
+
+    /**
+     * Distribución de la malla curricular: cuántos logros y cuántos indicadores
+     * hay por cada combinación de área académica, grado y corte académico.
+     *
+     * Devuelve tres bloques:
+     * - catalogos: grados, cortes y áreas (ordenados) para armar la matriz en el front
+     * - conteos: una fila por (área, grado, corte) con total_logros y total_indicadores
+     * - cobertura: pares (área, grado) que SÍ aplican, resueltos por los grupos
+     *   (area_academica_x_grupo cruzado con grados_x_grupo). Lo que no está aquí
+     *   es una celda que ese grado no ve.
+     */
+    public static function getDistribucionMalla()
+    {
+        try {
+            $db = Flight::db();
+            $idTenant = TenantContext::id();
+
+            // Catálogo de grados
+            $sentence = $db->prepare("SELECT id, nombre, orden
+                                      FROM grados
+                                      WHERE id_tenant = :id_tenant
+                                      ORDER BY COALESCE(orden, 9999), nombre");
+            $sentence->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $sentence->execute();
+            $grados = $sentence->fetchAll(PDO::FETCH_ASSOC);
+
+            // Catálogo de cortes académicos
+            $sentence = $db->prepare("SELECT id, nombre, orden
+                                      FROM cortes_academicos
+                                      WHERE id_tenant = :id_tenant
+                                      ORDER BY COALESCE(orden, 9999), nombre");
+            $sentence->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $sentence->execute();
+            $cortes = $sentence->fetchAll(PDO::FETCH_ASSOC);
+
+            // Catálogo de áreas académicas
+            $sentence = $db->prepare("SELECT id, nombre, color
+                                      FROM areas_academicas
+                                      WHERE id_tenant = :id_tenant
+                                      ORDER BY nombre");
+            $sentence->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $sentence->execute();
+            $areas = $sentence->fetchAll(PDO::FETCH_ASSOC);
+
+            // Conteos de logros e indicadores por área / grado / corte.
+            // El conteo de indicadores se hace con un subselect agregado para que
+            // el join con indicadores_logros no infle el conteo de logros.
+            $sentence = $db->prepare("SELECT
+                                        l.id_area_academica,
+                                        l.id_grado,
+                                        l.id_corte_academico,
+                                        COUNT(l.id) AS total_logros,
+                                        COALESCE(SUM(il.total_indicadores), 0) AS total_indicadores
+                                      FROM logros l
+                                      LEFT JOIN (
+                                            SELECT id_logro, COUNT(id) AS total_indicadores
+                                            FROM indicadores_logros
+                                            WHERE id_tenant = :id_tenant_ind
+                                            GROUP BY id_logro
+                                      ) il ON il.id_logro = l.id
+                                      WHERE l.id_tenant = :id_tenant
+                                      GROUP BY l.id_area_academica, l.id_grado, l.id_corte_academico");
+            $sentence->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant_ind', $idTenant, PDO::PARAM_INT);
+            $sentence->execute();
+            $conteos = $sentence->fetchAll(PDO::FETCH_ASSOC);
+
+            // Qué áreas ve cada grado: el área se asocia al grupo y el grupo al grado.
+            $sentence = $db->prepare("SELECT DISTINCT
+                                        gxg.id_grado,
+                                        axg.id_area_academica
+                                      FROM area_academica_x_grupo axg
+                                      INNER JOIN grados_x_grupo gxg
+                                            ON gxg.id_grupo = axg.id_grupo
+                                           AND gxg.id_tenant = axg.id_tenant
+                                      WHERE axg.id_tenant = :id_tenant");
+            $sentence->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $sentence->execute();
+            $cobertura = $sentence->fetchAll(PDO::FETCH_ASSOC);
+
+            Flight::json([
+                'catalogos' => [
+                    'grados' => $grados,
+                    'cortes' => $cortes,
+                    'areas'  => $areas
+                ],
+                'conteos'   => $conteos,
+                'cobertura' => $cobertura
+            ]);
+        } catch (Exception $e) {
+            error_log("Error en getDistribucionMalla: " . $e->getMessage());
+            Flight::json(['error' => 'Error al obtener la distribución de la malla: ' . $e->getMessage()], 500);
+        }
+    }
 }

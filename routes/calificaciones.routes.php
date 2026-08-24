@@ -3,6 +3,7 @@
 // CALIFICACIONES
 Flight::route('GET /calificaciones', [Calificaciones::class, 'getAll']);
 Flight::route('GET /calificaciones/@id', [Calificaciones::class, 'getById']);
+Flight::route('POST /calificaciones/lote', [Calificaciones::class, 'calificarLote']);
 Flight::route('POST /calificaciones', [Calificaciones::class, 'new']);
 Flight::route('PUT /calificaciones', [Calificaciones::class, 'replace']);
 Flight::route('DELETE /calificaciones', [Calificaciones::class, 'delete']);

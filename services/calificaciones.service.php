@@ -284,6 +284,146 @@ class Calificaciones
         Flight::json(array('id' => $id));
     }
 
+    /**
+     * Califica en lote a varios estudiantes con el mismo valor para un parámetro.
+     *
+     * Solo llena los vacíos: si el estudiante ya tiene calificación registrada
+     * para ese parámetro en esa tarea, se respeta y no se sobreescribe.
+     * Además crea el registro en tareas_x_sprints_x_estudiante si no existe,
+     * igual que hace el flujo individual.
+     *
+     * Espera en el body:
+     *   id_tarea_x_sprint, id_parametro_calificacion,
+     *   id_valor_parametro_calificacion, estudiantes[] (ids)
+     *
+     * Devuelve las calificaciones creadas y los estudiantes que se omitieron
+     * por ya tener nota, para que el front actualice la vista sin recargar.
+     */
+    public static function calificarLote()
+    {
+        $db = Flight::db();
+        try {
+            $id_tarea_x_sprint = Flight::request()->data['id_tarea_x_sprint'];
+            $id_parametro_calificacion = Flight::request()->data['id_parametro_calificacion'];
+            $id_valor_parametro_calificacion = Flight::request()->data['id_valor_parametro_calificacion'];
+            $estudiantes = Flight::request()->data['estudiantes'];
+
+            if (!$id_tarea_x_sprint || !$id_parametro_calificacion || !$id_valor_parametro_calificacion) {
+                Flight::json(array('error' => 'Faltan datos para calificar en lote'), 400);
+                return;
+            }
+
+            if (!is_array($estudiantes) || count($estudiantes) === 0) {
+                Flight::json(array('creadas' => [], 'omitidas' => []));
+                return;
+            }
+
+            $idTenant = TenantContext::id();
+
+            // Calificaciones ya existentes para ese parámetro y esa tarea
+            $sentence = $db->prepare("SELECT id, id_estudiante
+                                      FROM calificaciones
+                                      WHERE id_tarea_x_sprint = :id_tarea_x_sprint
+                                        AND id_parametro_calificacion = :id_parametro_calificacion
+                                        AND id_tenant = :id_tenant");
+            $sentence->bindParam(':id_tarea_x_sprint', $id_tarea_x_sprint);
+            $sentence->bindParam(':id_parametro_calificacion', $id_parametro_calificacion);
+            $sentence->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $sentence->execute();
+
+            $existentes = [];
+            foreach ($sentence->fetchAll(PDO::FETCH_ASSOC) as $fila) {
+                $existentes[$fila['id_estudiante']] = $fila['id'];
+            }
+
+            // Registros de tareas_x_sprints_x_estudiante que ya existen
+            $sentence = $db->prepare("SELECT id, id_estudiante
+                                      FROM tareas_x_sprints_x_estudiante
+                                      WHERE id_tarea_x_sprint = :id_tarea_x_sprint
+                                        AND id_tenant = :id_tenant");
+            $sentence->bindParam(':id_tarea_x_sprint', $id_tarea_x_sprint);
+            $sentence->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $sentence->execute();
+
+            $tareasEstudiante = [];
+            foreach ($sentence->fetchAll(PDO::FETCH_ASSOC) as $fila) {
+                $tareasEstudiante[$fila['id_estudiante']] = $fila['id'];
+            }
+
+            $insertCalificacion = $db->prepare("INSERT INTO calificaciones(
+                    id, id_tenant, id_tarea_x_sprint, id_estudiante,
+                    id_parametro_calificacion, id_valor_parametro_calificacion
+                ) VALUES (
+                    :id, :id_tenant, :id_tarea_x_sprint, :id_estudiante,
+                    :id_parametro_calificacion, :id_valor_parametro_calificacion
+                )");
+
+            $insertTareaEstudiante = $db->prepare("INSERT INTO tareas_x_sprints_x_estudiante(
+                    id, id_tenant, id_tarea_x_sprint, id_estudiante
+                ) VALUES (
+                    :id, :id_tenant, :id_tarea_x_sprint, :id_estudiante
+                )");
+
+            $creadas = [];
+            $omitidas = [];
+
+            $db->beginTransaction();
+
+            foreach ($estudiantes as $id_estudiante) {
+                if (isset($existentes[$id_estudiante])) {
+                    // Ya tenía nota: se respeta
+                    $omitidas[] = array(
+                        'id_estudiante' => $id_estudiante,
+                        'id_calificacion' => $existentes[$id_estudiante]
+                    );
+                    continue;
+                }
+
+                $idNew = Uuid::generar();
+                $insertCalificacion->bindValue(':id', $idNew);
+                $insertCalificacion->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                $insertCalificacion->bindParam(':id_tarea_x_sprint', $id_tarea_x_sprint);
+                $insertCalificacion->bindParam(':id_estudiante', $id_estudiante);
+                $insertCalificacion->bindParam(':id_parametro_calificacion', $id_parametro_calificacion);
+                $insertCalificacion->bindParam(':id_valor_parametro_calificacion', $id_valor_parametro_calificacion);
+                $insertCalificacion->execute();
+
+                $idTareaEstudiante = isset($tareasEstudiante[$id_estudiante])
+                    ? $tareasEstudiante[$id_estudiante]
+                    : null;
+
+                if ($idTareaEstudiante === null) {
+                    $idTareaEstudiante = Uuid::generar();
+                    $insertTareaEstudiante->bindValue(':id', $idTareaEstudiante);
+                    $insertTareaEstudiante->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                    $insertTareaEstudiante->bindParam(':id_tarea_x_sprint', $id_tarea_x_sprint);
+                    $insertTareaEstudiante->bindParam(':id_estudiante', $id_estudiante);
+                    $insertTareaEstudiante->execute();
+                    $tareasEstudiante[$id_estudiante] = $idTareaEstudiante;
+                }
+
+                $creadas[] = array(
+                    'id_estudiante' => $id_estudiante,
+                    'id_calificacion' => $idNew,
+                    'id_tarea_estudiante' => $idTareaEstudiante
+                );
+            }
+
+            $db->commit();
+
+            Flight::json(array(
+                'creadas' => $creadas,
+                'omitidas' => $omitidas
+            ));
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log("Error en calificarLote: " . $e->getMessage());
+            Flight::json(array('error' => 'Error al calificar en lote: ' . $e->getMessage()), 500);
+        }
+    }
+
     public static function replace()
     {
         $db = Flight::db();
