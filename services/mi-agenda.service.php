@@ -786,6 +786,11 @@ class MiAgenda
                     'total_imagenes' => $total,
                     'es_publica'     => (int) $fila['es_publica'],
                     'imagenes'       => self::desarmarImagenes($fila['imagenes_crudas']),
+                    // Las fotos de este dia ya se ven en la tarjeta; el
+                    // enlace lleva a la galeria completa del jardin, que es
+                    // lo que si agrega algo.
+                    'ruta'           => '/galeria',
+                    'ruta_permisos'  => ['padres.galeria.ver'],
                 ],
             ]);
         }
@@ -793,7 +798,15 @@ class MiAgenda
         return $eventos;
     }
 
-    /** Notificaciones que le llegaron al estudiante ese dia. */
+    /**
+     * Notificaciones que le llegaron al estudiante ese dia.
+     *
+     * Se dejan por fuera las de llegada y salida del jardin: el sistema las
+     * dispara solo al registrar la asistencia, asi que en la agenda salian
+     * duplicando exactamente lo que ya cuenta la fuente de asistencia, con
+     * la misma hora y el mismo texto. Se filtran por el codigo de la
+     * categoria y no por el titulo, que cada jardin redacta a su manera.
+     */
     private static function fuenteNotificaciones($db, $id_estudiante, $fecha, $contexto)
     {
         $sentence = $db->prepare("
@@ -812,6 +825,7 @@ class MiAgenda
               AND nd.id_estudiante = :id_estudiante
               AND n.activo = 1
               AND DATE(n.fecha_envio) = :fecha
+              AND COALESCE(nc.codigo, '') NOT IN ('ASISTENCIA_INGRESO', 'ASISTENCIA_SALIDA')
             GROUP BY n.id, n.titulo, n.cuerpo, n.fecha_envio, nc.nombre, nc.icono, nc.color, nd.fecha_lectura
             ORDER BY n.fecha_envio
         ");
