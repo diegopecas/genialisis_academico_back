@@ -37,6 +37,7 @@ Flight::route('GET /logros/analisis-areas/corte/@id_corte', [Logros::class, 'get
 Flight::route('GET /logros/mapa-actividades/@id_corte/@id_area', [Logros::class, 'getMapaLogrosActividades']);
 // Distribución de la malla (reporte)
 Flight::route('GET /logros-distribucion-malla', [Logros::class, 'getDistribucionMalla']);
+Flight::route('GET /logros-distribucion-malla/detalle/@id_area/@id_grado/@id_corte', [Logros::class, 'getDetalleDistribucionMalla']);
 
 // INDICADORES DE LOGROS
 Flight::route('GET /indicadores-logros', [IndicadoresLogros::class, 'getAll']);

@@ -936,12 +936,14 @@ class Logros
      * Distribución de la malla curricular: cuántos logros y cuántos indicadores
      * hay por cada combinación de área académica, grado y corte académico.
      *
-     * Devuelve tres bloques:
+     * Devuelve cuatro bloques:
      * - catalogos: grados, cortes y áreas (ordenados) para armar la matriz en el front
      * - conteos: una fila por (área, grado, corte) con total_logros y total_indicadores
      * - cobertura: pares (área, grado) que SÍ aplican, resueltos por los grupos
      *   (area_academica_x_grupo cruzado con grados_x_grupo). Lo que no está aquí
      *   es una celda que ese grado no ve.
+     * - logros: todos los logros del tenant con sus indicadores anidados, para que
+     *   el reporte abra el detalle de una celda sin volver a consultar.
      */
     public static function getDistribucionMalla()
     {
@@ -1012,6 +1014,53 @@ class Logros
             $sentence->execute();
             $cobertura = $sentence->fetchAll(PDO::FETCH_ASSOC);
 
+            // Los logros con sus indicadores, para que el reporte pueda abrir el
+            // detalle de cualquier celda sin volver al servidor.
+            $sentence = $db->prepare("SELECT
+                                        l.id,
+                                        l.nombre,
+                                        l.id_area_academica,
+                                        l.id_grado,
+                                        l.id_corte_academico,
+                                        ejc.nombre AS nombre_eje_curricular,
+                                        esd.nombre AS nombre_esfera_desarrollo,
+                                        ccg.nombre AS nombre_competencia_cognitiva,
+                                        estb.nombre AS nombre_estandar_basico
+                                      FROM logros l
+                                      LEFT JOIN ejes_curriculares ejc ON l.id_eje_curricular = ejc.id
+                                      LEFT JOIN esferas_desarrollo esd ON l.id_esfera_desarrollo = esd.id
+                                      LEFT JOIN competencias_cognitivas ccg ON l.id_competencia_cognitiva = ccg.id
+                                      LEFT JOIN estandares_basicos estb ON l.id_estandar_basico = estb.id
+                                      WHERE l.id_tenant = :id_tenant
+                                      ORDER BY l.nombre");
+            $sentence->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $sentence->execute();
+            $logros = $sentence->fetchAll(PDO::FETCH_ASSOC);
+
+            // Todos los indicadores en una sola consulta, agrupados por logro
+            $sentence = $db->prepare("SELECT id, id_logro, nombre
+                                      FROM indicadores_logros
+                                      WHERE id_tenant = :id_tenant
+                                      ORDER BY nombre");
+            $sentence->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $sentence->execute();
+
+            $indicadoresPorLogro = [];
+            foreach ($sentence->fetchAll(PDO::FETCH_ASSOC) as $indicador) {
+                $idLogro = $indicador['id_logro'];
+                if (!isset($indicadoresPorLogro[$idLogro])) {
+                    $indicadoresPorLogro[$idLogro] = [];
+                }
+                $indicadoresPorLogro[$idLogro][] = $indicador;
+            }
+
+            foreach ($logros as &$logro) {
+                $logro['indicadores'] = isset($indicadoresPorLogro[$logro['id']])
+                    ? $indicadoresPorLogro[$logro['id']]
+                    : [];
+            }
+            unset($logro);
+
             Flight::json([
                 'catalogos' => [
                     'grados' => $grados,
@@ -1019,11 +1068,104 @@ class Logros
                     'areas'  => $areas
                 ],
                 'conteos'   => $conteos,
-                'cobertura' => $cobertura
+                'cobertura' => $cobertura,
+                'logros'    => $logros
             ]);
         } catch (Exception $e) {
             error_log("Error en getDistribucionMalla: " . $e->getMessage());
             Flight::json(['error' => 'Error al obtener la distribución de la malla: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Detalle de una celda de la matriz de distribución: los logros de esa
+     * combinación de área, grado y corte, cada uno con sus indicadores.
+     *
+     * Alimenta el modal que se abre al hacer clic en una celda del reporte.
+     */
+    public static function getDetalleDistribucionMalla($idArea, $idGrado, $idCorte)
+    {
+        try {
+            $db = Flight::db();
+            $idTenant = TenantContext::id();
+
+            // Encabezado del modal: nombres del área, el grado y el corte
+            $sentence = $db->prepare("SELECT
+                                        (SELECT nombre FROM areas_academicas WHERE id = :id_area AND id_tenant = :id_tenant_a) AS nombre_area,
+                                        (SELECT nombre FROM grados WHERE id = :id_grado AND id_tenant = :id_tenant_g) AS nombre_grado,
+                                        (SELECT nombre FROM cortes_academicos WHERE id = :id_corte AND id_tenant = :id_tenant_c) AS nombre_corte");
+            $sentence->bindParam(':id_area', $idArea);
+            $sentence->bindParam(':id_grado', $idGrado);
+            $sentence->bindParam(':id_corte', $idCorte);
+            $sentence->bindValue(':id_tenant_a', $idTenant, PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant_g', $idTenant, PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant_c', $idTenant, PDO::PARAM_INT);
+            $sentence->execute();
+            $contexto = $sentence->fetch(PDO::FETCH_ASSOC);
+
+            // Logros de la celda
+            $sentence = $db->prepare("SELECT
+                                        l.id,
+                                        l.nombre,
+                                        ejc.nombre AS nombre_eje_curricular,
+                                        esd.nombre AS nombre_esfera_desarrollo,
+                                        ccg.nombre AS nombre_competencia_cognitiva,
+                                        estb.nombre AS nombre_estandar_basico
+                                      FROM logros l
+                                      LEFT JOIN ejes_curriculares ejc ON l.id_eje_curricular = ejc.id
+                                      LEFT JOIN esferas_desarrollo esd ON l.id_esfera_desarrollo = esd.id
+                                      LEFT JOIN competencias_cognitivas ccg ON l.id_competencia_cognitiva = ccg.id
+                                      LEFT JOIN estandares_basicos estb ON l.id_estandar_basico = estb.id
+                                      WHERE l.id_tenant = :id_tenant
+                                        AND l.id_area_academica = :id_area
+                                        AND l.id_grado = :id_grado
+                                        AND l.id_corte_academico = :id_corte
+                                      ORDER BY l.nombre");
+            $sentence->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $sentence->bindParam(':id_area', $idArea);
+            $sentence->bindParam(':id_grado', $idGrado);
+            $sentence->bindParam(':id_corte', $idCorte);
+            $sentence->execute();
+            $logros = $sentence->fetchAll(PDO::FETCH_ASSOC);
+
+            // Indicadores de esos logros, en una sola consulta
+            $indicadoresPorLogro = [];
+
+            if (count($logros) > 0) {
+                $idsLogros = array_column($logros, 'id');
+                $marcadores = implode(',', array_fill(0, count($idsLogros), '?'));
+
+                $sentence = $db->prepare("SELECT id, id_logro, nombre
+                                          FROM indicadores_logros
+                                          WHERE id_tenant = ?
+                                            AND id_logro IN ($marcadores)
+                                          ORDER BY nombre");
+                $sentence->execute(array_merge([$idTenant], $idsLogros));
+
+                foreach ($sentence->fetchAll(PDO::FETCH_ASSOC) as $indicador) {
+                    $idLogro = $indicador['id_logro'];
+                    if (!isset($indicadoresPorLogro[$idLogro])) {
+                        $indicadoresPorLogro[$idLogro] = [];
+                    }
+                    $indicadoresPorLogro[$idLogro][] = $indicador;
+                }
+            }
+
+            // Se anidan los indicadores dentro de cada logro
+            foreach ($logros as &$logro) {
+                $logro['indicadores'] = isset($indicadoresPorLogro[$logro['id']])
+                    ? $indicadoresPorLogro[$logro['id']]
+                    : [];
+            }
+            unset($logro);
+
+            Flight::json([
+                'contexto' => $contexto,
+                'logros'   => $logros
+            ]);
+        } catch (Exception $e) {
+            error_log("Error en getDetalleDistribucionMalla: " . $e->getMessage());
+            Flight::json(['error' => 'Error al obtener el detalle de la celda: ' . $e->getMessage()], 500);
         }
     }
 }
