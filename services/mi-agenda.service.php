@@ -120,6 +120,27 @@ class MiAgenda
     // =====================================================================
 
     /**
+     * Ruta a una pestana de la ficha del estudiante en el portal de padres.
+     *
+     * La ficha abre siempre en "Datos" salvo que se le diga a cual pestana
+     * ir, asi que la ruta viaja con el query param y con los permisos que
+     * hacen falta: el de entrar a la ficha y el de esa pestana en concreto.
+     * El front solo ofrece el "Ver mas" cuando el usuario tiene los dos.
+     *
+     * @param string $id_estudiante
+     * @param string $tab      id de la pestana en vista-estudiante
+     * @param string $permiso  permiso de esa pestana
+     */
+    private static function rutaFichaEstudiante($id_estudiante, $tab, $permiso)
+    {
+        return [
+            'ruta'          => '/estudiantes-vista/' . $id_estudiante,
+            'ruta_query'    => ['tab' => $tab],
+            'ruta_permisos' => ['padres.estudiantes.ver', $permiso],
+        ];
+    }
+
+    /**
      * Catalogo de fuentes disponibles. Lo usa el front para pintar los tabs
      * y los filtros sin tener que repetir la lista en el codigo del cliente.
      */
@@ -280,7 +301,10 @@ class MiAgenda
                     'detalle'    => $fila['observacion_ingreso'],
                     'pie'        => $fila['nombre_usuario_ingreso'] ? 'Recibido por ' . $fila['nombre_usuario_ingreso'] : null,
                     'orden'      => 10,
-                    'meta'       => ['id_asistencia' => $fila['id']],
+                    'meta'       => array_merge(
+                        ['id_asistencia' => $fila['id']],
+                        self::rutaFichaEstudiante($id_estudiante, 'asistencia', 'padres.estudiante.asistencia')
+                    ),
                 ]);
             }
 
@@ -291,7 +315,10 @@ class MiAgenda
                     'detalle'    => $fila['observacion_salida'],
                     'pie'        => $fila['nombre_usuario_salida'] ? 'Entregado por ' . $fila['nombre_usuario_salida'] : null,
                     'orden'      => 900,
-                    'meta'       => ['id_asistencia' => $fila['id']],
+                    'meta'       => array_merge(
+                        ['id_asistencia' => $fila['id']],
+                        self::rutaFichaEstudiante($id_estudiante, 'asistencia', 'padres.estudiante.asistencia')
+                    ),
                 ]);
             }
         }
@@ -478,7 +505,7 @@ class MiAgenda
                     'observacion_estudiante' => $fila['observacion_estudiante'],
                     'observacion_grupo'      => $fila['observacion_grupo'],
                     'calificaciones'         => self::desarmarCalificaciones($fila['calificaciones_crudas']),
-                ],
+                ] + self::rutaFichaEstudiante($id_estudiante, 'evaluaciones', 'padres.estudiante.evaluaciones'),
             ]);
         }
 
@@ -556,7 +583,7 @@ class MiAgenda
                 'meta'       => [
                     'tipo'        => $fila['nombre_tipo_observacion'],
                     'es_afectado' => $esAfectado,
-                ],
+                ] + self::rutaFichaEstudiante($id_estudiante, 'observaciones', 'padres.estudiante.observaciones'),
             ]);
         }
 
@@ -686,6 +713,8 @@ class MiAgenda
                     'hora_real'       => $fila['hora_real'],
                     'fecha_inicio'    => $fila['fecha_inicio'],
                     'fecha_fin'       => $fila['fecha_fin'],
+                    'ruta'            => '/solicitudes',
+                    'ruta_permisos'   => ['padres.solicitudes.ver'],
                 ],
             ]);
         }
@@ -808,6 +837,7 @@ class MiAgenda
                 'meta'       => [
                     'leida' => !empty($fila['fecha_lectura']),
                     'ruta'  => '/notificaciones',
+                    'ruta_permisos' => ['padres.notificaciones.ver'],
                 ],
             ]);
         }
@@ -839,30 +869,60 @@ class MiAgenda
         $sentence->execute();
         $filas = $sentence->fetchAll();
 
-        $eventos = [];
+        if (empty($filas)) {
+            return [];
+        }
+
+        // Las medidas se toman todas de una sentada (talla, peso, perimetro)
+        // y antes salian como una tarjeta por cada una, llenando el dia de
+        // fichas casi vacias. Van juntas en una sola, ubicada a la hora de
+        // la primera que se registro.
+        $items = [];
+        $resumen = [];
+        $primeraHora = null;
 
         foreach ($filas as $fila) {
             // Si la medida es de lista (valores_medidas) se muestra la
             // etiqueta; si es numerica, el valor con su unidad.
-            $detalle = !empty($fila['etiqueta'])
+            $valorTexto = !empty($fila['etiqueta'])
                 ? $fila['etiqueta']
                 : trim($fila['valor'] . ' ' . ($fila['unidad'] ?? ''));
 
-            $eventos[] = self::evento('medidas', 'medida', $fila['id'], [
-                // La medida se toma un dia y se puede digitar otro: solo se
-                // muestra hora cuando ambas cosas pasaron el mismo dia.
-                'fecha_hora' => self::horaDelDia($fila['fecha_registro'], $fecha),
-                'titulo'     => $fila['nombre_medida'],
-                'detalle'    => $detalle,
-                'orden'      => 700,
-                'meta'       => [
-                    'valor'  => $fila['valor'],
-                    'unidad' => $fila['unidad'],
-                ],
-            ]);
+            $items[] = [
+                'nombre'      => $fila['nombre_medida'],
+                'observacion' => $valorTexto,
+                'valor'       => $fila['valor'],
+                'unidad'      => $fila['unidad'],
+            ];
+
+            $resumen[] = $fila['nombre_medida'] . ': ' . $valorTexto;
+
+            // La medida se toma un dia y se puede digitar otro: solo cuenta
+            // como hora la del registro hecho el mismo dia.
+            $hora = self::horaDelDia($fila['fecha_registro'], $fecha);
+            if ($hora !== null && ($primeraHora === null || $hora < $primeraHora)) {
+                $primeraHora = $hora;
+            }
         }
 
-        return $eventos;
+        $total = count($items);
+
+        // El id del evento es el de la primera medida: la agenda necesita un
+        // id estable por tarjeta y no existe una fila que represente al grupo.
+        return [
+            self::evento('medidas', 'medidas_dia', $filas[0]['id'], [
+                'fecha_hora' => $primeraHora,
+                'titulo'     => $total === 1 ? 'Se tomó una medida' : 'Se tomaron ' . $total . ' medidas',
+                'detalle'    => implode(' · ', $resumen),
+                'orden'      => 700,
+                'meta'       => [
+                    'items' => $items,
+                    'ruta'  => '/estudiantes-vista/' . $id_estudiante,
+                    'ruta_query'    => ['tab' => 'medidas'],
+                    'ruta_permisos' => ['padres.estudiantes.ver', 'padres.estudiante.medidas'],
+                ],
+            ]),
+        ];
     }
 
     /** Pagos recibidos ese dia, sin contar los anulados. */
@@ -932,6 +992,7 @@ class MiAgenda
                     'observaciones'       => $fila['observaciones'],
                     'id_documento'        => $fila['id_documento_persona'],
                     'ruta'                => '/mi-cuenta',
+                    'ruta_permisos'       => ['padres.mi_cuenta.ver'],
                 ],
             ]);
         }
@@ -995,6 +1056,7 @@ class MiAgenda
                     'fecha_vencimiento'  => $fila['fecha'],
                     'detalle_cuenta'     => $fila['detalle'],
                     'ruta'               => '/mi-cuenta',
+                    'ruta_permisos'      => ['padres.mi_cuenta.ver'],
                 ],
             ]);
         }
