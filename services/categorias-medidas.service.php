@@ -61,6 +61,11 @@ class CategoriasMedidas
             $stmtMed = $db->prepare("
                 SELECT 
                     m.id, m.nombre, m.id_categoria, m.id_unidad, m.id_tipo_valor, m.orden,
+                    -- El codigo (PESO, TALLA) identifica las medidas basicas sin
+                    -- depender del nombre, que cada jardin escribe a su manera.
+                    -- El front lo usa para dejarlas precargadas en la grafica; sin
+                    -- este campo llegaba vacio y no se precargaba ninguna.
+                    m.codigo,
                     umc.abreviatura AS unidad_abreviatura,
                     umc.nombre AS unidad_nombre,
                     tvm.nombre AS tipo_valor
