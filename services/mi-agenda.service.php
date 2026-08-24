@@ -488,6 +488,15 @@ class MiAgenda
     /**
      * Observaciones del dia. Las marcadas para informe NO salen aqui: esas
      * se entregan formalmente en el informe firmado, no en la agenda diaria.
+     *
+     * Salen las dos caras de la observacion: aquellas donde el estudiante es
+     * el protagonista (id_estudiante) y aquellas donde es el afectado
+     * (id_estudiante_afectado). Al papa del afectado tambien le interesa
+     * saber que paso, aunque el hecho lo haya registrado el otro lado.
+     *
+     * De la observacion donde es afectado NO se manda el nombre del otro
+     * estudiante: es un menor ajeno y su nombre no tiene por que viajar al
+     * portal de otra familia. Solo va la marca de que hubo alguien mas.
      */
     private static function fuenteObservaciones($db, $id_estudiante, $fecha, $contexto)
     {
@@ -496,6 +505,11 @@ class MiAgenda
                    oe.descripcion,
                    oe.fecha,
                    oe.fecha_registro,
+                   -- Marca de cual de los dos lados es el estudiante que se
+                   -- esta consultando. Se resuelve en SQL para no traer los
+                   -- ids de los estudiantes hasta el front.
+                   CASE WHEN oe.id_estudiante_afectado = :id_estudiante_marca
+                        THEN 1 ELSE 0 END AS es_afectado,
                    toe.nombre AS nombre_tipo_observacion,
                    toe.color,
                    toe.icono,
@@ -505,13 +519,18 @@ class MiAgenda
             LEFT JOIN usuarios u ON u.id = oe.id_usuario
             LEFT JOIN personas p ON p.id = u.id_persona
             WHERE oe.id_tenant = :id_tenant
-              AND oe.id_estudiante = :id_estudiante
+              AND (
+                    oe.id_estudiante = :id_estudiante
+                    OR oe.id_estudiante_afectado = :id_estudiante_afectado
+              )
               AND DATE(oe.fecha) = :fecha
               AND COALESCE(oe.para_informe, 0) = 0
             ORDER BY oe.fecha, oe.fecha_registro
         ");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindParam(':id_estudiante_afectado', $id_estudiante);
+        $sentence->bindParam(':id_estudiante_marca', $id_estudiante);
         $sentence->bindParam(':fecha', $fecha);
         $sentence->execute();
         $filas = $sentence->fetchAll();
@@ -519,6 +538,8 @@ class MiAgenda
         $eventos = [];
 
         foreach ($filas as $fila) {
+            $esAfectado = (int) $fila['es_afectado'] === 1;
+
             $eventos[] = self::evento('observaciones', 'observacion', $fila['id'], [
                 // oe.fecha guarda el dia, no la hora real (llega siempre a la
                 // misma hora). La hora util es la del registro, y solo si se
@@ -528,10 +549,14 @@ class MiAgenda
                 'titulo'     => $fila['nombre_tipo_observacion'] ?: 'Observación',
                 'detalle'    => $fila['descripcion'],
                 'pie'        => $fila['nombre_usuario'] ? 'Registrada por ' . $fila['nombre_usuario'] : null,
+                'etiqueta'   => $esAfectado ? 'Con otro estudiante' : null,
                 'color'      => $fila['color'],
                 'icono'      => $fila['icono'],
                 'orden'      => 300,
-                'meta'       => ['tipo' => $fila['nombre_tipo_observacion']],
+                'meta'       => [
+                    'tipo'        => $fila['nombre_tipo_observacion'],
+                    'es_afectado' => $esAfectado,
+                ],
             ]);
         }
 
@@ -852,6 +877,11 @@ class MiAgenda
                    pr.valor_recibido,
                    pr.observaciones,
                    pr.referencia_bancaria,
+                   -- Soporte que subio el acudiente al registrar el pago.
+                   -- El front solo ofrece el enlace de descarga cuando viene
+                   -- lleno; si el pago se registro sin adjunto, no hay nada
+                   -- que bajar.
+                   pr.id_documento_persona,
                    tp.nombre AS nombre_tipo_pago
             FROM pagos_recibidos pr
             LEFT JOIN tipos_pagos tp ON tp.id = pr.id_tipo_pago
@@ -900,6 +930,7 @@ class MiAgenda
                     'referencia_bancaria' => $fila['referencia_bancaria'],
                     'fecha_pago'          => $fila['fecha'],
                     'observaciones'       => $fila['observaciones'],
+                    'id_documento'        => $fila['id_documento_persona'],
                     'ruta'                => '/mi-cuenta',
                 ],
             ]);
