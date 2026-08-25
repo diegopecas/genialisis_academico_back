@@ -58,6 +58,11 @@ class Personas
      * tres filas con el mismo id_persona. El front las agrupa y le muestra la
      * lista al usuario para que escoja a donde ir.
      *
+     * El `id_destino` es el id del registro al que se navega (estudiante,
+     * colaborador o acudiente). El `id_secundario` solo lo usa el acudiente y
+     * trae el id del estudiante, porque la pantalla de editar acudiente pide
+     * los dos en la ruta.
+     *
      * Solo se traen los campos que el buscador necesita (nombre, documento,
      * tipo, id del destino, estado y un detalle corto). Nada de foto,
      * direccion ni telefono, porque esta consulta se carga completa al abrir
@@ -83,6 +88,7 @@ class Personas
                 p.numero_identificacion,
                 'estudiante' AS tipo,
                 e.id AS id_destino,
+                NULL AS id_secundario,
                 e.activo AS activo,
                 NULL AS detalle
             FROM estudiantes e
@@ -97,6 +103,7 @@ class Personas
                 p.numero_identificacion,
                 'colaborador' AS tipo,
                 c.id AS id_destino,
+                NULL AS id_secundario,
                 c.activo AS activo,
                 car.nombre AS detalle
             FROM colaboradores c
@@ -111,7 +118,8 @@ class Personas
                 TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_completo,
                 p.numero_identificacion,
                 'acudiente' AS tipo,
-                a.id_estudiante AS id_destino,
+                a.id AS id_destino,
+                a.id_estudiante AS id_secundario,
                 CASE WHEN a.activo = 1 AND e.activo = 1 THEN 1 ELSE 0 END AS activo,
                 CONCAT(COALESCE(ta.nombre, 'Acudiente'), ' de ', TRIM(CONCAT_WS(' ', pe.primer_nombre, pe.primer_apellido))) AS detalle
             FROM acudientes a
