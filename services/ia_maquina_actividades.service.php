@@ -154,8 +154,7 @@ REGLAS:
 4. Usa los ambientes proporcionados, distribuyéndolos entre las actividades.
 5. Cada actividad debe cubrir al menos 1 indicador de logro de los disponibles. Usa los IDs exactos.
 6. El id_tipo_actividad debe corresponder a uno de los tipos disponibles. Usa los IDs exactos.
-7. nivel_uno es la actividad básica/introductoria. nivel_dos es la actividad avanzada/de profundización.
-8. Las actividades deben ser divertidas, originales y estimulantes para la edad.
+7. Las actividades deben ser divertidas, originales y estimulantes para la edad.
 
 Responde ÚNICAMENTE con JSON válido (sin markdown, sin backticks). Estructura:
 
@@ -163,8 +162,6 @@ Responde ÚNICAMENTE con JSON válido (sin markdown, sin backticks). Estructura:
   {
     "titulo": "nombre creativo de la actividad",
     "descripcion": "descripción detallada en HTML con formato (máx 500 chars)",
-    "nivel_uno": "actividad nivel básico en HTML (máx 300 chars)",
-    "nivel_dos": "actividad nivel avanzado en HTML (máx 300 chars)",
     "minutos_duracion": 60,
     "id_tipo_actividad_academica": 1,
     "materiales_sugeridos": ["nombre material 1", "nombre material 2"],
@@ -691,8 +688,9 @@ PROMPT;
             $ambientes = $data['ambientes'] ?? [];
             $materiales = $data['materiales'] ?? [];
             $id_tipo_actividad = $data['id_tipo_actividad'] ?? null;
-            $nivel_uno_existente = $data['nivel_uno'] ?? '';
-            $nivel_dos_existente = $data['nivel_dos'] ?? '';
+            // Los niveles uno y dos ya no se le piden a la IA ni se muestran en
+            // los formularios. Las columnas siguen en la base con lo que ya
+            // tenian las actividades viejas, y las nuevas se graban vacias.
 
             if (!$titulo || !$id_grupo || !$id_area || !$id_sprint) {
                 Flight::json(["error" => "titulo, id_grupo, id_area e id_sprint son requeridos"], 400);
@@ -768,8 +766,6 @@ Eres un experto pedagógico en educación preescolar colombiana. Completa los ca
 ACTIVIDAD:
 - Título: "{$titulo}"
 - Descripción: "{$descripcion}"
-- Nivel Básico: "{$nivel_uno_existente}"
-- Nivel Avanzado: "{$nivel_dos_existente}"
 - Tipo: {$nombreTipo}
 - Ambientes disponibles: {$ambientesTexto}
 - Materiales disponibles: {$materialesTexto}
@@ -783,7 +779,7 @@ INSTRUCCIONES:
 - Si un campo ya tiene contenido, NO lo modifiques, devuélvelo exactamente igual.
 - Responde ÚNICAMENTE con JSON válido (sin markdown, sin backticks):
 
-{"descripcion":"solo si estaba vacío","nivel_uno":"solo si estaba vacío (máx 300 chars)","nivel_dos":"solo si estaba vacío (máx 300 chars)","materiales_sugeridos":["materiales de la lista disponible"],"indicadores_ids":[IDs de indicadores relevantes],"id_ambiente":ID del ambiente apropiado o null,"id_tipo_actividad_academica":ID del tipo apropiado,"minutos_duracion":45}
+{"descripcion":"solo si estaba vacío","materiales_sugeridos":["materiales de la lista disponible"],"indicadores_ids":[IDs de indicadores relevantes],"id_ambiente":ID del ambiente apropiado o null,"id_tipo_actividad_academica":ID del tipo apropiado,"minutos_duracion":45}
 
 Usa materiales disponibles cuando sea posible. Selecciona indicadores usando sus IDs exactos. Para id_ambiente e id_tipo_actividad_academica usa los IDs exactos. Sé conciso.
 PROMPT;
@@ -1140,8 +1136,7 @@ REGLAS:
 3. Asocia a cada actividad TODOS los indicadores del logro correspondiente (usa los IDs exactos).
 4. id_tipo_actividad_academica: usa los IDs exactos de los tipos disponibles.
 5. id_ambiente: usa el ID exacto de un ambiente disponible o null.
-6. nivel_uno: criterios observables de evaluación nivel básico. nivel_dos: criterios nivel avanzado.
-7. Las actividades DEBEN ser apropiadas para la edad indicada y permitir observar evidencias concretas.
+6. Las actividades DEBEN ser apropiadas para la edad indicada y permitir observar evidencias concretas.
 8. minutos_duracion debe ser realista para la edad (Sala cuna/Caminadores: 10-20 min, Párvulos: 20-30 min, Prejardín: 25-40 min, Jardín/Transición: 30-45 min).
 
 Responde ÚNICAMENTE con JSON válido (sin markdown, sin backticks). Estructura:
@@ -1151,8 +1146,6 @@ Responde ÚNICAMENTE con JSON válido (sin markdown, sin backticks). Estructura:
     "id_logro": 123,
     "titulo": "Evaluación: ...",
     "descripcion": "descripción detallada de la actividad de evaluación en HTML (máx 500 chars)",
-    "nivel_uno": "criterios de evaluación nivel básico (máx 300 chars)",
-    "nivel_dos": "criterios de evaluación nivel avanzado (máx 300 chars)",
     "minutos_duracion": 45,
     "id_tipo_actividad_academica": 1,
     "materiales_sugeridos": ["material 1", "material 2"],
