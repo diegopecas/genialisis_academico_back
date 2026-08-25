@@ -263,6 +263,19 @@ class MotorCobrosAutomaticos
                         $hastaSegs = $regla['hora_hasta'] !== null && $regla['hora_hasta'] !== '' 
                             ? self::horaASegundos($regla['hora_hasta']) : null;
 
+                        /*
+                         * El bloque solo se cobra si EMPIEZA en o despues de la hora de
+                         * salida programada del estudiante. Sin esto, un nino cuyo horario
+                         * va hasta las 3:00 y sale 3:20 pagaria tambien el bloque de las
+                         * 12:45, que es tiempo que ya cubre su pension.
+                         *
+                         * Como los bloques se evaluan de forma independiente, el que sale
+                         * tarde acumula todos los bloques que atraviesa: el de horario
+                         * hasta las 12:30 que sale a las 4:00 paga el bloque de la tarde
+                         * mas el del mediodia.
+                         */
+                        if ($desdeSegs !== null && $desdeSegs < $horaSalidaSegundos) continue;
+
                         if ($desdeSegs !== null && $horaSegundos < $desdeSegs) continue;
                         if ($hastaSegs !== null && $horaSegundos >= $hastaSegs) continue;
 
