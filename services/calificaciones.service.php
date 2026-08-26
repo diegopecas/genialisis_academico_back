@@ -92,13 +92,30 @@ class Calificaciones
             $estudiantes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             // 2. Calificaciones de la tarea
+            //
+            // Se devuelve UNA sola calificación por estudiante y parámetro: la
+            // más reciente. La tabla puede tener duplicados de cuando el front
+            // insertaba en vez de actualizar, y si se devolvieran todos, la
+            // pantalla mostraría cualquiera de ellos según cómo los entregue
+            // el motor. Con el NOT EXISTS se descarta toda fila que tenga otra
+            // más nueva para la misma combinación.
             $sqlCalificaciones = "SELECT 
-                id,
-                id_estudiante,
-                id_parametro_calificacion,
-                id_valor_parametro_calificacion
-            FROM calificaciones
-            WHERE id_tarea_x_sprint = :id_tarea_sprint AND id_tenant = :id_tenant";
+                c.id,
+                c.id_estudiante,
+                c.id_parametro_calificacion,
+                c.id_valor_parametro_calificacion
+            FROM calificaciones c
+            WHERE c.id_tarea_x_sprint = :id_tarea_sprint AND c.id_tenant = :id_tenant
+              AND NOT EXISTS (
+                    SELECT 1 FROM calificaciones c2
+                    WHERE c2.id_tarea_x_sprint = c.id_tarea_x_sprint
+                      AND c2.id_estudiante = c.id_estudiante
+                      AND c2.id_parametro_calificacion = c.id_parametro_calificacion
+                      AND c2.id_tenant = c.id_tenant
+                      AND (c2.fecha_registro > c.fecha_registro
+                           OR (c2.fecha_registro = c.fecha_registro AND c2.id > c.id))
+              )
+            ORDER BY c.fecha_registro ASC, c.id ASC";
 
             $stmt = $db->prepare($sqlCalificaciones);
             $stmt->bindParam(':id_tarea_sprint', $id_tarea_sprint);
@@ -113,6 +130,9 @@ class Calificaciones
                 if (!isset($calificacionesPorEstudiante[$idEst])) {
                     $calificacionesPorEstudiante[$idEst] = [];
                 }
+                // Se ordena por fecha ascendente a propósito: el front recorre y
+                // se queda con la coincidencia que encuentre, así que si hubiera
+                // duplicados la última en llegar es la que termina mostrándose
                 $calificacionesPorEstudiante[$idEst][] = [
                     'id' => $cal['id'],
                     'id_parametro_calificacion' => $cal['id_parametro_calificacion'],
@@ -271,6 +291,36 @@ class Calificaciones
         $id_estudiante = Flight::request()->data['id_estudiante'];
         $id_parametro_calificacion = Flight::request()->data['id_parametro_calificacion'];
         $id_valor_parametro_calificacion = Flight::request()->data['id_valor_parametro_calificacion'];
+
+        // Un estudiante solo puede tener una calificación por parámetro en cada
+        // tarea. Si ya existe se actualiza el valor en vez de insertar otra fila,
+        // así un doble clic o una llamada repetida no genera duplicados.
+        $sentence = $db->prepare("SELECT id FROM calificaciones
+                                  WHERE id_tarea_x_sprint = :id_tarea_x_sprint
+                                    AND id_estudiante = :id_estudiante
+                                    AND id_parametro_calificacion = :id_parametro_calificacion
+                                    AND id_tenant = :id_tenant
+                                  LIMIT 1");
+        $sentence->bindParam(':id_tarea_x_sprint', $id_tarea_x_sprint);
+        $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindParam(':id_parametro_calificacion', $id_parametro_calificacion);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $existente = $sentence->fetch(PDO::FETCH_ASSOC);
+
+        if ($existente) {
+            $sentence = $db->prepare("UPDATE calificaciones
+                                      SET id_valor_parametro_calificacion = :id_valor
+                                      WHERE id = :id AND id_tenant = :id_tenant");
+            $sentence->bindParam(':id_valor', $id_valor_parametro_calificacion);
+            $sentence->bindValue(':id', $existente['id']);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->execute();
+
+            Flight::json(array('id' => $existente['id']));
+            return;
+        }
+
         $idNew = Uuid::generar();
         $sentence = $db->prepare("insert into calificaciones(id, id_tenant, id_tarea_x_sprint, id_estudiante, id_parametro_calificacion, id_valor_parametro_calificacion) values (:id, :id_tenant, :id_tarea_x_sprint, :id_estudiante, :id_parametro_calificacion, :id_valor_parametro_calificacion)");
         $sentence->bindValue(':id', $idNew);
