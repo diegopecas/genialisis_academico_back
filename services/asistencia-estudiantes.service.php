@@ -9,6 +9,47 @@ class AsistenciaEstudiantes
         $db->exec("SET time_zone = '-05:00'");
     }
 
+    /**
+     * Arma el datetime del movimiento a partir de la hora que manda el front.
+     *
+     * La pantalla de asistencia deja corregir la hora antes de confirmar y esa
+     * misma hora es la que alimenta el motor de cobros. Antes se guardaba NOW()
+     * y quedaban dos horas distintas: la que se cobraba y la que quedaba
+     * registrada.
+     *
+     * Devuelve null cuando no viene hora o cuando no tiene formato HH:MM o
+     * HH:MM:SS, y en ese caso quien llama se queda con NOW(), que es como
+     * funcionaba antes y es lo que sigue haciendo el portal de padres.
+     *
+     * @param string|null $hora
+     * @param string|null $fecha  Fecha del movimiento (Y-m-d). Por defecto hoy.
+     * @return string|null        Datetime 'Y-m-d H:i:s' listo para guardar.
+     */
+    private static function construirFechaMovimiento($hora, $fecha = null)
+    {
+        if ($hora === null || trim($hora) === '') {
+            return null;
+        }
+
+        $hora = trim($hora);
+
+        if (!preg_match('/^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/', $hora)) {
+            error_log('AsistenciaEstudiantes: hora con formato invalido, se usa NOW(): ' . $hora);
+            return null;
+        }
+
+        // El front manda HH:MM; se completan los segundos.
+        if (strlen($hora) === 5) {
+            $hora .= ':00';
+        }
+
+        if ($fecha === null || trim($fecha) === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', trim($fecha))) {
+            $fecha = date('Y-m-d');
+        }
+
+        return trim($fecha) . ' ' . $hora;
+    }
+
     public static function getAll()
     {
         self::setTimeZone();
@@ -129,13 +170,28 @@ class AsistenciaEstudiantes
         $id_estudiante = Flight::request()->data['id_estudiante'];
         $observacion = Flight::request()->data['observacion'];
         $id_usuario_ingreso = Flight::request()->data['id_usuario'];
+
+        // Hora del movimiento. Es opcional: si no viene se guarda NOW(), que es
+        // como se comportaba antes y como sigue llamando el portal de padres.
+        $hora = isset(Flight::request()->data['hora']) ? Flight::request()->data['hora'] : null;
+        $fechaMovimiento = isset(Flight::request()->data['fecha']) ? Flight::request()->data['fecha'] : null;
+        $fechaIngreso = self::construirFechaMovimiento($hora, $fechaMovimiento);
+
         $idNew = Uuid::generar();
-        $sentence = $db->prepare("insert into asistencia_estudiantes(id, id_tenant, id_estudiante, fecha_ingreso, observacion_ingreso, id_usuario_ingreso) values (:id, :id_tenant, :id_estudiante, NOW(), :observacion, :id_usuario_ingreso)");
+
+        $sqlIngreso = $fechaIngreso === null
+            ? "insert into asistencia_estudiantes(id, id_tenant, id_estudiante, fecha_ingreso, observacion_ingreso, id_usuario_ingreso) values (:id, :id_tenant, :id_estudiante, NOW(), :observacion, :id_usuario_ingreso)"
+            : "insert into asistencia_estudiantes(id, id_tenant, id_estudiante, fecha_ingreso, observacion_ingreso, id_usuario_ingreso) values (:id, :id_tenant, :id_estudiante, :fecha_ingreso, :observacion, :id_usuario_ingreso)";
+
+        $sentence = $db->prepare($sqlIngreso);
         $sentence->bindValue(':id', $idNew);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
         $sentence->bindParam(':observacion', $observacion);
         $sentence->bindParam(':id_usuario_ingreso', $id_usuario_ingreso);
+        if ($fechaIngreso !== null) {
+            $sentence->bindParam(':fecha_ingreso', $fechaIngreso);
+        }
         $sentence->execute();
 
         // Si la docente escribió una observación al recibir al niño, queda
@@ -203,11 +259,25 @@ class AsistenciaEstudiantes
         $id = Flight::request()->data['id'];
         $observacion = Flight::request()->data['observacion'];
         $id_usuario_salida = Flight::request()->data['id_usuario'];
-        $sentence = $db->prepare("update asistencia_estudiantes set fecha_salida = NOW(), observacion_salida = :observacion, id_usuario_salida = :id_usuario_salida where id = :id AND id_tenant = :id_tenant");
+
+        // Misma regla que en el ingreso: la hora es opcional y sin ella se
+        // guarda NOW().
+        $hora = isset(Flight::request()->data['hora']) ? Flight::request()->data['hora'] : null;
+        $fechaMovimiento = isset(Flight::request()->data['fecha']) ? Flight::request()->data['fecha'] : null;
+        $fechaSalida = self::construirFechaMovimiento($hora, $fechaMovimiento);
+
+        $sqlSalida = $fechaSalida === null
+            ? "update asistencia_estudiantes set fecha_salida = NOW(), observacion_salida = :observacion, id_usuario_salida = :id_usuario_salida where id = :id AND id_tenant = :id_tenant"
+            : "update asistencia_estudiantes set fecha_salida = :fecha_salida, observacion_salida = :observacion, id_usuario_salida = :id_usuario_salida where id = :id AND id_tenant = :id_tenant";
+
+        $sentence = $db->prepare($sqlSalida);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':observacion', $observacion);
         $sentence->bindParam(':id', $id);
         $sentence->bindParam(':id_usuario_salida', $id_usuario_salida);
+        if ($fechaSalida !== null) {
+            $sentence->bindParam(':fecha_salida', $fechaSalida);
+        }
         $sentence->execute();
 
         // Igual que en el ingreso. El id_estudiante no viene en la petición de
