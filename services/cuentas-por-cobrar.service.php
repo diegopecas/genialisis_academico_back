@@ -1129,6 +1129,89 @@ class CuentasPorCobrar
     }
 
     /**
+     * Cuentas por cobrar del año que aún tienen saldo, para el detalle de la
+     * matriz de "Saldos Estudiantes" / "Saldos Colaboradores" del reporte de
+     * cartera. Se trae todo el año en una sola llamada y el front lo indexa por
+     * persona y mes, para que el clic en una celda no vaya al backend.
+     *
+     * El mes que se devuelve es el de la cuenta por cobrar (el mes de la pensión),
+     * igual que como sp_reporte_anual_cuentas_por_cobrar calcula 'Saldo {Mes}',
+     * de modo que el total del detalle cuadre con el valor de la celda.
+     *
+     * Se excluyen cuentas anuladas y aplicaciones de pagos anulados, igual que el SP.
+     * Las cuentas de mora (es_mora = 1) se incluyen como un concepto más.
+     */
+    public static function getPendientesAnio($anio)
+    {
+        JWTService::requerirAutenticacion();
+
+        try {
+            if (!is_numeric($anio) || $anio < 2000 || $anio > 2100) {
+                Flight::json([
+                    'error' => true,
+                    'message' => 'Año inválido'
+                ], 400);
+                return;
+            }
+
+            $db = Flight::db();
+            $sentence = $db->prepare("
+                SELECT
+                    c.id_persona,
+                    MONTH(c.fecha) AS mes_cuenta,
+                    c.fecha AS fecha_cuenta,
+                    c.id AS id_cuenta_por_cobrar,
+                    c.detalle AS detalle_cuenta,
+                    c.valor AS valor_cuenta,
+                    c.es_mora,
+                    COALESCE(ap.total_aplicado, 0) AS valor_abonado,
+                    ROUND(c.valor - COALESCE(ap.total_aplicado, 0), 2) AS saldo_pendiente,
+                    ps.id AS id_producto_servicio,
+                    ps.nombre AS nombre_producto,
+                    cps.nombre AS nombre_clasificacion
+                FROM cuentas_por_cobrar c
+                INNER JOIN productos_servicios ps ON ps.id = c.id_producto_servicio
+                LEFT JOIN clasificacion_productos_servicios cps ON cps.id = ps.id_clasificacion_productos_servicios
+                LEFT JOIN (
+                    SELECT
+                        cp.id_cuenta_por_cobrar,
+                        SUM(cp.valor_aplicado) AS total_aplicado
+                    FROM cuenta_pagada cp
+                    INNER JOIN pagos_recibidos pr ON pr.id = cp.id_pago_recibido
+                    INNER JOIN cuentas_por_cobrar c2 ON c2.id = cp.id_cuenta_por_cobrar
+                    WHERE cp.id_tenant = :id_tenant_cp
+                        AND c2.id_tenant = :id_tenant_c2
+                        AND YEAR(c2.fecha) = :anio_aplicaciones
+                        AND (pr.anulado = 0 OR pr.anulado IS NULL)
+                    GROUP BY cp.id_cuenta_por_cobrar
+                ) ap ON ap.id_cuenta_por_cobrar = c.id
+                WHERE c.id_tenant = :id_tenant
+                    AND YEAR(c.fecha) = :anio
+                    AND (c.anulado = 0 OR c.anulado IS NULL)
+                    AND ROUND(c.valor - COALESCE(ap.total_aplicado, 0), 2) > 0
+                ORDER BY c.id_persona, MONTH(c.fecha), c.fecha, ps.nombre
+            ");
+
+            $sentence->bindValue(':id_tenant_cp', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant_c2', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindValue(':anio_aplicaciones', $anio, PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindValue(':anio', $anio, PDO::PARAM_INT);
+            $sentence->execute();
+            $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
+
+            Flight::json($response);
+        } catch (Exception $e) {
+            error_log('Error en getPendientesAnio: ' . $e->getMessage());
+            Flight::json([
+                'error' => true,
+                'message' => 'Error al obtener las cuentas pendientes del año',
+                'detalles' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Reporte desagregado de cobros por año. Incluye estudiantes y colaboradores.
      * Retorna cada registro individual con tipo_persona y grupo_o_cargo derivados.
      */
