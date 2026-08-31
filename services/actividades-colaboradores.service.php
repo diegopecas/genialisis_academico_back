@@ -647,6 +647,7 @@ class ActividadesColaboradores
         h.id_grupo,
         h.id_area_academica,
         h.id_dia_semana,
+        h.nombre_franja,
         h.hora_inicial,
         h.hora_final,
         h.total_minutos,

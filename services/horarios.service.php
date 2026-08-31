@@ -9,6 +9,7 @@ class Horarios
                                     h.id_grupo,
                                     h.id_area_academica,
                                     h.id_dia_semana,
+                                    h.nombre_franja,
                                     aaxg.id_docente,
                                     h.hora_inicial,
                                     h.hora_final,
@@ -40,6 +41,7 @@ class Horarios
                                     h.id_grupo,
                                     h.id_area_academica,
                                     h.id_dia_semana,
+                                    h.nombre_franja,
                                     aaxg.id_docente,
                                     h.hora_inicial,
                                     h.hora_final,
@@ -71,6 +73,7 @@ class Horarios
                                     h.id_grupo,
                                     h.id_area_academica,
                                     h.id_dia_semana,
+                                    h.nombre_franja,
                                     aaxg.id_docente,
                                     h.hora_inicial,
                                     h.hora_final,
@@ -107,6 +110,7 @@ class Horarios
                                     h.id_grupo,
                                     h.id_area_academica,
                                     h.id_dia_semana,
+                                    h.nombre_franja,
                                     aaxg.id_docente,
                                     h.hora_inicial,
                                     h.hora_final,
@@ -142,15 +146,20 @@ class Horarios
         $hora_final = Flight::request()->data['hora_final'];
         $total_minutos = Flight::request()->data['total_minutos'];
         $total_clases = Flight::request()->data['total_clases'] ?? 1;
-        
+        // Nombre libre de la franja (ej. 'Refrigerio', 'Circulo de lectura').
+        // Es opcional: si no llega, la franja se identifica solo por su area.
+        $nombre_franja = Flight::request()->data['nombre_franja'] ?? null;
+        $nombre_franja = ($nombre_franja === '' ? null : $nombre_franja);
+
         $idNew = Uuid::generar();
-        $sentence = $db->prepare("insert into horarios(id, id_tenant, id_grupo, id_area_academica, id_dia_semana, hora_inicial, hora_final, total_minutos, total_clases) 
-                                  values (:id, :id_tenant, :id_grupo, :id_area_academica, :id_dia_semana, :hora_inicial, :hora_final, :total_minutos, :total_clases)");
+        $sentence = $db->prepare("insert into horarios(id, id_tenant, id_grupo, id_area_academica, id_dia_semana, nombre_franja, hora_inicial, hora_final, total_minutos, total_clases) 
+                                  values (:id, :id_tenant, :id_grupo, :id_area_academica, :id_dia_semana, :nombre_franja, :hora_inicial, :hora_final, :total_minutos, :total_clases)");
         $sentence->bindValue(':id', $idNew);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_grupo', $id_grupo);
         $sentence->bindParam(':id_area_academica', $id_area_academica);
         $sentence->bindParam(':id_dia_semana', $id_dia_semana);
+        $sentence->bindParam(':nombre_franja', $nombre_franja);
         $sentence->bindParam(':hora_inicial', $hora_inicial);
         $sentence->bindParam(':hora_final', $hora_final);
         $sentence->bindParam(':total_minutos', $total_minutos);
@@ -163,8 +172,8 @@ class Horarios
     /**
      * Guarda y elimina varias franjas del mismo grupo en una sola transaccion.
      * Espera: id_grupo, horarios[] con id_area_academica, id_dia_semana,
-     * hora_inicial, hora_final, total_minutos y total_clases, y eliminar[] con
-     * los ids de las franjas a borrar.
+     * hora_inicial, hora_final, total_minutos, total_clases y nombre_franja
+     * (opcional), y eliminar[] con los ids de las franjas a borrar.
      * Valida solapamiento contra lo ya guardado (sin contar lo que se elimina)
      * y entre las franjas enviadas.
      */
@@ -244,8 +253,8 @@ class Horarios
                 }
             }
 
-            $sentence = $db->prepare("insert into horarios(id, id_tenant, id_grupo, id_area_academica, id_dia_semana, hora_inicial, hora_final, total_minutos, total_clases)
-                                      values (:id, :id_tenant, :id_grupo, :id_area_academica, :id_dia_semana, :hora_inicial, :hora_final, :total_minutos, :total_clases)");
+            $sentence = $db->prepare("insert into horarios(id, id_tenant, id_grupo, id_area_academica, id_dia_semana, nombre_franja, hora_inicial, hora_final, total_minutos, total_clases)
+                                      values (:id, :id_tenant, :id_grupo, :id_area_academica, :id_dia_semana, :nombre_franja, :hora_inicial, :hora_final, :total_minutos, :total_clases)");
 
             $ids = [];
             foreach ($horarios as $franja) {
@@ -256,12 +265,15 @@ class Horarios
                 $hora_final = $franja['hora_final'];
                 $total_minutos = $franja['total_minutos'];
                 $total_clases = isset($franja['total_clases']) ? $franja['total_clases'] : 1;
+                $nombre_franja = isset($franja['nombre_franja']) ? trim($franja['nombre_franja']) : '';
+                $nombre_franja = ($nombre_franja === '' ? null : $nombre_franja);
 
                 $sentence->bindValue(':id', $idNew);
                 $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentence->bindParam(':id_grupo', $id_grupo);
                 $sentence->bindParam(':id_area_academica', $id_area_academica);
                 $sentence->bindParam(':id_dia_semana', $id_dia_semana);
+                $sentence->bindParam(':nombre_franja', $nombre_franja);
                 $sentence->bindParam(':hora_inicial', $hora_inicial);
                 $sentence->bindParam(':hora_final', $hora_final);
                 $sentence->bindParam(':total_minutos', $total_minutos);
@@ -293,11 +305,16 @@ class Horarios
         $hora_final = Flight::request()->data['hora_final'];
         $total_minutos = Flight::request()->data['total_minutos'];
         $total_clases = Flight::request()->data['total_clases'] ?? 1;
-        
+        // Nombre libre de la franja. Opcional: la cadena vacia se guarda como
+        // null para que la franja vuelva a mostrarse solo con su area.
+        $nombre_franja = Flight::request()->data['nombre_franja'] ?? null;
+        $nombre_franja = ($nombre_franja === '' ? null : $nombre_franja);
+
         $sentence = $db->prepare("update horarios set 
                                   id_grupo = :id_grupo, 
                                   id_area_academica = :id_area_academica, 
                                   id_dia_semana = :id_dia_semana, 
+                                  nombre_franja = :nombre_franja, 
                                   hora_inicial = :hora_inicial, 
                                   hora_final = :hora_final, 
                                   total_minutos = :total_minutos, 
@@ -306,6 +323,7 @@ class Horarios
         $sentence->bindParam(':id_grupo', $id_grupo);
         $sentence->bindParam(':id_area_academica', $id_area_academica);
         $sentence->bindParam(':id_dia_semana', $id_dia_semana);
+        $sentence->bindParam(':nombre_franja', $nombre_franja);
         $sentence->bindParam(':hora_inicial', $hora_inicial);
         $sentence->bindParam(':hora_final', $hora_final);
         $sentence->bindParam(':total_minutos', $total_minutos);
