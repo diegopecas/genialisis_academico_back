@@ -53,7 +53,13 @@ class JWTService
      * Genera un token JWT para el usuario
      * 
      * @param array $userData Datos del usuario (id, id_persona, usuario, etc.)
-     * @param array $permisos Array de códigos de permisos del usuario (ej: ['menu.estudiantes', 'admin.productos.crear']) o ['*'] si es super_admin
+     * @param array $permisos IGNORADO. Los permisos ya no viajan dentro del token:
+     *        con el catalogo completo el arreglo llegaba a ~5.6 KB y el header
+     *        Authorization se pasaba del limite de Apache (431 Request Header
+     *        Fields Too Large). El backend los resuelve contra la BD cuando los
+     *        necesita, via PermisosService::permisosDe(). El parametro se
+     *        conserva para no romper a quien llama al metodo; el front sigue
+     *        recibiendo los permisos en el cuerpo de la respuesta del login.
      * @param string|null $tenant Codigo del tenant
      * @param array $extra Claims adicionales firmados (ej: ['portal' => 'padres', 'hd_v' => '1.0'])
      * @return string Token JWT
@@ -73,8 +79,7 @@ class JWTService
                 'primer_nombre' => $userData['primer_nombre'] ?? '',
                 'primer_apellido' => $userData['primer_apellido'] ?? '',
                 'super_admin' => $userData['super_admin'] ?? 0,
-                'tenant' => $tenant,
-                'permisos' => $permisos
+                'tenant' => $tenant
             ], $extra)
         ];
 
@@ -199,7 +204,8 @@ class JWTService
      * Middleware: Valida que el request tenga un token válido
      * Detiene la ejecución si no es válido
      * 
-     * @return object Datos del usuario (incluye ->permisos y ->super_admin)
+     * @return object Datos del usuario (incluye ->super_admin; los permisos NO
+     *         viajan en el token, se consultan con PermisosService::permisosDe)
      */
     public static function requerirAutenticacion()
     {
@@ -255,7 +261,7 @@ class JWTService
      * esos usuarios deberan volver a iniciar sesion una vez tras el despliegue.
      *
      * @param string|null $tenantRequest Codigo de tenant del request (ej. 'lumen').
-     * @return object Datos del usuario (incluye ->permisos, ->super_admin, ->tenant).
+     * @return object Datos del usuario (incluye ->super_admin y ->tenant).
      */
     public static function requerirTenant($tenantRequest)
     {

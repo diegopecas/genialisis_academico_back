@@ -349,19 +349,14 @@ class IaChat
     /**
      * Chequeo SUAVE del permiso de chat (sin cortar la ejecución).
      * Igual criterio que PermisosService pero devolviendo bool: super_admin o '*' pasan.
+     *
+     * Los permisos ya no viajan en el token: PermisosService los resuelve contra
+     * la BD la primera vez y los deja en cache por peticion, asi que las
+     * llamadas repetidas del chat no generan consultas repetidas.
      */
     private static function tienePermisoChat($userData)
     {
-        if (isset($userData->super_admin) && $userData->super_admin == 1) {
-            return true;
-        }
-        if (isset($userData->permisos)) {
-            $permisos = (array) $userData->permisos;
-            if (in_array('*', $permisos, true) || in_array('chat.ia.usar', $permisos, true)) {
-                return true;
-            }
-        }
-        return false;
+        return PermisosService::tiene($userData, 'chat.ia.usar');
     }
 
     private static function determinarRol($db, $id_persona)

@@ -811,19 +811,14 @@ class Solicitudes
     }
 
     /**
-     * Revisa un permiso dentro del token. super_admin lo tiene todo.
+     * Revisa un permiso del usuario. super_admin lo tiene todo.
+     *
+     * Los permisos ya no viajan en el token: PermisosService los resuelve contra
+     * la BD y los cachea por peticion.
      */
     private static function tienePermiso($userData, $codigo)
     {
-        if (isset($userData->super_admin) && (int)$userData->super_admin === 1) {
-            return true;
-        }
-
-        if (!isset($userData->permisos) || !is_array($userData->permisos)) {
-            return false;
-        }
-
-        return in_array($codigo, $userData->permisos, true);
+        return PermisosService::tiene($userData, $codigo);
     }
 
     /**
