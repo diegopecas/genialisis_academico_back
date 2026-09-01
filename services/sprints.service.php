@@ -330,6 +330,8 @@ class Sprints
             s.id_corte_academico,
             s.actual,
             s.es_evaluacion,
+            s.finalizado,
+            s.sprint_informe,
             ca.nombre AS nombre_corte_academico,
             COALESCE(COUNT(txs.id), 0) as total_tareas,
             COALESCE(SUM(CASE WHEN txs.id_estado_tarea = 2 THEN 1 ELSE 0 END), 0) as tareas_ejecutadas,
@@ -341,7 +343,7 @@ class Sprints
         WHERE s.id_tenant = :id_tenant
         GROUP BY s.id, s.anio, s.numero_sprint, s.nombre_sprint, s.fecha_inicial, 
                  s.fecha_final, s.total_dias_habiles, s.id_corte_academico, 
-                 s.actual, s.es_evaluacion, ca.nombre
+                 s.actual, s.es_evaluacion, s.finalizado, s.sprint_informe, ca.nombre
         ORDER BY s.anio DESC, s.numero_sprint DESC
     ";
 
@@ -358,6 +360,8 @@ class Sprints
             $row['id_corte_academico'] = (string) $row['id_corte_academico'];
             $row['actual'] = (int) $row['actual'];
             $row['es_evaluacion'] = (int) $row['es_evaluacion'];
+            $row['finalizado'] = (int) $row['finalizado'];
+            $row['sprint_informe'] = (int) $row['sprint_informe'];
             $row['total_tareas'] = (int) $row['total_tareas'];
             $row['tareas_ejecutadas'] = (int) $row['tareas_ejecutadas'];
             $row['tareas_pendientes'] = (int) $row['tareas_pendientes'];

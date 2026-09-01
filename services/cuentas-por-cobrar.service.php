@@ -1503,4 +1503,255 @@ class CuentasPorCobrar
             Flight::json(array('error' => $e->getMessage()), 500);
         }
     }
+
+    /**
+     * Datos base de la pantalla de Registro Rapido de Cobros: el listado de
+     * estudiantes con grupo y estado. Los productos salen del catalogo
+     * (productos-servicios) y la asistencia del servicio de asistencia, por eso
+     * aqui solo viajan los estudiantes.
+     *
+     * Se traen activos e inactivos: la pantalla filtra por estado y a veces hay
+     * que cobrarle a un estudiante ya retirado.
+     */
+    public static function getDatosCobrosRapido()
+    {
+        $userData = JWTService::requerirAutenticacion();
+
+        try {
+            $db = Flight::db();
+
+            $stmtEstudiantes = $db->prepare("
+                SELECT DISTINCT
+                    e.id AS id_estudiante,
+                    e.id_persona,
+                    CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ',
+                           IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_estudiante,
+                    p.numero_identificacion,
+                    IFNULL(g.nombre, 'Sin grupo') AS grupo_estudiante,
+                    e.activo
+                FROM estudiantes e
+                INNER JOIN personas p ON e.id_persona = p.id
+                LEFT JOIN estudiantes_x_grupos eg ON e.id = eg.id_estudiante AND eg.activo = 1
+                LEFT JOIN grupos g ON eg.id_grupo = g.id
+                WHERE e.id_tenant = :id_tenant
+                ORDER BY g.nombre, p.primer_nombre, p.primer_apellido
+            ");
+            $stmtEstudiantes->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtEstudiantes->execute();
+            $estudiantes = $stmtEstudiantes->fetchAll(PDO::FETCH_ASSOC);
+
+            // Los nombres se arman por concatenacion y quedan con espacios dobles
+            // cuando falta el segundo nombre o el segundo apellido.
+            foreach ($estudiantes as &$est) {
+                $est['nombre_estudiante'] = trim(preg_replace('/\s+/', ' ', $est['nombre_estudiante']));
+                $est['activo'] = (int) $est['activo'];
+            }
+            unset($est);
+
+            Flight::json(array('estudiantes' => $estudiantes));
+        } catch (Exception $e) {
+            error_log('Error en CuentasPorCobrar::getDatosCobrosRapido(): ' . $e->getMessage());
+            Flight::json(array('error' => 'Error al obtener los datos para el registro rapido de cobros'), 500);
+        }
+    }
+
+    /**
+     * Generacion masiva de cuentas por cobrar: un mismo producto para varios
+     * estudiantes, repetido en un rango de meses del anio.
+     *
+     * Cada estudiante llega con su propio valor y su propio detalle porque la
+     * pantalla permite ajustarlos fila por fila sobre el valor y el detalle
+     * generales.
+     *
+     * Las cuentas ya existentes (mismo estudiante, mismo producto, misma fecha,
+     * no anuladas) NO se vuelven a crear: se omiten y se devuelven en
+     * fechas_omitidas para que la pantalla las muestre en la fila.
+     *
+     * Entrada esperada:
+     *   id_producto_servicio, anio, mes_inicial, mes_final, dia, id_usuario,
+     *   estudiantes: [ { id_estudiante, id_persona, valor, detalle } ]
+     */
+    public static function generarMasivo()
+    {
+        $userData = JWTService::requerirAutenticacion();
+
+        $db = Flight::db();
+
+        try {
+            $data = Flight::request()->data->getData();
+
+            $id_producto_servicio = isset($data['id_producto_servicio']) ? $data['id_producto_servicio'] : null;
+            $anio                 = isset($data['anio']) ? (int) $data['anio'] : 0;
+            $mes_inicial          = isset($data['mes_inicial']) ? (int) $data['mes_inicial'] : 0;
+            $mes_final            = isset($data['mes_final']) ? (int) $data['mes_final'] : 0;
+            $dia                  = isset($data['dia']) ? (int) $data['dia'] : 0;
+            $id_usuario           = isset($data['id_usuario']) ? $data['id_usuario'] : null;
+            $estudiantes          = isset($data['estudiantes']) ? $data['estudiantes'] : array();
+
+            if (!$id_producto_servicio) {
+                Flight::json(array('error' => 'Debe seleccionar un producto o servicio'), 400);
+                return;
+            }
+            if ($anio < 2000 || $anio > 2100) {
+                Flight::json(array('error' => 'El año no es valido'), 400);
+                return;
+            }
+            if ($mes_inicial < 1 || $mes_inicial > 12 || $mes_final < 1 || $mes_final > 12) {
+                Flight::json(array('error' => 'Los meses deben estar entre 1 y 12'), 400);
+                return;
+            }
+            if ($mes_inicial > $mes_final) {
+                Flight::json(array('error' => 'El mes inicial no puede ser posterior al mes final'), 400);
+                return;
+            }
+            if ($dia < 1 || $dia > 31) {
+                Flight::json(array('error' => 'El dia debe estar entre 1 y 31'), 400);
+                return;
+            }
+            if (empty($estudiantes) || !is_array($estudiantes)) {
+                Flight::json(array('error' => 'Debe seleccionar al menos un estudiante'), 400);
+                return;
+            }
+            if (!$id_usuario) {
+                Flight::json(array('error' => 'No se recibio el usuario que registra'), 400);
+                return;
+            }
+
+            // El producto debe existir en el tenant: de lo contrario se estarian
+            // creando cuentas colgando de un producto de otro jardin.
+            $stmtProducto = $db->prepare("
+                SELECT id, nombre
+                FROM productos_servicios
+                WHERE id = :id AND id_tenant = :id_tenant
+            ");
+            $stmtProducto->bindParam(':id', $id_producto_servicio);
+            $stmtProducto->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtProducto->execute();
+            $producto = $stmtProducto->fetch(PDO::FETCH_ASSOC);
+
+            if (!$producto) {
+                Flight::json(array('error' => 'El producto o servicio no existe'), 404);
+                return;
+            }
+
+            // Fechas del rango. Si el dia no existe en el mes (31 en febrero) se
+            // ajusta al ultimo dia de ese mes en vez de correrse al mes siguiente.
+            $fechas = array();
+            for ($mes = $mes_inicial; $mes <= $mes_final; $mes++) {
+                $ultimoDia = (int) date('t', mktime(0, 0, 0, $mes, 1, $anio));
+                $diaMes = min($dia, $ultimoDia);
+                $fechas[] = sprintf('%04d-%02d-%02d', $anio, $mes, $diaMes);
+            }
+
+            $mora = self::parametrosMoraProducto($db, $id_producto_servicio);
+
+            $stmtExiste = $db->prepare("
+                SELECT COUNT(*) AS cantidad
+                FROM cuentas_por_cobrar
+                WHERE id_persona = :id_persona
+                  AND id_producto_servicio = :id_producto_servicio
+                  AND fecha = :fecha
+                  AND (anulado = 0 OR anulado IS NULL)
+                  AND id_tenant = :id_tenant
+            ");
+
+            $stmtInsert = $db->prepare("
+                INSERT INTO cuentas_por_cobrar
+                (id, id_tenant, id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario,
+                 anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion,
+                 id_tipo_mora, valor_recargo_mora, porcentaje_mora_mensual, mora_acumulable)
+                VALUES
+                (:id, :id_tenant, :id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario,
+                 0, NULL, NULL, NULL,
+                 :id_tipo_mora, :valor_recargo_mora, :porcentaje_mora_mensual, :mora_acumulable)
+            ");
+
+            $db->beginTransaction();
+
+            $resultados     = array();
+            $totalCreadas   = 0;
+            $totalOmitidas  = 0;
+            $totalValor     = 0;
+
+            foreach ($estudiantes as $estudiante) {
+                $id_estudiante = isset($estudiante['id_estudiante']) ? $estudiante['id_estudiante'] : null;
+                $id_persona    = isset($estudiante['id_persona']) ? $estudiante['id_persona'] : null;
+                $valor         = isset($estudiante['valor']) ? (float) $estudiante['valor'] : 0;
+                $detalle       = isset($estudiante['detalle']) ? $estudiante['detalle'] : '';
+
+                if (!$id_persona || $valor <= 0) {
+                    $resultados[] = array(
+                        'id_estudiante'   => $id_estudiante,
+                        'creadas'         => 0,
+                        'omitidas'        => 0,
+                        'fechas_omitidas' => array(),
+                        'error'           => 'Estudiante sin persona asociada o con valor invalido'
+                    );
+                    continue;
+                }
+
+                $creadasEstudiante  = 0;
+                $fechasOmitidas     = array();
+
+                foreach ($fechas as $fecha) {
+                    $stmtExiste->bindParam(':id_persona', $id_persona);
+                    $stmtExiste->bindParam(':id_producto_servicio', $id_producto_servicio);
+                    $stmtExiste->bindParam(':fecha', $fecha);
+                    $stmtExiste->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $stmtExiste->execute();
+                    $existente = $stmtExiste->fetch(PDO::FETCH_ASSOC);
+
+                    if ($existente && (int) $existente['cantidad'] > 0) {
+                        $fechasOmitidas[] = $fecha;
+                        $totalOmitidas++;
+                        continue;
+                    }
+
+                    $idCxc = Uuid::generar();
+                    $stmtInsert->bindValue(':id', $idCxc);
+                    $stmtInsert->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $stmtInsert->bindParam(':id_producto_servicio', $id_producto_servicio);
+                    $stmtInsert->bindParam(':id_persona', $id_persona);
+                    $stmtInsert->bindParam(':fecha', $fecha);
+                    $stmtInsert->bindValue(':valor', $valor);
+                    $stmtInsert->bindValue(':detalle', $detalle);
+                    $stmtInsert->bindParam(':id_usuario', $id_usuario);
+                    $stmtInsert->bindValue(':id_tipo_mora', $mora['id_tipo_mora']);
+                    $stmtInsert->bindValue(':valor_recargo_mora', $mora['valor_recargo_mora']);
+                    $stmtInsert->bindValue(':porcentaje_mora_mensual', $mora['porcentaje_mora_mensual']);
+                    $stmtInsert->bindValue(':mora_acumulable', $mora['mora_acumulable'], PDO::PARAM_INT);
+                    $stmtInsert->execute();
+
+                    $creadasEstudiante++;
+                    $totalCreadas++;
+                    $totalValor += $valor;
+                }
+
+                $resultados[] = array(
+                    'id_estudiante'   => $id_estudiante,
+                    'creadas'         => $creadasEstudiante,
+                    'omitidas'        => count($fechasOmitidas),
+                    'fechas_omitidas' => $fechasOmitidas
+                );
+            }
+
+            $db->commit();
+
+            Flight::json(array(
+                'success'          => true,
+                'nombre_producto'  => $producto['nombre'],
+                'fechas'           => $fechas,
+                'total_creadas'    => $totalCreadas,
+                'total_omitidas'   => $totalOmitidas,
+                'total_valor'      => $totalValor,
+                'resultados'       => $resultados
+            ));
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log('Error en CuentasPorCobrar::generarMasivo(): ' . $e->getMessage());
+            Flight::json(array('error' => 'Error al generar las cuentas por cobrar'), 500);
+        }
+    }
 }

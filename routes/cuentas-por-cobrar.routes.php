@@ -14,6 +14,7 @@ Flight::route('GET /cuentas-por-cobrar/reporte-cartera-estudiantes/@anio', [Cuen
 Flight::route('GET /cuentas-por-cobrar/reporte-cartera-estudiantes/@anio/@idEstudiante', [CuentasPorCobrar::class, 'getReporteCarteraEstudiantes']);
 // Debe quedar antes de /cuentas-por-cobrar/@id para que no la capture esa ruta
 Flight::route('GET /cuentas-por-cobrar/pendientes-anio/@anio', [CuentasPorCobrar::class, 'getPendientesAnio']);
+Flight::route('GET /cuentas-por-cobrar/datos-cobros-rapido', [CuentasPorCobrar::class, 'getDatosCobrosRapido']);
 Flight::route('GET /cuentas-por-cobrar/@id', [CuentasPorCobrar::class, 'getById']);
 Flight::route('POST /cuentas-por-cobrar', [CuentasPorCobrar::class, 'new']);
 Flight::route('PUT /cuentas-por-cobrar', [CuentasPorCobrar::class, 'replace']);
@@ -24,6 +25,9 @@ Flight::route('POST /cuentas-por-cobrar/verificar-duplicados', [CuentasPorCobrar
 Flight::route('POST /cuentas-por-cobrar/generar-desde-contrato', [CuentasPorCobrar::class, 'generarDesdeContrato']);
 
 Flight::route('POST /cuentas-por-cobrar/generar-desde-curso-extra', [CuentasPorCobrar::class, 'generarDesdeCursoExtra']);
+
+// Generacion masiva de cuentas (Registro Rapido de Cobros)
+Flight::route('POST /cuentas-por-cobrar/generar-masivo', [CuentasPorCobrar::class, 'generarMasivo']);
 
 // Rutas para cuentas por cobrar con detalle
 Flight::route('GET /cuentas-por-cobrar/detalle', [CuentasPorCobrar::class, 'getAllConDetalle']);
