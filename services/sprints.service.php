@@ -8,7 +8,7 @@ class Sprints
         $sentence = $db->prepare("SELECT s.id, s.anio, s.numero_sprint, s.nombre_sprint, 
             s.fecha_inicial, s.fecha_final, s.total_dias_habiles, 
             s.id_corte_academico, ca.nombre AS nombre_corte_academico, 
-            s.actual, s.es_evaluacion
+            s.actual, s.es_evaluacion, s.finalizado, s.sprint_informe
         FROM sprints s 
         LEFT OUTER JOIN cortes_academicos ca ON s.id_corte_academico = ca.id
         WHERE s.id_tenant = :id_tenant
@@ -47,6 +47,8 @@ class Sprints
             $id_corte_academico = Flight::request()->data['id_corte_academico'];
             $actual = Flight::request()->data['actual'] ? 1 : 0;
             $es_evaluacion = Flight::request()->data['es_evaluacion'] ? 1 : 0;
+            // Sprint que produce el informe del acudiente. Solo uno por corte.
+            $sprint_informe = !empty(Flight::request()->data['sprint_informe']) ? 1 : 0;
 
             error_log("Datos recibidos para crear sprint: anio=$anio, numero=$numero_sprint, nombre=$nombre_sprint");
 
@@ -57,15 +59,27 @@ class Sprints
                 error_log("Sprints actuales desmarcados");
             }
 
+            // sprint_informe es unico por corte, no por tenant: cada corte tiene
+            // el suyo. Se apaga en los demas sprints del mismo corte.
+            if ($sprint_informe) {
+                $updateInforme = $db->prepare("UPDATE sprints SET sprint_informe = 0
+                                               WHERE sprint_informe = 1
+                                                 AND id_corte_academico = :id_corte_academico
+                                                 AND id_tenant = :id_tenant");
+                $updateInforme->bindParam(':id_corte_academico', $id_corte_academico);
+                $updateInforme->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $updateInforme->execute();
+            }
+
             $idNew = Uuid::generar();
             $sentence = $db->prepare("INSERT INTO sprints(
                 id, id_tenant,
                 anio, numero_sprint, nombre_sprint, fecha_inicial, fecha_final,
-                total_dias_habiles, id_corte_academico, actual, es_evaluacion
+                total_dias_habiles, id_corte_academico, actual, es_evaluacion, sprint_informe
             ) VALUES (
                 :id, :id_tenant,
                 :anio, :numero_sprint, :nombre_sprint, :fecha_inicial, :fecha_final,
-                :total_dias_habiles, :id_corte_academico, :actual, :es_evaluacion
+                :total_dias_habiles, :id_corte_academico, :actual, :es_evaluacion, :sprint_informe
             )");
 
             $sentence->bindValue(':id', $idNew);
@@ -79,6 +93,7 @@ class Sprints
             $sentence->bindParam(':id_corte_academico', $id_corte_academico);
             $sentence->bindParam(':actual', $actual);
             $sentence->bindParam(':es_evaluacion', $es_evaluacion);
+            $sentence->bindParam(':sprint_informe', $sprint_informe);
 
             $sentence->execute();
 
@@ -107,6 +122,7 @@ class Sprints
             $id_corte_academico = Flight::request()->data['id_corte_academico'];
             $actual = Flight::request()->data['actual'] ? 1 : 0;
             $es_evaluacion = Flight::request()->data['es_evaluacion'] ? 1 : 0;
+            $sprint_informe = !empty(Flight::request()->data['sprint_informe']) ? 1 : 0;
 
             error_log("Actualizando sprint ID: $id");
 
@@ -123,6 +139,19 @@ class Sprints
                 error_log("Otros sprints actuales desmarcados");
             }
 
+            // Solo un sprint de informe por corte
+            if ($sprint_informe) {
+                $updateInforme = $db->prepare("UPDATE sprints SET sprint_informe = 0
+                                               WHERE sprint_informe = 1
+                                                 AND id_corte_academico = :id_corte_academico
+                                                 AND id != :id
+                                                 AND id_tenant = :id_tenant");
+                $updateInforme->bindParam(':id_corte_academico', $id_corte_academico);
+                $updateInforme->bindParam(':id', $id);
+                $updateInforme->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $updateInforme->execute();
+            }
+
             $sentence = $db->prepare("UPDATE sprints SET 
                 anio = :anio,
                 numero_sprint = :numero_sprint,
@@ -132,7 +161,8 @@ class Sprints
                 total_dias_habiles = :total_dias_habiles,
                 id_corte_academico = :id_corte_academico,
                 actual = :actual,
-                es_evaluacion = :es_evaluacion
+                es_evaluacion = :es_evaluacion,
+                sprint_informe = :sprint_informe
                 WHERE id = :id AND id_tenant = :id_tenant");
 
             $sentence->bindParam(':id', $id);
@@ -146,6 +176,7 @@ class Sprints
             $sentence->bindParam(':id_corte_academico', $id_corte_academico);
             $sentence->bindParam(':actual', $actual);
             $sentence->bindParam(':es_evaluacion', $es_evaluacion);
+            $sentence->bindParam(':sprint_informe', $sprint_informe);
 
             $sentence->execute();
 
@@ -817,7 +848,10 @@ class Sprints
 
             $db->beginTransaction();
 
-            $updateSprint = $db->prepare("UPDATE sprints SET actual = 0 WHERE id = :id_sprint AND id_tenant = :id_tenant");
+            // Ademas de quitarle el 'actual', deja la marca explicita de
+            // finalizado: 'actual = 0' no sirve para saberlo, porque un sprint
+            // que nunca fue el actual tambien lo tiene en cero.
+            $updateSprint = $db->prepare("UPDATE sprints SET actual = 0, finalizado = 1 WHERE id = :id_sprint AND id_tenant = :id_tenant");
             $updateSprint->bindParam(':id_sprint', $id_sprint);
             $updateSprint->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $updateSprint->execute();
