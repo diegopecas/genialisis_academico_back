@@ -373,7 +373,12 @@ class Sprints
                 $row['porcentaje_completado'] = 0;
             }
 
-            if ($row['actual'] == 1) {
+            // La marca de finalizado manda sobre el calculo por fechas: un
+            // sprint finalizado no puede quedar como pendiente.
+            if ($row['finalizado'] == 1) {
+                $row['estado_sprint'] = 'Finalizado';
+                $row['estado_clase'] = 'badge-success';
+            } else if ($row['actual'] == 1) {
                 $row['estado_sprint'] = 'En ejecución';
                 $row['estado_clase'] = 'badge-actual';
             } else if ($fechaInicialActual && $row['fecha_inicial'] < $fechaInicialActual) {
