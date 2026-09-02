@@ -70,13 +70,10 @@ class AutorizacionesInformesEstudiantes
                     si.fecha_final AS fecha_final_sprint,
                     COALESCE(si.finalizado, 0) AS sprint_finalizado,
                     (
+                        -- Mismo criterio que getEstudiantesCorte: manda el
+                        -- estudiante activo, el grupo no decide quien entra.
                         SELECT COUNT(*)
                         FROM estudiantes e
-                        INNER JOIN estudiantes_x_grupos exg
-                            ON exg.id_estudiante = e.id
-                            AND exg.id_tenant = e.id_tenant
-                            AND exg.activo = 1
-                            AND exg.anio = :anio_est
                         WHERE e.id_tenant = ca.id_tenant
                             AND e.activo = 1
                     ) AS total_estudiantes,
@@ -103,7 +100,6 @@ class AutorizacionesInformesEstudiantes
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindValue(':anio', $anio, PDO::PARAM_INT);
             $sentence->bindValue(':anio_corte', $anio, PDO::PARAM_INT);
-            $sentence->bindValue(':anio_est', $anio, PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json($sentence->fetchAll(PDO::FETCH_ASSOC));
@@ -153,12 +149,20 @@ class AutorizacionesInformesEstudiantes
                     COALESCE(v.cuentas_vencidas, 0) AS cuentas_vencidas
                 FROM estudiantes e
                 INNER JOIN personas p ON p.id = e.id_persona
-                INNER JOIN estudiantes_x_grupos exg
-                    ON exg.id_estudiante = e.id
-                    AND exg.id_tenant = e.id_tenant
-                    AND exg.activo = 1
-                    AND exg.anio = :anio
-                INNER JOIN grupos g ON g.id = exg.id_grupo
+                -- Manda el estudiante activo. El grupo es aquel en el que esta
+                -- activo en el ano mas reciente, sin exigir que sea el ano que se
+                -- esta consultando.
+                LEFT JOIN estudiantes_x_grupos exg
+                    ON exg.id = (
+                        SELECT x.id
+                        FROM estudiantes_x_grupos x
+                        WHERE x.id_estudiante = e.id
+                            AND x.id_tenant = e.id_tenant
+                            AND x.activo = 1
+                        ORDER BY x.anio DESC
+                        LIMIT 1
+                    )
+                LEFT JOIN grupos g ON g.id = exg.id_grupo
                 LEFT JOIN autorizaciones_informes_estudiantes a
                     ON a.id_estudiante = e.id
                     AND a.id_tenant = e.id_tenant
@@ -185,14 +189,13 @@ class AutorizacionesInformesEstudiantes
                 ) v ON v.id_persona = p.id
                 WHERE e.id_tenant = :id_tenant
                     AND e.activo = 1
-                ORDER BY g.nombre, p.primer_apellido, p.primer_nombre
+                ORDER BY g.nombre IS NULL, g.nombre, p.primer_apellido, p.primer_nombre
             ");
 
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindValue(':id_tenant_cp', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindValue(':id_tenant_cxc', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindValue(':id_corte', $idCorte);
-            $sentence->bindValue(':anio', $anio, PDO::PARAM_INT);
             $sentence->execute();
 
             Flight::json($sentence->fetchAll(PDO::FETCH_ASSOC));

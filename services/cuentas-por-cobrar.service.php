@@ -1754,4 +1754,221 @@ class CuentasPorCobrar
             Flight::json(array('error' => 'Error al generar las cuentas por cobrar'), 500);
         }
     }
+
+    /**
+     * Cuentas por cobrar candidatas a anulacion masiva.
+     *
+     * Filtra por rango de fechas y, opcionalmente, por producto. El grupo y la
+     * busqueda por estudiante se resuelven en la pantalla sobre lo que devuelve
+     * esta consulta, que es mas rapido que ir al servidor por cada filtro.
+     *
+     * Devuelve el total pagado de cada cuenta, contando solo los pagos que no
+     * esten anulados: una cuenta cuyo unico pago fue anulado vuelve a quedar
+     * libre y si se puede anular.
+     *
+     * Entrada esperada: fecha_inicial, fecha_final, id_producto_servicio (opcional)
+     */
+    public static function buscarParaAnular()
+    {
+        $userData = JWTService::requerirAutenticacion();
+
+        try {
+            $db = Flight::db();
+            $data = Flight::request()->data->getData();
+
+            $fecha_inicial        = isset($data['fecha_inicial']) ? $data['fecha_inicial'] : null;
+            $fecha_final          = isset($data['fecha_final']) ? $data['fecha_final'] : null;
+            $id_producto_servicio = isset($data['id_producto_servicio']) && $data['id_producto_servicio']
+                ? $data['id_producto_servicio']
+                : null;
+
+            if (!$fecha_inicial || !$fecha_final) {
+                Flight::json(array('error' => 'Debe indicar la fecha inicial y la fecha final'), 400);
+                return;
+            }
+
+            if ($fecha_inicial > $fecha_final) {
+                Flight::json(array('error' => 'La fecha inicial no puede ser posterior a la fecha final'), 400);
+                return;
+            }
+
+            $filtroProducto = $id_producto_servicio
+                ? ' AND c.id_producto_servicio = :id_producto_servicio '
+                : '';
+
+            $sql = "
+                SELECT
+                    c.id,
+                    c.id_persona,
+                    c.id_producto_servicio,
+                    c.fecha,
+                    c.valor,
+                    c.detalle,
+                    ps.nombre AS nombre_producto_servicio,
+                    e.id AS id_estudiante,
+                    TRIM(CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ',
+                                IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, ''))) AS nombre_estudiante,
+                    p.numero_identificacion,
+                    IFNULL(g.nombre, 'Sin grupo') AS grupo_estudiante,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN cp.id IS NOT NULL AND (pr.anulado = 0 OR pr.anulado IS NULL)
+                            THEN cp.valor_aplicado
+                            ELSE 0
+                        END
+                    ), 0) AS total_pagado
+                FROM cuentas_por_cobrar c
+                INNER JOIN personas p ON p.id = c.id_persona
+                INNER JOIN estudiantes e ON e.id_persona = c.id_persona
+                LEFT JOIN estudiantes_x_grupos eg ON e.id = eg.id_estudiante AND eg.activo = 1
+                LEFT JOIN grupos g ON eg.id_grupo = g.id
+                LEFT JOIN productos_servicios ps ON ps.id = c.id_producto_servicio
+                LEFT JOIN cuenta_pagada cp ON cp.id_cuenta_por_cobrar = c.id
+                LEFT JOIN pagos_recibidos pr ON pr.id = cp.id_pago_recibido
+                WHERE (c.anulado = 0 OR c.anulado IS NULL)
+                  AND c.fecha BETWEEN :fecha_inicial AND :fecha_final
+                  AND c.id_tenant = :id_tenant
+                  $filtroProducto
+                GROUP BY c.id, c.id_persona, c.id_producto_servicio, c.fecha, c.valor, c.detalle,
+                         ps.nombre, e.id, p.primer_nombre, p.segundo_nombre, p.primer_apellido,
+                         p.segundo_apellido, p.numero_identificacion, g.nombre
+                ORDER BY g.nombre, nombre_estudiante, c.fecha
+            ";
+
+            $stmt = $db->prepare($sql);
+            $stmt->bindParam(':fecha_inicial', $fecha_inicial);
+            $stmt->bindParam(':fecha_final', $fecha_final);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            if ($id_producto_servicio) {
+                $stmt->bindParam(':id_producto_servicio', $id_producto_servicio);
+            }
+            $stmt->execute();
+            $cuentas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            // La pantalla necesita saber de una cuales cuentas estan bloqueadas
+            // por tener pago aplicado, para pintarlas y no dejarlas marcar.
+            foreach ($cuentas as &$cuenta) {
+                $cuenta['valor']        = (float) $cuenta['valor'];
+                $cuenta['total_pagado'] = (float) $cuenta['total_pagado'];
+                $cuenta['tiene_pago']   = $cuenta['total_pagado'] > 0 ? 1 : 0;
+            }
+            unset($cuenta);
+
+            Flight::json(array('cuentas' => $cuentas));
+        } catch (Exception $e) {
+            error_log('Error en CuentasPorCobrar::buscarParaAnular(): ' . $e->getMessage());
+            Flight::json(array('error' => 'Error al buscar las cuentas por cobrar'), 500);
+        }
+    }
+
+    /**
+     * Anulacion masiva de cuentas por cobrar.
+     *
+     * Una cuenta con pagos aplicados NO se anula aqui: hay que devolver o anular
+     * el pago primero, y eso se hace en el modulo de pagos. La validacion se
+     * repite en el servidor y no solo en la pantalla, para que un id que llegue
+     * de otro lado tampoco pueda saltarsela.
+     *
+     * Entrada esperada: ids (array), id_usuario_anulacion
+     */
+    public static function anularMasivo()
+    {
+        $userData = JWTService::requerirAutenticacion();
+
+        $db = Flight::db();
+
+        try {
+            $data = Flight::request()->data->getData();
+
+            $ids                  = isset($data['ids']) ? $data['ids'] : array();
+            $id_usuario_anulacion = isset($data['id_usuario_anulacion']) ? $data['id_usuario_anulacion'] : null;
+
+            if (empty($ids) || !is_array($ids)) {
+                Flight::json(array('error' => 'Debe seleccionar al menos una cuenta por cobrar'), 400);
+                return;
+            }
+
+            if (!$id_usuario_anulacion) {
+                Flight::json(array('error' => 'No se recibio el usuario que anula'), 400);
+                return;
+            }
+
+            $fechaActual = date('Y-m-d H:i:s');
+
+            $stmtPagos = $db->prepare("
+                SELECT COALESCE(SUM(
+                    CASE
+                        WHEN (pr.anulado = 0 OR pr.anulado IS NULL) THEN cp.valor_aplicado
+                        ELSE 0
+                    END
+                ), 0) AS total_pagado
+                FROM cuenta_pagada cp
+                LEFT JOIN pagos_recibidos pr ON pr.id = cp.id_pago_recibido
+                WHERE cp.id_cuenta_por_cobrar = :id
+                  AND cp.id_tenant = :id_tenant
+            ");
+
+            $stmtAnular = $db->prepare("
+                UPDATE cuentas_por_cobrar SET
+                    anulado = 1,
+                    fecha_anulacion = :fecha_anulacion,
+                    id_usuario_anulacion = :id_usuario_anulacion
+                WHERE id = :id
+                  AND id_tenant = :id_tenant
+                  AND (anulado = 0 OR anulado IS NULL)
+            ");
+
+            $db->beginTransaction();
+
+            $anuladas    = array();
+            $omitidas    = array();
+
+            foreach ($ids as $id) {
+                $stmtPagos->bindParam(':id', $id);
+                $stmtPagos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmtPagos->execute();
+                $pagos = $stmtPagos->fetch(PDO::FETCH_ASSOC);
+
+                if ($pagos && (float) $pagos['total_pagado'] > 0) {
+                    $omitidas[] = array(
+                        'id'     => $id,
+                        'motivo' => 'La cuenta tiene pagos aplicados'
+                    );
+                    continue;
+                }
+
+                $stmtAnular->bindParam(':id', $id);
+                $stmtAnular->bindParam(':fecha_anulacion', $fechaActual);
+                $stmtAnular->bindParam(':id_usuario_anulacion', $id_usuario_anulacion);
+                $stmtAnular->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmtAnular->execute();
+
+                if ($stmtAnular->rowCount() > 0) {
+                    $anuladas[] = $id;
+                } else {
+                    $omitidas[] = array(
+                        'id'     => $id,
+                        'motivo' => 'La cuenta no existe o ya estaba anulada'
+                    );
+                }
+            }
+
+            $db->commit();
+
+            Flight::json(array(
+                'success'         => true,
+                'total_anuladas'  => count($anuladas),
+                'total_omitidas'  => count($omitidas),
+                'anuladas'        => $anuladas,
+                'omitidas'        => $omitidas,
+                'fecha_anulacion' => $fechaActual
+            ));
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log('Error en CuentasPorCobrar::anularMasivo(): ' . $e->getMessage());
+            Flight::json(array('error' => 'Error al anular las cuentas por cobrar'), 500);
+        }
+    }
 }

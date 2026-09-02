@@ -29,6 +29,10 @@ Flight::route('POST /cuentas-por-cobrar/generar-desde-curso-extra', [CuentasPorC
 // Generacion masiva de cuentas (Registro Rapido de Cobros)
 Flight::route('POST /cuentas-por-cobrar/generar-masivo', [CuentasPorCobrar::class, 'generarMasivo']);
 
+// Anulacion masiva de cuentas
+Flight::route('POST /cuentas-por-cobrar/buscar-para-anular', [CuentasPorCobrar::class, 'buscarParaAnular']);
+Flight::route('PUT /cuentas-por-cobrar/anular-masivo', [CuentasPorCobrar::class, 'anularMasivo']);
+
 // Rutas para cuentas por cobrar con detalle
 Flight::route('GET /cuentas-por-cobrar/detalle', [CuentasPorCobrar::class, 'getAllConDetalle']);
 Flight::route('GET /cuentas-por-cobrar/resumen', [CuentasPorCobrar::class, 'getResumenCartera']);
