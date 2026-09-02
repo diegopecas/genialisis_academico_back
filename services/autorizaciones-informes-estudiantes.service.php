@@ -70,10 +70,23 @@ class AutorizacionesInformesEstudiantes
                     si.fecha_final AS fecha_final_sprint,
                     COALESCE(si.finalizado, 0) AS sprint_finalizado,
                     (
-                        -- Mismo criterio que getEstudiantesCorte: manda el
-                        -- estudiante activo, el grupo no decide quien entra.
+                        -- Mismo criterio que getEstudiantesCorte: activos, con
+                        -- su grupo activo mas reciente y solo grupos calificables.
                         SELECT COUNT(*)
                         FROM estudiantes e
+                        INNER JOIN estudiantes_x_grupos exg
+                            ON exg.id = (
+                                SELECT x.id
+                                FROM estudiantes_x_grupos x
+                                WHERE x.id_estudiante = e.id
+                                    AND x.id_tenant = e.id_tenant
+                                    AND x.activo = 1
+                                ORDER BY x.anio DESC
+                                LIMIT 1
+                            )
+                        INNER JOIN grupos g
+                            ON g.id = exg.id_grupo
+                            AND g.calificable = 1
                         WHERE e.id_tenant = ca.id_tenant
                             AND e.activo = 1
                     ) AS total_estudiantes,
@@ -149,10 +162,10 @@ class AutorizacionesInformesEstudiantes
                     COALESCE(v.cuentas_vencidas, 0) AS cuentas_vencidas
                 FROM estudiantes e
                 INNER JOIN personas p ON p.id = e.id_persona
-                -- Manda el estudiante activo. El grupo es aquel en el que esta
-                -- activo en el ano mas reciente, sin exigir que sea el ano que se
-                -- esta consultando.
-                LEFT JOIN estudiantes_x_grupos exg
+                -- El grupo es aquel en el que el estudiante esta activo en el
+                -- ano mas reciente. Solo entran los de grupos calificables,
+                -- porque son los unicos que producen informe.
+                INNER JOIN estudiantes_x_grupos exg
                     ON exg.id = (
                         SELECT x.id
                         FROM estudiantes_x_grupos x
@@ -162,7 +175,9 @@ class AutorizacionesInformesEstudiantes
                         ORDER BY x.anio DESC
                         LIMIT 1
                     )
-                LEFT JOIN grupos g ON g.id = exg.id_grupo
+                INNER JOIN grupos g
+                    ON g.id = exg.id_grupo
+                    AND g.calificable = 1
                 LEFT JOIN autorizaciones_informes_estudiantes a
                     ON a.id_estudiante = e.id
                     AND a.id_tenant = e.id_tenant
@@ -189,7 +204,7 @@ class AutorizacionesInformesEstudiantes
                 ) v ON v.id_persona = p.id
                 WHERE e.id_tenant = :id_tenant
                     AND e.activo = 1
-                ORDER BY g.nombre IS NULL, g.nombre, p.primer_apellido, p.primer_nombre
+                ORDER BY g.nombre, p.primer_apellido, p.primer_nombre
             ");
 
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
