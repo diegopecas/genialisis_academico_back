@@ -7,11 +7,22 @@ class Galerias
     public static function getAll()
     {
         $db = Flight::db();
+        // grupos_nombres: los grupos asignados a la galeria, en un solo texto,
+        // para poder mostrarlos como columna del listado sin una segunda
+        // peticion. Va como subconsulta y no como JOIN + GROUP BY para no
+        // alterar las filas que ya devolvia este metodo.
         $sentence = $db->prepare("
-            SELECT id, nombre, descripcion, thumbnail, fecha, es_publica, activo, orden 
-            FROM galerias 
-            WHERE id_tenant = :id_tenant
-            ORDER BY orden, fecha DESC
+            SELECT g.id, g.nombre, g.descripcion, g.thumbnail, g.fecha, g.es_publica, g.activo, g.orden,
+                   (
+                       SELECT GROUP_CONCAT(gr.nombre ORDER BY gr.orden SEPARATOR ', ')
+                       FROM galerias_x_grupos gxg
+                       INNER JOIN grupos gr ON gr.id = gxg.id_grupo
+                       WHERE gxg.id_galeria = g.id
+                       AND gxg.id_tenant = g.id_tenant
+                   ) AS grupos_nombres
+            FROM galerias g
+            WHERE g.id_tenant = :id_tenant
+            ORDER BY g.orden, g.fecha DESC
         ");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
