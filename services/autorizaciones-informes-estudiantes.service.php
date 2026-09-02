@@ -159,7 +159,8 @@ class AutorizacionesInformesEstudiantes
                     COALESCE(a.autorizado, 0) AS autorizado,
                     a.fecha_autorizacion,
                     COALESCE(v.saldo_vencido, 0) AS saldo_vencido,
-                    COALESCE(v.cuentas_vencidas, 0) AS cuentas_vencidas
+                    COALESCE(v.cuentas_vencidas, 0) AS cuentas_vencidas,
+                    COALESCE(v.dias_vencido_max, 0) AS dias_vencido_max
                 FROM estudiantes e
                 INNER JOIN personas p ON p.id = e.id_persona
                 -- El grupo es aquel en el que el estudiante esta activo en el
@@ -186,7 +187,10 @@ class AutorizacionesInformesEstudiantes
                     SELECT
                         c.id_persona,
                         SUM(ROUND(c.valor - COALESCE(ap.total_aplicado, 0), 2)) AS saldo_vencido,
-                        COUNT(*) AS cuentas_vencidas
+                        COUNT(*) AS cuentas_vencidas,
+                        -- Dias del cobro vencido mas viejo, para poder filtrar
+                        -- por antiguedad de la cartera.
+                        MAX(DATEDIFF(CURDATE(), c.fecha)) AS dias_vencido_max
                     FROM cuentas_por_cobrar c
                     LEFT JOIN (
                         SELECT cp.id_cuenta_por_cobrar, SUM(cp.valor_aplicado) AS total_aplicado
