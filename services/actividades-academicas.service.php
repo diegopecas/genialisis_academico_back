@@ -277,15 +277,27 @@ class ActividadesAcademicas
             $id_tipo_actividad_academica = Flight::request()->data['id_tipo_actividad_academica'];
             $titulo = Flight::request()->data['titulo'];
             $descripcion = Flight::request()->data['descripcion'];
-            $nivel_uno = Flight::request()->data['nivel_uno'];
-            $nivel_dos = Flight::request()->data['nivel_dos'];
+            $nivel_uno = Flight::request()->data['nivel_uno'] ?? '';
+            $nivel_dos = Flight::request()->data['nivel_dos'] ?? '';
             $minutos_duracion = Flight::request()->data['minutos_duracion'];
             $materiales = Flight::request()->data['materiales'];
             $id_ambiente = Flight::request()->data['id_ambiente'] ?? null;
 
             error_log("Datos recibidos para actualización: id=$id, titulo=$titulo");
 
-            if (!$id || !$id_tipo_actividad_academica || !$titulo || !$descripcion || !$nivel_uno || !$nivel_dos || !$minutos_duracion || !$materiales) {
+            // Obligatorios: los que la tabla exige como NOT NULL.
+            // nivel_uno y nivel_dos quedan por fuera: estan ocultos en el
+            // formulario y llegan vacios, asi que exigirlos impedia editar
+            // cualquier actividad.
+            // Se comparan contra '' y no con ! para no rechazar un 0 valido.
+            $faltantes = ($id === null || $id === '')
+                || ($id_tipo_actividad_academica === null || $id_tipo_actividad_academica === '')
+                || ($titulo === null || $titulo === '')
+                || ($descripcion === null || $descripcion === '')
+                || ($minutos_duracion === null || $minutos_duracion === '')
+                || ($materiales === null || $materiales === '');
+
+            if ($faltantes) {
                 Flight::json(array('error' => 'Faltan datos obligatorios'), 400);
                 return;
             }
