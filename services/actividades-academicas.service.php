@@ -341,6 +341,136 @@ class ActividadesAcademicas
     }
 
 
+    /**
+     * Duplica una actividad completa: la fila principal, sus materiales y sus
+     * indicadores de logro asociados. Los sprints NO se copian, porque un
+     * sprint es un periodo concreto y la copia nace como plantilla suelta.
+     *
+     * Todo va en una transaccion: o queda la copia completa o no queda nada.
+     * Devuelve el id de la actividad nueva.
+     */
+    public static function duplicar()
+    {
+        $db = Flight::db();
+
+        try {
+            $id = Flight::request()->data['id'] ?? null;
+
+            if ($id === null || $id === '') {
+                Flight::json(array('error' => 'Falta el id de la actividad a duplicar'), 400);
+                return;
+            }
+
+            $idTenant = TenantContext::id();
+
+            // 1. Traer la actividad original, siempre dentro del tenant actual
+            $sentence = $db->prepare("SELECT titulo, descripcion, nivel_uno, nivel_dos,
+                minutos_duracion, materiales, id_tipo_actividad_academica, id_ambiente
+                FROM actividades_academicas
+                WHERE id = :id AND id_tenant = :id_tenant");
+            $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $sentence->execute();
+            $original = $sentence->fetch();
+
+            if (!$original) {
+                Flight::json(array('error' => 'No se encontró la actividad a duplicar'), 404);
+                return;
+            }
+
+            $db->beginTransaction();
+
+            // 2. Crear la copia. El titulo lleva sufijo para distinguirla en el listado
+            $idNuevo = Uuid::generar();
+            $tituloCopia = $original['titulo'] . ' (copia)';
+
+            $insert = $db->prepare("INSERT INTO actividades_academicas(
+                id, id_tenant, id_tipo_actividad_academica, titulo, descripcion,
+                nivel_uno, nivel_dos, minutos_duracion, materiales, id_ambiente
+            ) VALUES (
+                :id, :id_tenant, :id_tipo_actividad_academica, :titulo, :descripcion,
+                :nivel_uno, :nivel_dos, :minutos_duracion, :materiales, :id_ambiente
+            )");
+
+            $insert->bindValue(':id', $idNuevo);
+            $insert->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $insert->bindValue(':id_tipo_actividad_academica', $original['id_tipo_actividad_academica']);
+            $insert->bindValue(':titulo', $tituloCopia);
+            $insert->bindValue(':descripcion', $original['descripcion']);
+            $insert->bindValue(':nivel_uno', $original['nivel_uno']);
+            $insert->bindValue(':nivel_dos', $original['nivel_dos']);
+            $insert->bindValue(':minutos_duracion', $original['minutos_duracion']);
+            $insert->bindValue(':materiales', $original['materiales']);
+            $insert->bindValue(':id_ambiente', $original['id_ambiente']);
+            $insert->execute();
+
+            // 3. Copiar los materiales
+            $materiales = $db->prepare("SELECT nombre_material, cantidad, id_producto
+                FROM materiales_x_actividad
+                WHERE id_actividad_academica = :id AND id_tenant = :id_tenant");
+            $materiales->bindParam(':id', $id);
+            $materiales->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $materiales->execute();
+            $listaMateriales = $materiales->fetchAll();
+
+            $insertMaterial = $db->prepare("INSERT INTO materiales_x_actividad(
+                id, id_tenant, nombre_material, cantidad, id_actividad_academica, id_producto
+            ) VALUES (
+                :id, :id_tenant, :nombre_material, :cantidad, :id_actividad_academica, :id_producto
+            )");
+
+            foreach ($listaMateriales as $material) {
+                $insertMaterial->bindValue(':id', Uuid::generar());
+                $insertMaterial->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                $insertMaterial->bindValue(':nombre_material', $material['nombre_material']);
+                $insertMaterial->bindValue(':cantidad', $material['cantidad']);
+                $insertMaterial->bindValue(':id_actividad_academica', $idNuevo);
+                $insertMaterial->bindValue(':id_producto', $material['id_producto']);
+                $insertMaterial->execute();
+            }
+
+            // 4. Copiar los indicadores de logro asociados
+            $indicadores = $db->prepare("SELECT id_indicador_logro
+                FROM actividades_academicas_x_indicadores_logros
+                WHERE id_actividad_academica = :id AND id_tenant = :id_tenant");
+            $indicadores->bindParam(':id', $id);
+            $indicadores->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $indicadores->execute();
+            $listaIndicadores = $indicadores->fetchAll();
+
+            $insertIndicador = $db->prepare("INSERT INTO actividades_academicas_x_indicadores_logros(
+                id, id_tenant, id_actividad_academica, id_indicador_logro
+            ) VALUES (
+                :id, :id_tenant, :id_actividad_academica, :id_indicador_logro
+            )");
+
+            foreach ($listaIndicadores as $indicador) {
+                $insertIndicador->bindValue(':id', Uuid::generar());
+                $insertIndicador->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                $insertIndicador->bindValue(':id_actividad_academica', $idNuevo);
+                $insertIndicador->bindValue(':id_indicador_logro', $indicador['id_indicador_logro']);
+                $insertIndicador->execute();
+            }
+
+            $db->commit();
+
+            error_log("Actividad duplicada: original=$id, copia=$idNuevo, materiales=" . count($listaMateriales) . ", indicadores=" . count($listaIndicadores));
+
+            Flight::json(array(
+                'id' => $idNuevo,
+                'titulo' => $tituloCopia,
+                'materiales_copiados' => count($listaMateriales),
+                'indicadores_copiados' => count($listaIndicadores)
+            ));
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log("Error en la ejecución del método duplicar: " . $e->getMessage());
+            Flight::json(array('error' => 'Hubo un problema al duplicar la actividad. Inténtalo más tarde.'), 500);
+        }
+    }
+
     public static function delete()
     {
         $db = Flight::db();

@@ -7,6 +7,7 @@ Flight::route('GET /actividades-academicas/@id', [ActividadesAcademicas::class, 
 Flight::route('POST /actividades-academicas', [ActividadesAcademicas::class, 'new']);
 Flight::route('PUT /actividades-academicas', [ActividadesAcademicas::class, 'replace']);
 Flight::route('DELETE /actividades-academicas', [ActividadesAcademicas::class, 'delete']);
+Flight::route('POST /actividades-academicas/duplicar', [ActividadesAcademicas::class, 'duplicar']);
 Flight::route('GET /actividades-academicas/indicadores-logros-actividad/@id', [ActividadesAcademicas::class, 'getIndicadoresLogrosByActividad']);
 
 Flight::route('GET /actividades-academicas-grupo/@id_grupo', [ActividadesAcademicas::class, 'getByIdGrupo']);
