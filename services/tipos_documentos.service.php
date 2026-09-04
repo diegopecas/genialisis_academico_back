@@ -6,11 +6,13 @@ class TiposDocumentos
     {
         $db = Flight::db();
         $sentence = $db->prepare("
-            SELECT id, codigo, nombre, requiere_vencimiento, dias_alerta_vencimiento, 
-                   permite_multiples, descripcion, activo, modificable_acudientes, requiere_firma
-            FROM tipos_documentos
-            WHERE id_tenant = :id_tenant
-            ORDER BY nombre
+            SELECT td.id, td.codigo, td.nombre, td.requiere_vencimiento, td.dias_alerta_vencimiento, 
+                   td.permite_multiples, td.descripcion, td.activo, td.modificable_acudientes, td.requiere_firma,
+                   td.id_categoria, cd.nombre AS categoria_nombre, cd.icono AS categoria_icono, cd.orden AS categoria_orden
+            FROM tipos_documentos td
+            LEFT JOIN categorias_documentos cd ON cd.id = td.id_categoria
+            WHERE td.id_tenant = :id_tenant
+            ORDER BY td.nombre
         ");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
@@ -33,11 +35,16 @@ class TiposDocumentos
                 td.descripcion,
                 td.modificable_acudientes,
                 td.requiere_firma,
+                td.id_categoria,
+                cd.nombre AS categoria_nombre,
+                cd.icono AS categoria_icono,
+                cd.orden AS categoria_orden,
                 tpd.obligatorio,
                 tpd.orden
             FROM tipos_documentos td
             INNER JOIN tipos_personas_documentos tpd ON td.id = tpd.id_tipo_documento
             INNER JOIN tipos_personas tp ON tpd.id_tipo_persona = tp.id
+            LEFT JOIN categorias_documentos cd ON cd.id = td.id_categoria
             WHERE tp.codigo = :codigo_tipo_persona
               AND td.activo = 1
               AND td.id_tenant = :id_tenant
@@ -56,7 +63,8 @@ class TiposDocumentos
         $db = Flight::db();
         $sentence = $db->prepare("
             SELECT id, codigo, nombre, requiere_vencimiento, dias_alerta_vencimiento,
-                   permite_multiples, descripcion, activo, modificable_acudientes, requiere_firma
+                   permite_multiples, descripcion, activo, modificable_acudientes, requiere_firma,
+                   id_categoria
             FROM tipos_documentos
             WHERE id = :id
             AND id_tenant = :id_tenant
@@ -83,17 +91,18 @@ class TiposDocumentos
         $requiere_firma = isset($data['requiere_firma']) ? $data['requiere_firma'] : 0;
         $modificable_acudientes = isset($data['modificable_acudientes']) ? $data['modificable_acudientes'] : 1;
         $activo = isset($data['activo']) ? $data['activo'] : 1;
+        $id_categoria = isset($data['id_categoria']) && $data['id_categoria'] !== '' ? $data['id_categoria'] : null;
 
         $id = Uuid::generar();
         $sentence = $db->prepare("
             INSERT INTO tipos_documentos (
                 id, id_tenant, codigo, nombre, descripcion, requiere_vencimiento, 
                 dias_alerta_vencimiento, permite_multiples, requiere_firma, 
-                modificable_acudientes, activo
+                modificable_acudientes, activo, id_categoria
             ) VALUES (
                 :id, :id_tenant, :codigo, :nombre, :descripcion, :requiere_vencimiento, 
                 :dias_alerta_vencimiento, :permite_multiples, :requiere_firma, 
-                :modificable_acudientes, :activo
+                :modificable_acudientes, :activo, :id_categoria
             )
         ");
         $sentence->bindValue(':id', $id);
@@ -107,6 +116,7 @@ class TiposDocumentos
         $sentence->bindParam(':requiere_firma', $requiere_firma);
         $sentence->bindParam(':modificable_acudientes', $modificable_acudientes);
         $sentence->bindParam(':activo', $activo);
+        $sentence->bindParam(':id_categoria', $id_categoria);
         $sentence->execute();
 
         Flight::json(array('id' => $id));
@@ -128,6 +138,7 @@ class TiposDocumentos
         $requiere_firma = isset($data['requiere_firma']) ? $data['requiere_firma'] : 0;
         $modificable_acudientes = isset($data['modificable_acudientes']) ? $data['modificable_acudientes'] : 1;
         $activo = isset($data['activo']) ? $data['activo'] : 1;
+        $id_categoria = isset($data['id_categoria']) && $data['id_categoria'] !== '' ? $data['id_categoria'] : null;
 
         $sentence = $db->prepare("
             UPDATE tipos_documentos SET 
@@ -139,7 +150,8 @@ class TiposDocumentos
                 permite_multiples = :permite_multiples, 
                 requiere_firma = :requiere_firma,
                 modificable_acudientes = :modificable_acudientes, 
-                activo = :activo
+                activo = :activo,
+                id_categoria = :id_categoria
             WHERE id = :id
             AND id_tenant = :id_tenant
         ");
@@ -153,6 +165,7 @@ class TiposDocumentos
         $sentence->bindParam(':requiere_firma', $requiere_firma);
         $sentence->bindParam(':modificable_acudientes', $modificable_acudientes);
         $sentence->bindParam(':activo', $activo);
+        $sentence->bindParam(':id_categoria', $id_categoria);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
