@@ -31,6 +31,10 @@ Flight::route('PUT /tipos-documentos', [TiposDocumentos::class, 'replace']);
 Flight::route('DELETE /tipos-documentos', [TiposDocumentos::class, 'delete']);
 
 // DOCUMENTOS PERSONAS
+// Los reportes van antes de /persona/@idPersona por claridad; no chocan
+// porque el prefijo es distinto.
+Flight::route('GET /documentos-personas/reporte-documentos', [DocumentosPersonas::class, 'getReporteDocumentos']);
+Flight::route('GET /documentos-personas/reporte-cumplimiento', [DocumentosPersonas::class, 'getReporteCumplimiento']);
 Flight::route('GET /documentos-personas/persona/@idPersona', [DocumentosPersonas::class, 'getByPersona']);
 Flight::route('GET /documentos-personas/persona/@idPersona/tipo/@idTipo', [DocumentosPersonas::class, 'getByPersonaTipoDoc']);
 Flight::route('GET /documentos-personas/vencimientos/@dias', [DocumentosPersonas::class, 'getVencimientoProximo']);

@@ -491,4 +491,234 @@ class DocumentosPersonas
             Flight::json(array('error' => $e->getMessage()), 500);
         }
     }
+
+    /**
+     * Reporte 1: documentos registrados.
+     *
+     * Una fila por documento existente, con la persona duena y todos los roles
+     * que esa persona tiene en el jardin (una misma persona puede ser
+     * colaboradora y acudiente a la vez, por eso van concatenados).
+     *
+     * Devuelve todo el tenant sin filtros: el filtrado se hace en la tabla del
+     * front.
+     */
+    public static function getReporteDocumentos()
+    {
+        $db = Flight::db();
+
+        $sql = "
+            SELECT
+                dp.id,
+                dp.id_persona,
+                -- Cuando es una empresa los campos de nombre vienen vacios y el
+                -- dato esta en razon_social.
+                CASE
+                    WHEN p.razon_social IS NOT NULL AND p.razon_social <> '' THEN p.razon_social
+                    ELSE TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre,
+                                             p.primer_apellido, p.segundo_apellido))
+                END AS nombre_persona,
+                p.numero_identificacion,
+                roles.roles AS roles_persona,
+                roles.activa AS persona_activa,
+                dp.id_tipo_documento,
+                td.codigo AS codigo_documento,
+                td.nombre AS nombre_documento,
+                td.requiere_vencimiento,
+                td.dias_alerta_vencimiento,
+                td.id_categoria,
+                IFNULL(cd.nombre, 'Otros') AS categoria_nombre,
+                IFNULL(cd.orden, 9999) AS categoria_orden,
+                -- Obligatorio depende del tipo de persona, y una persona puede
+                -- tener varios roles: basta con que lo sea en alguno.
+                (
+                    SELECT MAX(tpd.obligatorio)
+                    FROM tipos_personas_documentos tpd
+                    WHERE tpd.id_tipo_documento = td.id
+                ) AS obligatorio,
+                dp.nombre_archivo,
+                dp.tamanio_bytes,
+                dp.fecha_subida,
+                dp.fecha_vencimiento,
+                DATEDIFF(dp.fecha_vencimiento, CURDATE()) AS dias_para_vencer,
+                CASE
+                    WHEN td.requiere_vencimiento = 1 AND dp.fecha_vencimiento IS NOT NULL THEN
+                        CASE
+                            WHEN dp.fecha_vencimiento < CURDATE() THEN 'VENCIDO'
+                            WHEN dp.fecha_vencimiento <= DATE_ADD(CURDATE(), INTERVAL td.dias_alerta_vencimiento DAY) THEN 'PROXIMO_VENCER'
+                            ELSE 'VIGENTE'
+                        END
+                    ELSE 'NO_APLICA'
+                END AS estado_vencimiento,
+                dp.firma_digital_estado,
+                dp.observaciones,
+                -- id_usuario_subio apunta a usuarios, no a personas.
+                u.usuario AS usuario_subio,
+                CASE
+                    WHEN pu.razon_social IS NOT NULL AND pu.razon_social <> '' THEN pu.razon_social
+                    ELSE TRIM(CONCAT_WS(' ', pu.primer_nombre, pu.primer_apellido))
+                END AS nombre_usuario_subio
+            FROM documentos_personas dp
+            INNER JOIN personas p ON p.id = dp.id_persona
+            INNER JOIN tipos_documentos td ON td.id = dp.id_tipo_documento
+            LEFT JOIN categorias_documentos cd ON cd.id = td.id_categoria
+            LEFT JOIN usuarios u ON u.id = dp.id_usuario_subio
+            LEFT JOIN personas pu ON pu.id = u.id_persona
+            LEFT JOIN (
+                " . self::sqlRolesPorPersona() . "
+            ) roles ON roles.id_persona = dp.id_persona
+            WHERE dp.id_tenant = :id_tenant
+              AND dp.activo = 1
+            ORDER BY nombre_persona, categoria_orden, td.nombre, dp.fecha_subida DESC
+        ";
+
+        $sentence = $db->prepare($sql);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+
+        Flight::json($sentence->fetchAll());
+    }
+
+    /**
+     * Reporte 2: cumplimiento documental.
+     *
+     * Una fila por persona y por cada tipo de documento que se le exige segun
+     * su rol, tenga o no el archivo cargado. Aqui SI se separa por rol: los
+     * documentos exigidos dependen del rol, asi que una persona que es
+     * colaboradora y acudiente aparece en los dos bloques.
+     *
+     * Incluye personas activas e inactivas, con su estado en la columna
+     * correspondiente. Devuelve todo el tenant sin filtros: el filtrado se
+     * hace en la tabla del front.
+     */
+    public static function getReporteCumplimiento()
+    {
+        $db = Flight::db();
+
+        $sql = "
+            SELECT
+                roles.id_persona,
+                CASE
+                    WHEN p.razon_social IS NOT NULL AND p.razon_social <> '' THEN p.razon_social
+                    ELSE TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre,
+                                             p.primer_apellido, p.segundo_apellido))
+                END AS nombre_persona,
+                p.numero_identificacion,
+                roles.codigo_rol,
+                roles.nombre_rol,
+                roles.activo AS persona_activa,
+                td.id AS id_tipo_documento,
+                td.codigo AS codigo_documento,
+                td.nombre AS nombre_documento,
+                td.requiere_vencimiento,
+                tpd.obligatorio,
+                td.id_categoria,
+                IFNULL(cd.nombre, 'Otros') AS categoria_nombre,
+                IFNULL(cd.orden, 9999) AS categoria_orden,
+                dp.id AS id_documento,
+                dp.nombre_archivo,
+                dp.tamanio_bytes,
+                u.usuario AS usuario_subio,
+                CASE
+                    WHEN pu.razon_social IS NOT NULL AND pu.razon_social <> '' THEN pu.razon_social
+                    ELSE TRIM(CONCAT_WS(' ', pu.primer_nombre, pu.primer_apellido))
+                END AS nombre_usuario_subio,
+                dp.fecha_subida,
+                dp.fecha_vencimiento,
+                DATEDIFF(dp.fecha_vencimiento, CURDATE()) AS dias_para_vencer,
+                CASE
+                    WHEN dp.id IS NULL THEN 'SIN_SUBIR'
+                    WHEN td.requiere_vencimiento = 1 AND dp.fecha_vencimiento IS NOT NULL THEN
+                        CASE
+                            WHEN dp.fecha_vencimiento < CURDATE() THEN 'VENCIDO'
+                            WHEN dp.fecha_vencimiento <= DATE_ADD(CURDATE(), INTERVAL td.dias_alerta_vencimiento DAY) THEN 'PROXIMO_VENCER'
+                            ELSE 'VIGENTE'
+                        END
+                    ELSE 'NO_APLICA'
+                END AS estado
+            FROM (
+                " . self::sqlPersonasPorRol() . "
+            ) roles
+            INNER JOIN personas p ON p.id = roles.id_persona
+            INNER JOIN tipos_personas tp ON tp.codigo = roles.codigo_rol AND tp.id_tenant = :id_tenant_tp
+            INNER JOIN tipos_personas_documentos tpd ON tpd.id_tipo_persona = tp.id
+            INNER JOIN tipos_documentos td ON td.id = tpd.id_tipo_documento AND td.activo = 1
+            LEFT JOIN categorias_documentos cd ON cd.id = td.id_categoria
+            LEFT JOIN documentos_personas dp
+                   ON dp.id_persona = roles.id_persona
+                  AND dp.id_tipo_documento = td.id
+                  AND dp.activo = 1
+                  AND dp.id_tenant = :id_tenant_doc
+                  -- Si hay varios archivos del mismo tipo se toma el mas reciente:
+                  -- el reporte responde 'lo tiene o no', no lista el historial.
+                  AND dp.fecha_subida = (
+                        SELECT MAX(dp2.fecha_subida)
+                        FROM documentos_personas dp2
+                        WHERE dp2.id_persona = dp.id_persona
+                          AND dp2.id_tipo_documento = dp.id_tipo_documento
+                          AND dp2.activo = 1
+                      )
+            LEFT JOIN usuarios u ON u.id = dp.id_usuario_subio
+            LEFT JOIN personas pu ON pu.id = u.id_persona
+            WHERE p.id_tenant = :id_tenant
+            ORDER BY nombre_persona, roles.nombre_rol, categoria_orden, tpd.orden, td.nombre
+        ";
+
+        $sentence = $db->prepare($sql);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_tp', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_doc', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+
+        Flight::json($sentence->fetchAll());
+    }
+
+    /**
+     * Personas con el rol que cumplen en el jardin, una fila por rol.
+     *
+     * No hay una tabla que diga "esta persona es estudiante": el rol sale de
+     * estar registrada en estudiantes, colaboradores, acudientes o
+     * autorizados_recoger. Institucion y entes de control quedan por fuera a
+     * proposito: no son personas del jardin.
+     */
+    private static function sqlPersonasPorRol()
+    {
+        // El id del tenant va interpolado y no como parametro: el subquery se
+        // repite en varias ramas del UNION y PDO no admite el mismo placeholder
+        // con nombre mas de una vez. Se castea a entero, asi que no hay riesgo
+        // de inyeccion.
+        $idTenant = (int) TenantContext::id();
+
+        return "
+            SELECT DISTINCT e.id_persona, 'estudiante' AS codigo_rol, 'Estudiante' AS nombre_rol, e.activo
+            FROM estudiantes e WHERE e.id_tenant = {$idTenant}
+            UNION ALL
+            SELECT DISTINCT c.id_persona, 'colaborador', 'Colaborador', c.activo
+            FROM colaboradores c WHERE c.id_tenant = {$idTenant} AND c.id_persona IS NOT NULL
+            UNION ALL
+            SELECT a.id_persona, 'acudiente', 'Acudiente', MAX(a.activo)
+            FROM acudientes a WHERE a.id_tenant = {$idTenant} GROUP BY a.id_persona
+            UNION ALL
+            SELECT ar.id_persona, 'autorizado', 'Autorizado recoger', MAX(ar.activo)
+            FROM autorizados_recoger ar WHERE ar.id_tenant = {$idTenant} GROUP BY ar.id_persona
+        ";
+    }
+
+    /**
+     * Roles de cada persona en un solo texto, para el reporte de documentos
+     * registrados: ahi no interesa separar por rol, sino saber quien es.
+     */
+    private static function sqlRolesPorPersona()
+    {
+        return "
+            SELECT id_persona,
+                   GROUP_CONCAT(DISTINCT nombre_rol ORDER BY nombre_rol SEPARATOR ', ') AS roles,
+                   GROUP_CONCAT(DISTINCT codigo_rol) AS codigos,
+                   -- Activa si lo esta en al menos uno de sus roles
+                   MAX(activo) AS activa
+            FROM (
+                " . self::sqlPersonasPorRol() . "
+            ) t
+            GROUP BY id_persona
+        ";
+    }
 }
