@@ -142,10 +142,23 @@ class AsistenciaEstudiantes
         Flight::json($response);
     }
 
+    /**
+     * Movimientos de asistencia de hoy para la pantalla de registro.
+     *
+     * Devuelve las dos listas en una sola ida al back:
+     *   - no_salidas: los que estan adentro (ingresaron hoy y no han salido).
+     *   - salidas:    los que ya se fueron hoy, para mostrarlos al final de la
+     *                 pantalla con hora de ingreso, hora de salida y quien
+     *                 registro cada movimiento.
+     *
+     * OJO: antes este endpoint devolvia un arreglo plano con los de adentro.
+     * Ahora devuelve un objeto con las dos claves.
+     */
     public static function getNoSalidasHoy()
     {
         self::setTimeZone();
         $db = Flight::db();
+
         $sentence = $db->prepare("select ae.id, e.id_persona, ae.id_estudiante, ae.fecha_ingreso, ae.fecha_salida, ae.observacion_ingreso, ae.observacion_salida, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido, g.nombre nombre_grupo, g.icono, g.color 
         from asistencia_estudiantes ae
         inner join estudiantes e on ae.id_estudiante = e.id
@@ -159,8 +172,32 @@ class AsistenciaEstudiantes
         order by p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido ");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
-        $response = $sentence->fetchAll();
-        Flight::json($response);
+        $noSalidas = $sentence->fetchAll();
+
+        // Los que ya se fueron hoy. Se filtra por la fecha de salida porque un
+        // nino pudo entrar ayer en la noche y salir hoy, y para esta pantalla
+        // lo que importa es que ya no esta en el jardin.
+        $sentenceSalidas = $db->prepare("select ae.id, e.id_persona, ae.id_estudiante, ae.fecha_ingreso, ae.fecha_salida, ae.observacion_ingreso, ae.observacion_salida, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido, g.nombre nombre_grupo, g.icono, g.color,
+        case when ae.id_usuario_ingreso is not null then CONCAT(p_ui.primer_nombre, ' ', p_ui.primer_apellido) else null end usuario_ingreso,
+        case when ae.id_usuario_salida is not null then CONCAT(p_us.primer_nombre, ' ', p_us.primer_apellido) else null end usuario_salida
+        from asistencia_estudiantes ae
+        inner join estudiantes e on ae.id_estudiante = e.id
+        inner join personas p on e.id_persona = p.id
+        inner join estudiantes_x_grupos exg on e.id = exg.id_estudiante
+        inner join grupos g on exg.id_grupo = g.id 
+        left join usuarios u_ing on ae.id_usuario_ingreso = u_ing.id
+        left join personas p_ui on u_ing.id_persona = p_ui.id
+        left join usuarios u_sal on ae.id_usuario_salida = u_sal.id
+        left join personas p_us on u_sal.id_persona = p_us.id
+        where DATE(ae.fecha_salida) = CURDATE()
+        and exg.activo = 1
+        and ae.id_tenant = :id_tenant
+        order by ae.fecha_salida desc ");
+        $sentenceSalidas->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentenceSalidas->execute();
+        $salidas = $sentenceSalidas->fetchAll();
+
+        Flight::json(array('no_salidas' => $noSalidas, 'salidas' => $salidas));
     }
 
     public static function new()
