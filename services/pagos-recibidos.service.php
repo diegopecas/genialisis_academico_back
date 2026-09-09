@@ -1503,16 +1503,32 @@ class PagosRecibidos
     }
 
     /**
-     * Normaliza un monto en formato colombiano a un entero de pesos.
-     * Convención colombiana: el PUNTO es separador de miles y la COMA es separador
-     * de decimales. En Colombia no se manejan centavos, así que todo lo que aparezca
-     * después de la coma (los centavos) se descarta.
+     * Normaliza a un entero de pesos un monto tal como viene impreso en un
+     * comprobante, DETECTANDO el formato en vez de asumirlo.
+     *
+     * El formato no se puede dar por sentado: los comprobantes colombianos usan
+     * punto de miles y coma decimal ("1.036.750,00"), pero algunos bancos emiten
+     * en formato anglosajón, con coma de miles y punto decimal ("1,036,750.00").
+     * Asumir siempre la convención colombiana hacía que "1,036,750.00" se cortara
+     * en la primera coma y se leyera como 1 peso.
+     *
+     * Regla de detección:
+     *   - Si aparecen los dos separadores, el que esté MÁS A LA DERECHA es el
+     *     decimal y el otro es de miles.
+     *   - Si solo aparece uno y está repetido, es separador de miles.
+     *   - Si solo aparece uno y está una sola vez, es decimal, salvo que lo sigan
+     *     exactamente 3 dígitos: ahí se toma como miles, porque "35.000" y
+     *     "35,000" son treinta y cinco mil, no treinta y cinco.
+     *
+     * En Colombia no se manejan centavos, así que la parte decimal se descarta.
      *
      * Ejemplos:
-     *   "35.000,00"   -> 35000
-     *   "$ 35.000,00" -> 35000
-     *   "1.200.000"   -> 1200000
-     *   "35000"       -> 35000
+     *   "35.000,00"    -> 35000
+     *   "$ 35.000,00"  -> 35000
+     *   "1.200.000"    -> 1200000
+     *   "1,036,750.00" -> 1036750
+     *   "1,036,750"    -> 1036750
+     *   "35000"        -> 35000
      *
      * @param mixed $texto Monto tal como viene del comprobante (string, int o null)
      * @return int|null   Entero de pesos, o null si no hay dígitos válidos
@@ -1529,13 +1545,35 @@ class PagosRecibidos
             return null;
         }
 
-        // Si hay coma (separador decimal), descartar los centavos: cortar en la primera coma.
-        $posComa = strpos($limpio, ',');
-        if ($posComa !== false) {
-            $limpio = substr($limpio, 0, $posComa);
+        $ultimoPunto = strrpos($limpio, '.');
+        $ultimaComa  = strrpos($limpio, ',');
+
+        // Cuál de los dos caracteres actúa como separador decimal. null significa
+        // que no hay decimales y todos los separadores son de miles.
+        $separadorDecimal = null;
+
+        if ($ultimoPunto !== false && $ultimaComa !== false) {
+            // Están los dos: el de más a la derecha es el decimal.
+            $separadorDecimal = ($ultimoPunto > $ultimaComa) ? '.' : ',';
+        } elseif ($ultimoPunto !== false || $ultimaComa !== false) {
+            $separador = ($ultimoPunto !== false) ? '.' : ',';
+            $posicion  = ($ultimoPunto !== false) ? $ultimoPunto : $ultimaComa;
+
+            $veces = substr_count($limpio, $separador);
+            $digitosDespues = strlen(substr($limpio, $posicion + 1));
+
+            // Repetido -> miles. Una sola vez -> decimal, salvo grupo de 3 dígitos.
+            if ($veces === 1 && $digitosDespues !== 3) {
+                $separadorDecimal = $separador;
+            }
         }
 
-        // Quitar los puntos de miles y cualquier residuo no numérico.
+        // Descartar los centavos: cortar en el separador decimal detectado.
+        if ($separadorDecimal !== null) {
+            $limpio = substr($limpio, 0, strrpos($limpio, $separadorDecimal));
+        }
+
+        // Quitar los separadores de miles y cualquier residuo no numérico.
         $soloDigitos = preg_replace('/[^0-9]/', '', $limpio);
         if ($soloDigitos === '') {
             return null;
