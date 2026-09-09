@@ -1215,6 +1215,13 @@ class CuentasPorCobrar
      * Reporte desagregado de cobros por año. Incluye estudiantes y colaboradores.
      * Retorna cada registro individual con tipo_persona y grupo_o_cargo derivados.
      */
+    /**
+     * Reporte anual de cobros.
+     *
+     * Devuelve tambien las cuentas anuladas, con su bandera `anulado`: el
+     * reporte las lista aparte y las deja por fuera de los totales. Antes se
+     * filtraban aqui y no habia forma de verlas.
+     */
     public static function getReporteCobrosAnual($anio)
     {
         $userData = JWTService::requerirAutenticacion();
@@ -1298,7 +1305,6 @@ class CuentasPorCobrar
                     cargos ca ON ca.id = col.id_cargo
                 WHERE
                     YEAR(c.fecha) = :anio
-                    AND (c.anulado = 0 OR c.anulado IS NULL)
                     AND c.id_tenant = :id_tenant
                 GROUP BY 
                     c.id, c.id_producto_servicio, c.id_persona, c.fecha, c.valor, 

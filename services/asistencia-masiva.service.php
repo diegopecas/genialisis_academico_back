@@ -302,6 +302,63 @@ class AsistenciaMasiva
     }
 
     /**
+     * Evalua los cobros automaticos de varios estudiantes en una sola
+     * peticion.
+     *
+     * POST /asistencia-masiva/evaluar-cobros
+     *   { fecha, tipo, filas: [ { id_estudiante, hora } ] }
+     *
+     * Por dentro llama al mismo motor de la pantalla de asistencia, de a un
+     * estudiante, pero sin salir y volver por HTTP en cada uno: con un grupo
+     * grande eso eran decenas de peticiones y varios minutos de espera.
+     */
+    public static function evaluarCobros()
+    {
+        JWTService::requerirAutenticacion();
+        self::setTimeZone();
+        $db = Flight::db();
+
+        $data  = Flight::request()->data;
+        $fecha = self::normalizarFecha(isset($data['fecha']) ? $data['fecha'] : null);
+        $tipo  = isset($data['tipo']) ? $data['tipo'] : self::TIPO_INGRESO;
+        $filas = isset($data['filas']) ? $data['filas'] : array();
+
+        if (!is_array($filas) || count($filas) === 0) {
+            Flight::json(array('evaluaciones' => array()));
+            return;
+        }
+
+        $evaluaciones = array();
+
+        foreach ($filas as $fila) {
+            $id_estudiante = isset($fila['id_estudiante']) ? $fila['id_estudiante'] : null;
+            $hora = isset($fila['hora']) ? $fila['hora'] : null;
+
+            if (empty($id_estudiante) || empty($hora)) {
+                continue;
+            }
+
+            $resultado = MotorCobrosAutomaticos::evaluarInterno(
+                $db,
+                $id_estudiante,
+                $tipo,
+                $hora,
+                $fecha
+            );
+
+            // Un estudiante que falle no tumba el lote: se devuelve sin cobros
+            // y los demas siguen.
+            $evaluaciones[] = array(
+                'id_estudiante' => $id_estudiante,
+                'cobros'        => isset($resultado['cobros']) ? $resultado['cobros'] : array(),
+                'error'         => isset($resultado['error']) ? $resultado['error'] : null
+            );
+        }
+
+        Flight::json(array('fecha' => $fecha, 'tipo' => $tipo, 'evaluaciones' => $evaluaciones));
+    }
+
+    /**
      * Procesa el lote.
      * POST /asistencia-masiva/procesar
      *   {
@@ -310,12 +367,14 @@ class AsistenciaMasiva
      *     filas: [
      *       { id_estudiante, id_asistencia (solo salida), hora,
      *         observacion (opcional),
-     *         utiles: [ { id, id_util_diario, nombre_libre, trajo, regreso } ] }
+     *         utiles: [ { id, id_util_diario, nombre_libre, trajo, regreso } ],
+     *         cobros: [ ...los que la usuaria dejo marcados... ] }
      *     ]
      *   }
      *
-     * Devuelve, por fila, el id del movimiento para que el front pueda
-     * ejecutar los cobros que la usuaria haya dejado marcados.
+     * Los cobros se generan aqui mismo, en la misma peticion: el front ya no
+     * tiene que volver a llamar al motor por cada estudiante. Nunca se
+     * notifica al acudiente, ni por el movimiento ni por los cobros.
      *
      * Cada fila se procesa aparte: si una falla, las demas siguen. Un lote a
      * medias es mejor que perder el trabajo de la usuaria completo.
@@ -347,9 +406,40 @@ class AsistenciaMasiva
                     ? trim($fila['observacion'])
                     : $observacionGeneral;
 
-                $resultados[] = $tipo === self::TIPO_SALIDA
+                $resultado = $tipo === self::TIPO_SALIDA
                     ? self::procesarSalida($db, $fila, $fecha, $observacion, $id_usuario)
                     : self::procesarIngreso($db, $fila, $fecha, $observacion, $id_usuario);
+
+                // Los cobros que la usuaria dejo marcados, con el movimiento ya
+                // creado. Si fallan, el movimiento igual queda: se reporta en
+                // la fila y no se devuelve nada.
+                $resultado['cobros_generados'] = 0;
+
+                if ($resultado['procesado'] && !empty($fila['cobros']) && is_array($fila['cobros'])) {
+                    $cobros = array();
+                    foreach ($fila['cobros'] as $cobro) {
+                        $cobro['id_asistencia'] = $resultado['id_asistencia'];
+                        $cobros[] = $cobro;
+                    }
+
+                    $ejecucion = MotorCobrosAutomaticos::ejecutarInterno(
+                        $db,
+                        $cobros,
+                        $fila['id_estudiante'],
+                        $id_usuario,
+                        $fecha,
+                        $tipo,
+                        false
+                    );
+
+                    if (isset($ejecucion['error'])) {
+                        $resultado['error_cobros'] = $ejecucion['error'];
+                    } else {
+                        $resultado['cobros_generados'] = $ejecucion['cobros_generados'];
+                    }
+                }
+
+                $resultados[] = $resultado;
             } catch (Exception $e) {
                 error_log('[AsistenciaMasiva] ' . $e->getMessage());
                 $resultados[] = array(
@@ -361,16 +451,21 @@ class AsistenciaMasiva
         }
 
         $procesados = 0;
+        $cobrosGenerados = 0;
         foreach ($resultados as $resultado) {
             if ($resultado['procesado']) {
                 $procesados++;
             }
+            if (isset($resultado['cobros_generados'])) {
+                $cobrosGenerados += $resultado['cobros_generados'];
+            }
         }
 
         Flight::json(array(
-            'procesados'  => $procesados,
-            'total'       => count($filas),
-            'resultados'  => $resultados
+            'procesados'       => $procesados,
+            'total'            => count($filas),
+            'cobros_generados' => $cobrosGenerados,
+            'resultados'       => $resultados
         ));
     }
 

@@ -30,19 +30,50 @@ class MotorCobrosAutomaticos
      * Evalúa las reglas de cobro para un estudiante dado un evento de asistencia.
      * POST /motor-cobros/evaluar
      */
+    /**
+     * Endpoint de evaluacion. Es una envoltura de evaluarInterno: recibe lo
+     * mismo de siempre y responde lo mismo de siempre.
+     *
+     * La logica se saco a evaluarInterno para poder evaluar varios estudiantes
+     * en una sola peticion desde el registro masivo de asistencia. Antes el
+     * front tenia que llamar este endpoint una vez por nino.
+     */
     public static function evaluar()
     {
-        try {
-            date_default_timezone_set('America/Bogota');
-            $db = Flight::db();
-            $db->exec("SET time_zone = '-05:00'");
-            $request = Flight::request();
-            $data = $request->data->getData();
+        date_default_timezone_set('America/Bogota');
+        $db = Flight::db();
+        $db->exec("SET time_zone = '-05:00'");
+        $data = Flight::request()->data->getData();
 
-            $id_estudiante = $data['id_estudiante'];
-            $tipo_evento = $data['tipo_evento'];
-            $hora = self::normalizarHora($data['hora']);
-            $fecha = isset($data['fecha']) ? $data['fecha'] : date('Y-m-d');
+        $resultado = self::evaluarInterno(
+            $db,
+            $data['id_estudiante'],
+            $data['tipo_evento'],
+            isset($data['hora']) ? $data['hora'] : null,
+            isset($data['fecha']) ? $data['fecha'] : null
+        );
+
+        if (isset($resultado['error'])) {
+            Flight::json(['error' => $resultado['error']], 500);
+            return;
+        }
+
+        Flight::json($resultado);
+    }
+
+    /**
+     * Evalua las reglas de cobro de UN estudiante y devuelve el resultado en
+     * vez de escribirlo en la respuesta HTTP.
+     *
+     * Devuelve el mismo arreglo que antes armaba el endpoint: cobros, horario,
+     * tiene_matricula, convenios_activos y dia_semana. Si algo falla devuelve
+     * un arreglo con la clave 'error'.
+     */
+    public static function evaluarInterno($db, $id_estudiante, $tipo_evento, $hora, $fecha = null)
+    {
+        try {
+            $hora = self::normalizarHora($hora);
+            $fecha = ($fecha === null || $fecha === '') ? date('Y-m-d') : $fecha;
 
             $dia_semana = date('N', strtotime($fecha));
             $horaSegundos = self::horaASegundos($hora);
@@ -79,8 +110,7 @@ class MotorCobrosAutomaticos
             }
 
             if (!$horario) {
-                Flight::json(['cobros' => [], 'mensaje' => 'No se encontró horario para este día']);
-                return;
+                return ['cobros' => [], 'mensaje' => 'No se encontró horario para este día'];
             }
 
             $horaSalidaProgramada = self::normalizarHora($horario['hora_salida']);
@@ -192,13 +222,12 @@ class MotorCobrosAutomaticos
             }
 
             if (empty($tipos_evento)) {
-                Flight::json([
+                return [
                     'cobros' => [],
                     'horario' => $horario,
                     'tiene_matricula' => $tiene_matricula,
                     'convenios_activos' => $conveniosActivos
-                ]);
-                return;
+                ];
             }
 
             // Obtener reglas activas para los tipos de evento
@@ -356,16 +385,16 @@ class MotorCobrosAutomaticos
                 }
             }
 
-            Flight::json([
+            return [
                 'cobros' => $cobrosAplicables,
                 'horario' => $horario,
                 'tiene_matricula' => $tiene_matricula,
                 'convenios_activos' => $conveniosActivos,
                 'dia_semana' => $dia_semana
-            ]);
+            ];
         } catch (Exception $e) {
-            error_log('Error en MotorCobrosAutomaticos::evaluar: ' . $e->getMessage());
-            Flight::json(['error' => 'Error al evaluar reglas de cobro: ' . $e->getMessage()], 500);
+            error_log('Error en MotorCobrosAutomaticos::evaluarInterno: ' . $e->getMessage());
+            return ['error' => 'Error al evaluar reglas de cobro: ' . $e->getMessage()];
         }
     }
 
@@ -399,22 +428,49 @@ class MotorCobrosAutomaticos
      * Ejecuta los cobros: crea las cuentas por cobrar y registra el historial.
      * POST /motor-cobros/ejecutar
      */
+    /**
+     * Endpoint de ejecucion. Envoltura de ejecutarInterno: entra y sale lo
+     * mismo de siempre.
+     */
     public static function ejecutar()
     {
-        try {
-            date_default_timezone_set('America/Bogota');
-            $db = Flight::db();
-            $request = Flight::request();
-            $data = $request->data->getData();
+        date_default_timezone_set('America/Bogota');
+        $db = Flight::db();
+        $data = Flight::request()->data->getData();
 
-            $cobros = $data['cobros'];
-            $id_estudiante = $data['id_estudiante'];
-            $id_usuario = $data['id_usuario'];
-            $fecha = isset($data['fecha']) ? $data['fecha'] : date('Y-m-d');
+        $resultado = self::ejecutarInterno(
+            $db,
+            isset($data['cobros']) ? $data['cobros'] : null,
+            $data['id_estudiante'],
+            $data['id_usuario'],
+            isset($data['fecha']) ? $data['fecha'] : null,
+            isset($data['tipo_asistencia']) ? $data['tipo_asistencia'] : null,
+            !isset($data['notificar']) || filter_var($data['notificar'], FILTER_VALIDATE_BOOLEAN)
+        );
+
+        if (isset($resultado['error'])) {
+            $codigo = isset($resultado['codigo']) ? $resultado['codigo'] : 500;
+            Flight::json(['error' => $resultado['error']], $codigo);
+            return;
+        }
+
+        Flight::json($resultado);
+    }
+
+    /**
+     * Genera las cuentas por cobrar de UN estudiante y devuelve el resultado
+     * en vez de escribirlo en la respuesta HTTP.
+     *
+     * $notificar en false lo usa el registro masivo de asistencia, que es una
+     * carga administrativa y no le avisa al acudiente.
+     */
+    public static function ejecutarInterno($db, $cobros, $id_estudiante, $id_usuario, $fecha = null, $tipo_asistencia = null, $notificar = true)
+    {
+        try {
+            $fecha = ($fecha === null || $fecha === '') ? date('Y-m-d') : $fecha;
 
             if (empty($cobros) || !is_array($cobros)) {
-                Flight::json(['error' => 'No se proporcionaron cobros a ejecutar'], 400);
-                return;
+                return ['error' => 'No se proporcionaron cobros a ejecutar', 'codigo' => 400];
             }
 
             $stmtPersona = $db->prepare("SELECT id_persona FROM estudiantes WHERE id = :id_estudiante AND id_tenant = :id_tenant");
@@ -423,8 +479,7 @@ class MotorCobrosAutomaticos
             $stmtPersona->execute();
             $personaRow = $stmtPersona->fetch(PDO::FETCH_ASSOC);
             if (!$personaRow) {
-                Flight::json(['error' => 'Estudiante no encontrado'], 404);
-                return;
+                return ['error' => 'Estudiante no encontrado', 'codigo' => 404];
             }
             $id_persona = $personaRow['id_persona'];
 
@@ -500,35 +555,29 @@ class MotorCobrosAutomaticos
             // El tipo de movimiento lo indica el front en `tipo_asistencia`.
             // Si no viene, se deduce de la fila de asistencia: si ya tiene
             // fecha_salida, el movimiento fue una salida.
-            // `notificar` en false lo usa el registro masivo de asistencia,
-            // que es una carga administrativa y no le avisa al acudiente. Si
-            // no viene, se notifica: es el comportamiento de siempre.
-            $notificar = !isset($data['notificar'])
-                || filter_var($data['notificar'], FILTER_VALIDATE_BOOLEAN);
-
             $notificacion = null;
             $id_asistencia = isset($cobros[0]['id_asistencia']) ? $cobros[0]['id_asistencia'] : null;
 
             if ($notificar && !empty($id_asistencia)) {
-                $tipo = isset($data['tipo_asistencia'])
-                    ? $data['tipo_asistencia']
+                $tipo = $tipo_asistencia !== null
+                    ? $tipo_asistencia
                     : self::deducirTipoAsistencia($db, $id_asistencia);
 
                 $notificacion = NotificacionesAsistencia::enviar($db, $id_asistencia, $tipo, $id_usuario);
             }
 
-            Flight::json([
+            return [
                 'success' => true,
                 'cobros_generados' => count($resultados),
                 'resultados' => $resultados,
                 'notificacion' => $notificacion
-            ]);
+            ];
         } catch (Exception $e) {
             if ($db->inTransaction()) {
                 $db->rollBack();
             }
-            error_log('Error en MotorCobrosAutomaticos::ejecutar: ' . $e->getMessage());
-            Flight::json(['error' => 'Error al ejecutar cobros automáticos'], 500);
+            error_log('Error en MotorCobrosAutomaticos::ejecutarInterno: ' . $e->getMessage());
+            return ['error' => 'Error al ejecutar cobros automáticos', 'codigo' => 500];
         }
     }
 

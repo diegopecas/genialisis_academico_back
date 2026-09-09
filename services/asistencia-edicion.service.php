@@ -11,10 +11,12 @@ Reglas del modulo:
   - Si alguno de los cobros generados ya tiene un pago aplicado, el
     movimiento queda bloqueado: no se edita ni se elimina. Tocarlo
     descuadraria la cartera.
-  - Al cambiar las horas se borran los cobros anteriores; el front
-    vuelve a evaluarlos y a ejecutarlos con la hora nueva usando el
-    mismo motor que la pantalla de asistencia.
-  - La eliminacion es fisica y arrastra todo. Va con permiso aparte.
+  - Al cambiar las horas se anulan las cuentas por cobrar anteriores;
+    el front vuelve a evaluarlas y a ejecutarlas con la hora nueva
+    usando el mismo motor que la pantalla de asistencia.
+  - La eliminacion del movimiento es fisica y arrastra utiles y
+    observaciones, pero las cuentas por cobrar se anulan, no se
+    borran. Va con permiso aparte.
   - Al acudiente se le avisa, con un mensaje propio de correccion o
     de eliminacion (NotificacionesAsistencia).
 =============================================*/
@@ -183,7 +185,7 @@ class AsistenciaEdicion
      *     utiles: [ { id, trajo, regreso } ], id_usuario }
      *
      * Devuelve `recalcular_cobros` en true cuando las horas cambiaron y se
-     * borraron los cobros anteriores: el front debe volver a evaluar y
+     * anularon los cobros anteriores: el front debe volver a evaluar y
      * ejecutar con la hora nueva antes de avisarle al acudiente.
      */
     public static function replace()
@@ -264,9 +266,9 @@ class AsistenciaEdicion
                 $id_usuario
             );
 
-            $cobrosEliminados = 0;
+            $cobrosAnulados = 0;
             if ($cambiaronHoras) {
-                $cobrosEliminados = self::borrarCobros($db, $id);
+                $cobrosAnulados = self::anularCobros($db, $id, $id_usuario);
             }
 
             $db->commit();
@@ -284,7 +286,7 @@ class AsistenciaEdicion
             'id_estudiante'       => $movimiento['id_estudiante'],
             'fecha'               => $fecha,
             'utiles_actualizados' => $utilesActualizados,
-            'cobros_eliminados'   => $cobrosEliminados,
+            'cobros_anulados'     => $cobrosAnulados,
             'recalcular_cobros'   => $cambiaronHoras ? 1 : 0,
             'tiene_salida'        => $fechaSalida !== null ? 1 : 0
         ));
@@ -369,7 +371,7 @@ class AsistenciaEdicion
         $db->beginTransaction();
 
         try {
-            $cobrosEliminados = self::borrarCobros($db, $id);
+            $cobrosAnulados = self::anularCobros($db, $id, $id_usuario);
 
             // Utiles del dia del estudiante.
             $sentence = $db->prepare("DELETE FROM utiles_diarios_registro
@@ -416,7 +418,7 @@ class AsistenciaEdicion
 
         Flight::json(array(
             'eliminado'               => true,
-            'cobros_eliminados'       => $cobrosEliminados,
+            'cobros_anulados'         => $cobrosAnulados,
             'utiles_eliminados'       => $utilesEliminados,
             'observaciones_eliminadas'=> $observacionesEliminadas,
             'notificacion'            => $notificacion
@@ -655,10 +657,20 @@ class AsistenciaEdicion
     }
 
     /**
-     * Borra las cuentas por cobrar generadas por el movimiento y su historial.
-     * Solo se llama cuando ya se verifico que ninguna tiene pagos.
+     * Deja sin efecto los cobros que genero el movimiento.
+     *
+     * La cuenta por cobrar NO se borra: se anula, con quien y cuando. Es plata
+     * que el jardin ya pudo haberle mostrado al acudiente, y borrarla dejaria
+     * la cartera sin forma de explicar que paso.
+     *
+     * La fila de cobros_automaticos_historial si se borra: es solo la
+     * trazabilidad de "esta cuenta la genero este movimiento", y ese
+     * movimiento o desaparece (eliminacion) o deja de corresponderle esos
+     * cobros (correccion con horas nuevas).
+     *
+     * Solo se llama despues de verificar que ninguna cuenta tiene pagos.
      */
-    private static function borrarCobros($db, $id_asistencia)
+    private static function anularCobros($db, $id_asistencia, $id_usuario)
     {
         $sentence = $db->prepare("SELECT id_cuenta_por_cobrar
                                   FROM cobros_automaticos_historial
@@ -669,6 +681,28 @@ class AsistenciaEdicion
         $sentence->execute();
         $cuentas = $sentence->fetchAll();
 
+        $sentenceCuenta = $db->prepare("UPDATE cuentas_por_cobrar
+                                        SET anulado = 1,
+                                            fecha_anulacion = NOW(),
+                                            id_usuario_anulacion = :id_usuario
+                                        WHERE id = :id
+                                          AND id_tenant = :id_tenant
+                                          AND (anulado IS NULL OR anulado = 0)");
+
+        $anuladas = 0;
+        foreach ($cuentas as $cuenta) {
+            if (empty($cuenta['id_cuenta_por_cobrar'])) {
+                continue;
+            }
+            $sentenceCuenta->bindValue(':id_usuario', $id_usuario);
+            $sentenceCuenta->bindValue(':id', $cuenta['id_cuenta_por_cobrar']);
+            $sentenceCuenta->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentenceCuenta->execute();
+            $anuladas += $sentenceCuenta->rowCount();
+        }
+
+        // La trazabilidad si se va: apunta a un movimiento que ya no genera
+        // esos cobros.
         $sentence = $db->prepare("DELETE FROM cobros_automaticos_historial
                                   WHERE id_asistencia_estudiante = :id_asistencia
                                     AND id_tenant = :id_tenant");
@@ -676,20 +710,6 @@ class AsistenciaEdicion
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
-        $sentenceCuenta = $db->prepare("DELETE FROM cuentas_por_cobrar
-                                        WHERE id = :id AND id_tenant = :id_tenant");
-
-        $eliminadas = 0;
-        foreach ($cuentas as $cuenta) {
-            if (empty($cuenta['id_cuenta_por_cobrar'])) {
-                continue;
-            }
-            $sentenceCuenta->bindValue(':id', $cuenta['id_cuenta_por_cobrar']);
-            $sentenceCuenta->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $sentenceCuenta->execute();
-            $eliminadas += $sentenceCuenta->rowCount();
-        }
-
-        return $eliminadas;
+        return $anuladas;
     }
 }
