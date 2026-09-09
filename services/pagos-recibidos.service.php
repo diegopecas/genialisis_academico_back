@@ -1279,6 +1279,8 @@ class PagosRecibidos
             }
 
             // 2. Cuentas por cobrar pendientes (saldo > 0) de todos los estudiantes activos
+            //    Se devuelven tambien el producto y su clasificacion para que el front
+            //    pueda filtrar las cuentas sin volver a consultar.
             //    El saldo se calcula como: valor - SUM(valor_aplicado en cuenta_pagada)
             $stmtCuentas = $db->prepare("
                 SELECT 
@@ -1288,18 +1290,23 @@ class PagosRecibidos
                     c.fecha,
                     c.valor,
                     c.detalle,
+                    c.id_producto_servicio,
                     ps.nombre AS nombre_producto_servicio,
+                    cps.nombre AS clasificacion_producto,
                     COALESCE(SUM(cp.valor_aplicado), 0) AS total_pagado,
                     (c.valor - COALESCE(SUM(cp.valor_aplicado), 0)) AS saldo
                 FROM cuentas_por_cobrar c
                 INNER JOIN estudiantes e ON e.id_persona = c.id_persona AND e.activo = 1
                 LEFT JOIN productos_servicios ps ON ps.id = c.id_producto_servicio
+                LEFT JOIN clasificacion_productos_servicios cps
+                    ON cps.id = ps.id_clasificacion_productos_servicios
+                    AND cps.id_tenant = c.id_tenant
                 LEFT JOIN cuenta_pagada cp ON cp.id_cuenta_por_cobrar = c.id
                     LEFT JOIN pagos_recibidos pr_cp ON cp.id_pago_recibido = pr_cp.id 
                         AND (pr_cp.anulado = 0 OR pr_cp.anulado IS NULL)
                 WHERE (c.anulado = 0 OR c.anulado IS NULL)
                 AND c.id_tenant = :id_tenant
-                GROUP BY c.id, c.id_persona, e.id, c.fecha, c.valor, c.detalle, ps.nombre
+                GROUP BY c.id, c.id_persona, e.id, c.fecha, c.valor, c.detalle, c.id_producto_servicio, ps.nombre, cps.nombre
                 HAVING saldo > 0
                 ORDER BY e.id, c.fecha ASC
             ");
