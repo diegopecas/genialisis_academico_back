@@ -17,6 +17,6 @@ define('TENANT_ID', 2);
 // =============================================
 // CONFIGURACIÓN VAPID - PUSH NOTIFICATIONS
 // =============================================
-define('VAPID_PUBLIC_KEY', 'BObkU8JSPUs8tC4Hk3m31gc_yfV9bPkrVPWxJPL9qpFd3wSnL8q4kDBTcnrYWn4ll9CUv5rcyebb8jU5o9ZL1vQ');
-define('VAPID_PRIVATE_KEY', 'HnpvQ11fiBrnqyQOs_mFNvEdMeiE-RM1-WtxCoQ2B6o');
+define('VAPID_PUBLIC_KEY', '');
+define('VAPID_PRIVATE_KEY', '');
 define('VAPID_SUBJECT', 'mailto:contacto@genialisis.com');

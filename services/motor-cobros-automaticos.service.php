@@ -500,10 +500,16 @@ class MotorCobrosAutomaticos
             // El tipo de movimiento lo indica el front en `tipo_asistencia`.
             // Si no viene, se deduce de la fila de asistencia: si ya tiene
             // fecha_salida, el movimiento fue una salida.
+            // `notificar` en false lo usa el registro masivo de asistencia,
+            // que es una carga administrativa y no le avisa al acudiente. Si
+            // no viene, se notifica: es el comportamiento de siempre.
+            $notificar = !isset($data['notificar'])
+                || filter_var($data['notificar'], FILTER_VALIDATE_BOOLEAN);
+
             $notificacion = null;
             $id_asistencia = isset($cobros[0]['id_asistencia']) ? $cobros[0]['id_asistencia'] : null;
 
-            if (!empty($id_asistencia)) {
+            if ($notificar && !empty($id_asistencia)) {
                 $tipo = isset($data['tipo_asistencia'])
                     ? $data['tipo_asistencia']
                     : self::deducirTipoAsistencia($db, $id_asistencia);

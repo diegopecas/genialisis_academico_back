@@ -252,7 +252,13 @@ class ObservacionesEstudiantes
      *             o un código para que el front le explique a la usuaria por
      *             qué no quedó: 'tipo_no_configurado', 'sin_sprint', 'error'.
      */
-    public static function crearAutomatica($db, $id_estudiante, $codigo_tipo, $descripcion, $id_usuario)
+    /**
+     * $fecha es opcional y se agrego para los registros retroactivos
+     * (asistencia masiva y edicion de asistencia): sin ella la observacion
+     * caeria en el dia de hoy y en el sprint equivocado. Quien no la manda
+     * sigue funcionando igual que antes, con la fecha actual.
+     */
+    public static function crearAutomatica($db, $id_estudiante, $codigo_tipo, $descripcion, $id_usuario, $fecha = null)
     {
         try {
             // Sin texto no hay observación que guardar. No es un error: la
@@ -281,7 +287,9 @@ class ObservacionesEstudiantes
                 return array('creada' => false, 'id' => null, 'motivo' => 'tipo_no_configurado');
             }
 
-            $fecha = date('Y-m-d');
+            if ($fecha === null || trim($fecha) === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', trim($fecha))) {
+                $fecha = date('Y-m-d');
+            }
             $id_sprint = self::resolverSprintPorFecha($db, $fecha);
 
             if (empty($id_sprint)) {

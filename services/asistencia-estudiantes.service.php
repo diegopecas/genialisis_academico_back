@@ -236,12 +236,19 @@ class AsistenciaEstudiantes
         // observaciones (tipo por código y sprint por fecha) y nunca interrumpe
         // el registro de asistencia: si algo falta lo reporta en el resultado y
         // lo deja en el log.
+        // La fecha del movimiento manda sobre la de hoy: con un ingreso
+        // retroactivo la observacion tiene que caer en su dia y en su sprint.
+        $fechaDelMovimiento = $fechaIngreso !== null
+            ? date('Y-m-d', strtotime($fechaIngreso))
+            : date('Y-m-d');
+
         $observacionEstudiante = ObservacionesEstudiantes::crearAutomatica(
             $db,
             $id_estudiante,
             'ingreso',
             $observacion ? 'Observacion de ingreso: ' . $observacion : null,
-            $id_usuario_ingreso
+            $id_usuario_ingreso,
+            $fechaDelMovimiento
         );
 
         $id = $idNew;
@@ -257,7 +264,7 @@ class AsistenciaEstudiantes
         $utilesCreados = RegistroUtilesDiarios::guardarDesdeAsistencia(
             $db,
             $id_estudiante,
-            date('Y-m-d'),
+            $fechaDelMovimiento,
             $id,
             $utiles,
             $id_usuario_ingreso
@@ -320,7 +327,7 @@ class AsistenciaEstudiantes
         // Igual que en el ingreso. El id_estudiante no viene en la petición de
         // salida (solo llega el id del registro de asistencia), así que se lee
         // de la fila que se acabó de actualizar.
-        $sentenceEst = $db->prepare("select id_estudiante from asistencia_estudiantes where id = :id AND id_tenant = :id_tenant");
+        $sentenceEst = $db->prepare("select id_estudiante, fecha_ingreso from asistencia_estudiantes where id = :id AND id_tenant = :id_tenant");
         $sentenceEst->bindParam(':id', $id);
         $sentenceEst->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentenceEst->execute();
@@ -329,12 +336,20 @@ class AsistenciaEstudiantes
         $observacionEstudiante = null;
         $utilesMarcados = 0;
         if ($filaAsistencia) {
+            // El dia del movimiento, no el de hoy: una salida registrada de
+            // forma retroactiva tiene que quedar en su propia fecha. Se toma
+            // del ingreso, que es la fecha con la que se crearon los utiles.
+            $fechaDelMovimiento = !empty($filaAsistencia['fecha_ingreso'])
+                ? date('Y-m-d', strtotime($filaAsistencia['fecha_ingreso']))
+                : date('Y-m-d');
+
             $observacionEstudiante = ObservacionesEstudiantes::crearAutomatica(
                 $db,
                 $filaAsistencia['id_estudiante'],
                 'salida',
                 $observacion ? 'Observacion de salida: ' . $observacion : null,
-                $id_usuario_salida
+                $id_usuario_salida,
+                $fechaDelMovimiento
             );
 
             // La salida cierra los utiles del día: lo que el niño trajo queda
@@ -348,7 +363,7 @@ class AsistenciaEstudiantes
                 $utilesMarcados = RegistroUtilesDiarios::registrarSalidaEstudiante(
                     $db,
                     $filaAsistencia['id_estudiante'],
-                    date('Y-m-d'),
+                    $fechaDelMovimiento,
                     $utiles_no_regresa,
                     $id_usuario_salida
                 );

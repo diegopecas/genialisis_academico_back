@@ -19,6 +19,14 @@ class NotificacionesAsistencia
     const TIPO_SALIDA  = 'salida';
 
     /**
+     * Los usa el modulo de edicion de asistencia. La correccion se manda
+     * despues de guardar; la eliminacion, antes de borrar la fila, porque el
+     * mensaje se arma leyendola.
+     */
+    const TIPO_CORRECCION  = 'correccion';
+    const TIPO_ELIMINACION = 'eliminacion';
+
+    /**
      * Categorias propias de asistencia. Van separadas por evento para que el
      * jardin pueda filtrar y reportar las llegadas aparte de las salidas.
      *
@@ -149,7 +157,11 @@ class NotificacionesAsistencia
      */
     private static function obtenerCategoria(PDO $db, $tipo)
     {
-        $codigo = $tipo === self::TIPO_SALIDA
+        // Correccion y eliminacion no tienen categoria propia: se mandan por
+        // la de salida y, si el tenant no la tiene, cae a GENERAL como todas.
+        $codigo = ($tipo === self::TIPO_SALIDA
+                || $tipo === self::TIPO_CORRECCION
+                || $tipo === self::TIPO_ELIMINACION)
             ? self::CODIGO_CATEGORIA_SALIDA
             : self::CODIGO_CATEGORIA_INGRESO;
 
@@ -202,6 +214,14 @@ class NotificacionesAsistencia
     {
         $nombre = trim(($asistencia['estudiante_primer_nombre'] ?? '') . ' ' . ($asistencia['estudiante_primer_apellido'] ?? ''));
 
+        if ($tipo === self::TIPO_CORRECCION) {
+            return 'Corregimos el registro de ' . $nombre;
+        }
+
+        if ($tipo === self::TIPO_ELIMINACION) {
+            return 'Eliminamos un registro de ' . $nombre;
+        }
+
         return $tipo === self::TIPO_SALIDA
             ? $nombre . ' salió del jardín'
             : $nombre . ' llegó al jardín';
@@ -215,6 +235,46 @@ class NotificacionesAsistencia
     {
         $nombre = trim($asistencia['estudiante_primer_nombre'] ?? '');
         $lineas = array();
+
+        // Correccion y eliminacion cuentan el movimiento completo, porque lo
+        // que le interesa al acudiente es como quedo (o que ya no esta), no
+        // solo la hora que se toco.
+        if ($tipo === self::TIPO_CORRECCION || $tipo === self::TIPO_ELIMINACION) {
+            $fecha = !empty($asistencia['fecha_ingreso'])
+                ? date('d/m/Y', strtotime($asistencia['fecha_ingreso']))
+                : '';
+            $horaIngreso = !empty($asistencia['fecha_ingreso']) ? date('h:i a', strtotime($asistencia['fecha_ingreso'])) : null;
+            $horaSalida  = !empty($asistencia['fecha_salida']) ? date('h:i a', strtotime($asistencia['fecha_salida'])) : null;
+
+            if ($tipo === self::TIPO_ELIMINACION) {
+                $lineas[] = 'Eliminamos el registro de asistencia de ' . $nombre
+                    . ($fecha !== '' ? ' del ' . $fecha : '') . '.';
+                $lineas[] = 'Si tienes alguna duda, escríbenos.';
+                return implode("\n", $lineas);
+            }
+
+            $lineas[] = 'Corregimos el registro de asistencia de ' . $nombre
+                . ($fecha !== '' ? ' del ' . $fecha : '') . '. Así quedó:';
+            $lineas[] = '';
+            $lineas[] = 'Ingreso: ' . ($horaIngreso ? $horaIngreso : 'sin registrar');
+            $lineas[] = 'Salida: ' . ($horaSalida ? $horaSalida : 'sin registrar');
+
+            if (!empty($asistencia['observacion_ingreso'])) {
+                $lineas[] = 'Observación de ingreso: ' . $asistencia['observacion_ingreso'];
+            }
+
+            if (!empty($asistencia['observacion_salida'])) {
+                $lineas[] = 'Observación de salida: ' . $asistencia['observacion_salida'];
+            }
+
+            $cobrosCorreccion = self::armarBloqueCobros($db, $asistencia['id']);
+            if ($cobrosCorreccion !== '') {
+                $lineas[] = '';
+                $lineas[] = $cobrosCorreccion;
+            }
+
+            return implode("\n", $lineas);
+        }
 
         if ($tipo === self::TIPO_SALIDA) {
             $hora = !empty($asistencia['fecha_salida']) ? date('h:i a', strtotime($asistencia['fecha_salida'])) : null;
