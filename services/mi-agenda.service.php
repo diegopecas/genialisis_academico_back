@@ -29,6 +29,25 @@ class MiAgenda
     const ESTADO_ALIMENTACION_ENTREGADA = 1;
 
     /**
+     * Permiso del portal institucional para ver el detalle de pagos y cobros
+     * en la agenda. Sin el, esas tarjetas llegan recortadas: solo avisan que
+     * hubo un movimiento, sin valor, sin detalle y sin nada para descargar.
+     */
+    const PERMISO_FINANZAS = 'operaciones.agenda_estudiantes.finanzas';
+
+    /**
+     * Fuentes financieras y el texto que queda cuando se recortan. La clave
+     * es la misma de FUENTES.
+     */
+    const FUENTES_FINANCIERAS = [
+        'pagos'   => 'Se registró un pago',
+        'cuentas' => 'Se registró un cobro',
+    ];
+
+    /** Color apagado de las tarjetas financieras recortadas. */
+    const COLOR_RESTRINGIDO = '#B2BEC3';
+
+    /**
      * Catalogo de fuentes. La clave es la que viaja al front y la que se
      * puede pedir en el parametro `fuentes` del endpoint.
      *
@@ -208,6 +227,11 @@ class MiAgenda
 
         $clavesPedidas = self::clavesPedidas();
 
+        // Se resuelve una sola vez: PermisosService consulta la BD la primera
+        // vez y luego responde de cache, pero no hace falta preguntar por cada
+        // evento.
+        $verFinanzas = self::puedeVerFinanzas($userData);
+
         $eventos = [];
         $errores = [];
         $totales = [];
@@ -228,6 +252,12 @@ class MiAgenda
                 error_log("Mi Agenda - fuente '{$clave}' fallo: " . $e->getMessage());
                 $errores[] = ['clave' => $clave, 'mensaje' => $e->getMessage()];
                 $delaFuente = [];
+            }
+
+            // El recorte va aqui y no en el front: el valor no debe llegar al
+            // navegador de quien no tiene el permiso.
+            if (!$verFinanzas && isset(self::FUENTES_FINANCIERAS[$clave])) {
+                $delaFuente = self::recortarFinancieros($delaFuente, $clave);
             }
 
             $totales[$clave] = count($delaFuente);
@@ -1335,6 +1365,59 @@ class MiAgenda
         }
 
         return Acudientes::esEstudianteDelAcudiente($db, $userData->id_persona, $id_estudiante);
+    }
+
+    /**
+     * El usuario puede ver el detalle de pagos y cobros.
+     *
+     * En el portal de padres siempre: el acudiente ve lo suyo y lo que se le
+     * muestra lo controlan los permisos padres.* en el front, igual que antes.
+     * En el institucional depende del permiso de finanzas de la agenda.
+     *
+     * @param object $userData
+     * @return bool
+     */
+    private static function puedeVerFinanzas($userData)
+    {
+        $portal = isset($userData->portal)
+            ? $userData->portal
+            : JWTService::PORTAL_INSTITUCIONAL;
+
+        if ($portal === JWTService::PORTAL_PADRES) {
+            return true;
+        }
+
+        return PermisosService::tiene($userData, self::PERMISO_FINANZAS);
+    }
+
+    /**
+     * Deja los eventos financieros solo como aviso de que hubo un movimiento.
+     *
+     * Se conservan la hora (para que la tarjeta caiga en su sitio del dia) y
+     * el id (la agenda lo usa como llave de cada tarjeta). Todo lo demas se
+     * quita: valor, detalle, etiqueta, quien lo registro y meta, que es donde
+     * viajan el numero del recibo y el soporte para descargar. El tipo tambien
+     * se generaliza para que no delate si era un recargo por mora.
+     *
+     * @param array $eventos Eventos ya normalizados por self::evento()
+     * @param string $clave Clave de la fuente financiera
+     * @return array
+     */
+    private static function recortarFinancieros($eventos, $clave)
+    {
+        $titulo = self::FUENTES_FINANCIERAS[$clave];
+
+        return array_map(function ($evento) use ($titulo) {
+            $evento['tipo']     = 'restringido';
+            $evento['titulo']   = $titulo;
+            $evento['detalle']  = null;
+            $evento['pie']      = null;
+            $evento['etiqueta'] = null;
+            $evento['valor']    = null;
+            $evento['color']    = self::COLOR_RESTRINGIDO;
+            $evento['meta']     = ['restringido' => true];
+            return $evento;
+        }, $eventos);
     }
 
     /**
