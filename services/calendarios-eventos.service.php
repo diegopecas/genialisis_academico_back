@@ -1,13 +1,17 @@
 <?php
 class CalendariosEventos
 {
+    // Largo máximo de la descripción (el campo en BD es más grande para no recortar los eventos existentes)
+    const MAX_DESCRIPCION = 150;
+
     public static function getAll()
     {
         $db = Flight::db();
         $sentence = $db->prepare("
             SELECT ce.*, 
                    tec.nombre AS tipo_evento_nombre,
-                   tec.icono AS tipo_evento_icono
+                   tec.icono AS tipo_evento_icono,
+                   tec.color AS tipo_evento_color
             FROM calendarios_eventos ce
             LEFT JOIN tipos_evento_calendario tec ON tec.id = ce.id_tipo_evento_calendario
             WHERE ce.id_tenant = :id_tenant
@@ -25,7 +29,8 @@ class CalendariosEventos
         $sentence = $db->prepare("
             SELECT ce.*, 
                    tec.nombre AS tipo_evento_nombre,
-                   tec.icono AS tipo_evento_icono
+                   tec.icono AS tipo_evento_icono,
+                   tec.color AS tipo_evento_color
             FROM calendarios_eventos ce
             LEFT JOIN tipos_evento_calendario tec ON tec.id = ce.id_tipo_evento_calendario
             WHERE ce.id = :id
@@ -47,7 +52,8 @@ class CalendariosEventos
         $sentence = $db->prepare("
             SELECT ce.*, 
                    tec.nombre AS tipo_evento_nombre,
-                   tec.icono AS tipo_evento_icono
+                   tec.icono AS tipo_evento_icono,
+                   tec.color AS tipo_evento_color
             FROM calendarios_eventos ce
             LEFT JOIN tipos_evento_calendario tec ON tec.id = ce.id_tipo_evento_calendario
             WHERE ce.fecha BETWEEN :fecha_inicio AND :fecha_fin
@@ -79,6 +85,13 @@ class CalendariosEventos
                 Flight::json(array('error' => $errorHoras), 400);
                 return;
             }
+
+            $errorDescripcion = self::validarDescripcion($descripcion);
+            if ($errorDescripcion !== null) {
+                Flight::json(array('error' => $errorDescripcion), 400);
+                return;
+            }
+            $descripcion = trim((string) $descripcion);
 
             $sentence = $db->prepare("
                 INSERT INTO calendarios_eventos (id, id_tenant, fecha, hora_inicio, hora_fin, id_tipo_evento_calendario, descripcion) 
@@ -119,6 +132,13 @@ class CalendariosEventos
                 Flight::json(array('error' => $errorHoras), 400);
                 return;
             }
+
+            $errorDescripcion = self::validarDescripcion($descripcion);
+            if ($errorDescripcion !== null) {
+                Flight::json(array('error' => $errorDescripcion), 400);
+                return;
+            }
+            $descripcion = trim((string) $descripcion);
 
             $sentence = $db->prepare("
                 UPDATE calendarios_eventos SET 
@@ -180,6 +200,22 @@ class CalendariosEventos
         }
         if (preg_match('/^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/', $hora)) {
             return $hora;
+        }
+        return null;
+    }
+
+    /**
+     * La descripción es el título corto del evento: obligatoria y de máximo 150 caracteres.
+     * Devuelve el mensaje de error o null si todo está bien.
+     */
+    private static function validarDescripcion($descripcion)
+    {
+        $texto = trim((string) $descripcion);
+        if ($texto === '') {
+            return 'La descripción del evento es obligatoria';
+        }
+        if (mb_strlen($texto, 'UTF-8') > self::MAX_DESCRIPCION) {
+            return 'La descripción no puede tener más de ' . self::MAX_DESCRIPCION . ' caracteres';
         }
         return null;
     }

@@ -37,6 +37,7 @@ Flight::route('DELETE /cargos', [Cargos::class, 'delete']);
 // CALENDARIOS
 Flight::route('GET /calendarios', [Calendarios::class, 'getAll']);
 Flight::route('GET /calendarios/mes/@anio/@mes', [Calendarios::class, 'getCalendarioMes']);
+Flight::route('GET /calendarios/anio/@anio', [Calendarios::class, 'getCalendarioAnio']);
 Flight::route('GET /calendarios/@id', [Calendarios::class, 'getById']);
 Flight::route('POST /calendarios', [Calendarios::class, 'new']);
 Flight::route('PUT /calendarios', [Calendarios::class, 'replace']);

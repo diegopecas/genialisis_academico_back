@@ -17,7 +17,7 @@ class TiposEventoCalendario
         try {
             $db = Flight::db();
             $sentence = $db->prepare("
-                SELECT id, nombre, icono
+                SELECT id, nombre, icono, color
                 FROM tipos_evento_calendario
                 WHERE id = :id AND id_tenant = :id_tenant
             ");
@@ -45,15 +45,18 @@ class TiposEventoCalendario
                 return;
             }
 
+            $color = self::normalizarColor($request->data->color ?? null);
+
             $idNew = Uuid::generar();
             $sentence = $db->prepare("
-                INSERT INTO tipos_evento_calendario (id, id_tenant, nombre, icono)
-                VALUES (:id, :id_tenant, :nombre, :icono)
+                INSERT INTO tipos_evento_calendario (id, id_tenant, nombre, icono, color)
+                VALUES (:id, :id_tenant, :nombre, :icono, :color)
             ");
             $sentence->bindValue(':id', $idNew);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':icono', $icono);
+            $sentence->bindValue(':color', $color, $color === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
             $sentence->execute();
 
             Flight::json(['id' => $idNew]);
@@ -77,15 +80,19 @@ class TiposEventoCalendario
                 return;
             }
 
+            $color = self::normalizarColor($request->data->color ?? null);
+
             $sentence = $db->prepare("
                 UPDATE tipos_evento_calendario SET
                     nombre = :nombre,
-                    icono = :icono
+                    icono = :icono,
+                    color = :color
                 WHERE id = :id AND id_tenant = :id_tenant
             ");
             $sentence->bindParam(':id', $id);
             $sentence->bindParam(':nombre', $nombre);
             $sentence->bindParam(':icono', $icono);
+            $sentence->bindValue(':color', $color, $color === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
@@ -130,6 +137,15 @@ class TiposEventoCalendario
             error_log('Error en TiposEventoCalendario::delete: ' . $e->getMessage());
             Flight::json(['error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Color del tipo en formato hexadecimal (#RRGGBB) o null si no viene uno válido.
+     */
+    private static function normalizarColor($color)
+    {
+        $color = trim((string) $color);
+        return preg_match('/^#[0-9a-fA-F]{6}$/', $color) ? strtoupper($color) : null;
     }
 
 }

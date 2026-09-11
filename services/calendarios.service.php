@@ -64,17 +64,20 @@ class Calendarios
     }
 
     /**
-     * Endpoint para el portal de padres.
+     * Endpoint para el portal de padres (y el calendario institucional por mes).
      * Devuelve días del mes, eventos y cumpleaños al vuelo.
+     * La estructura de la respuesta no cambia; solo se suman campos.
      */
     public static function getCalendarioMes($anio, $mes)
     {
         $db = Flight::db();
+        $anio = (int) $anio;
+        $mes = (int) $mes;
 
         // 1. Días del mes
         $stmtDias = $db->prepare("
             SELECT 
-                c.id, c.fecha, c.id_tipo_dia, c.dia, c.mes, c.anio, c.id_dia_semana,
+                c.id, c.fecha, c.id_tipo_dia, c.dia, c.mes, c.anio, c.id_dia_semana, c.dia_habil,
                 td.nombre AS tipo_dia_nombre,
                 ds.nombre AS dia_semana_nombre
             FROM calendarios c
@@ -91,12 +94,66 @@ class Calendarios
         // 2. Eventos del mes
         $fecha_inicio = sprintf('%04d-%02d-01', $anio, $mes);
         $fecha_fin = date('Y-m-t', strtotime($fecha_inicio));
+        $eventos = self::eventosRango($db, $fecha_inicio, $fecha_fin);
 
+        // 3. Cumpleaños de estudiantes, colaboradores y acudientes
+        $cumpleanos = self::cumpleanos($db, $anio, $mes);
+
+        Flight::json([
+            'anio' => $anio,
+            'mes' => $mes,
+            'dias' => $dias,
+            'eventos' => $eventos,
+            'cumpleanos' => $cumpleanos
+        ]);
+    }
+
+    /**
+     * Calendario de todo el año en una sola llamada (vistas Año y Lista del institucional).
+     * Misma estructura que getCalendarioMes; cada cumpleaños trae además 'mes' y 'fecha'.
+     */
+    public static function getCalendarioAnio($anio)
+    {
+        $db = Flight::db();
+        $anio = (int) $anio;
+
+        $stmtDias = $db->prepare("
+            SELECT 
+                c.id, c.fecha, c.id_tipo_dia, c.dia, c.mes, c.anio, c.id_dia_semana, c.dia_habil,
+                td.nombre AS tipo_dia_nombre,
+                ds.nombre AS dia_semana_nombre
+            FROM calendarios c
+            LEFT JOIN tipos_dias td ON c.id_tipo_dia = td.id
+            LEFT JOIN dias_semana ds ON c.id_dia_semana = ds.id
+            WHERE c.anio = :anio
+            ORDER BY c.fecha
+        ");
+        $stmtDias->bindParam(':anio', $anio, PDO::PARAM_INT);
+        $stmtDias->execute();
+        $dias = $stmtDias->fetchAll();
+
+        $eventos = self::eventosRango($db, sprintf('%04d-01-01', $anio), sprintf('%04d-12-31', $anio));
+        $cumpleanos = self::cumpleanos($db, $anio, null);
+
+        Flight::json([
+            'anio' => $anio,
+            'dias' => $dias,
+            'eventos' => $eventos,
+            'cumpleanos' => $cumpleanos
+        ]);
+    }
+
+    /**
+     * Eventos del tenant entre dos fechas, con su tipo, icono y color.
+     */
+    private static function eventosRango($db, $fecha_inicio, $fecha_fin)
+    {
         $stmtEventos = $db->prepare("
             SELECT 
                 ce.id, ce.fecha, ce.hora_inicio, ce.hora_fin, ce.id_tipo_evento_calendario, ce.descripcion,
                 tec.nombre AS tipo_evento_nombre,
-                tec.icono AS tipo_evento_icono
+                tec.icono AS tipo_evento_icono,
+                tec.color AS tipo_evento_color
             FROM calendarios_eventos ce
             LEFT JOIN tipos_evento_calendario tec ON tec.id = ce.id_tipo_evento_calendario
             WHERE ce.fecha BETWEEN :fecha_inicio AND :fecha_fin
@@ -107,85 +164,222 @@ class Calendarios
         $stmtEventos->bindParam(':fecha_fin', $fecha_fin);
         $stmtEventos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmtEventos->execute();
-        $eventos = $stmtEventos->fetchAll();
+        return $stmtEventos->fetchAll();
+    }
 
-        // 3. Cumpleaños de estudiantes activos
-        $stmtCumpleEstudiantes = $db->prepare("
+    /**
+     * Cumpleaños de estudiantes, colaboradores y acudientes activos.
+     *
+     * Privacidad: en el portal de padres cada acudiente solo recibe SU propio
+     * cumpleaños (el claim 'portal' y el id_persona viajan firmados en el token);
+     * en el institucional se reciben todos.
+     *
+     * @param int      $anio Año que se pinta (para ubicar el 29 de febrero en años no bisiestos)
+     * @param int|null $mes  Mes de 1 a 12, o null para todo el año
+     */
+    private static function cumpleanos($db, $anio, $mes)
+    {
+        $userData = JWTService::requerirAutenticacion();
+        $esPortalPadres = isset($userData->portal) && $userData->portal === JWTService::PORTAL_PADRES;
+        $idPersonaUsuario = isset($userData->id_persona) ? $userData->id_persona : null;
+
+        $filtroMes = $mes === null ? '' : 'AND MONTH(p.fecha_nacimiento) = :mes';
+
+        // Estudiantes activos
+        $stmtEstudiantes = $db->prepare("
             SELECT 
                 p.id AS id_persona,
                 p.primer_nombre,
                 p.primer_apellido,
                 p.fecha_nacimiento,
-                'estudiante' AS tipo_persona,
-                NULL AS sobrenombre,
-                NULL AS cargo_nombre_corto
+                p.id_genero
             FROM personas p
             INNER JOIN estudiantes e ON e.id_persona = p.id AND e.activo = 1
-            WHERE MONTH(p.fecha_nacimiento) = :mes
+            WHERE p.fecha_nacimiento IS NOT NULL
+            $filtroMes
             AND e.id_tenant = :id_tenant
-            ORDER BY DAY(p.fecha_nacimiento)
         ");
-        $stmtCumpleEstudiantes->bindParam(':mes', $mes, PDO::PARAM_INT);
-        $stmtCumpleEstudiantes->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-        $stmtCumpleEstudiantes->execute();
-        $cumpleEstudiantes = $stmtCumpleEstudiantes->fetchAll();
+        if ($mes !== null) {
+            $stmtEstudiantes->bindValue(':mes', $mes, PDO::PARAM_INT);
+        }
+        $stmtEstudiantes->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmtEstudiantes->execute();
 
-        // 4. Cumpleaños de colaboradores activos (con sobrenombre y cargo)
-        $stmtCumpleColaboradores = $db->prepare("
+        // Colaboradores activos (con sobrenombre y cargo)
+        $stmtColaboradores = $db->prepare("
             SELECT 
                 p.id AS id_persona,
                 p.primer_nombre,
                 p.primer_apellido,
                 p.fecha_nacimiento,
-                'colaborador' AS tipo_persona,
+                p.id_genero,
                 col.sobrenombre,
                 ca.nombre_corto AS cargo_nombre_corto
             FROM personas p
             INNER JOIN colaboradores col ON col.id_persona = p.id AND col.activo = 1
             LEFT JOIN cargos ca ON ca.id = col.id_cargo
-            WHERE MONTH(p.fecha_nacimiento) = :mes
+            WHERE p.fecha_nacimiento IS NOT NULL
+            $filtroMes
             AND col.id_tenant = :id_tenant
-            ORDER BY DAY(p.fecha_nacimiento)
         ");
-        $stmtCumpleColaboradores->bindParam(':mes', $mes, PDO::PARAM_INT);
-        $stmtCumpleColaboradores->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-        $stmtCumpleColaboradores->execute();
-        $cumpleColaboradores = $stmtCumpleColaboradores->fetchAll();
+        if ($mes !== null) {
+            $stmtColaboradores->bindValue(':mes', $mes, PDO::PARAM_INT);
+        }
+        $stmtColaboradores->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmtColaboradores->execute();
 
-        // Formatear cumpleaños
+        // Acudientes activos de estudiantes activos (una fila por cada niño que acompañan)
+        $filtroPersona = $esPortalPadres ? 'AND p.id = :id_persona_usuario' : '';
+        $stmtAcudientes = $db->prepare("
+            SELECT 
+                p.id AS id_persona,
+                p.primer_nombre,
+                p.primer_apellido,
+                p.fecha_nacimiento,
+                p.id_genero,
+                ta.nombre_femenino,
+                ta.nombre_masculino,
+                pe.primer_nombre AS estudiante_nombre
+            FROM acudientes a
+            INNER JOIN personas p ON p.id = a.id_persona
+            INNER JOIN estudiantes e ON e.id = a.id_estudiante AND e.activo = 1
+            INNER JOIN personas pe ON pe.id = e.id_persona
+            LEFT JOIN tipos_acudiente ta ON ta.id = a.id_tipo_acudiente
+            WHERE a.activo = 1
+            AND p.fecha_nacimiento IS NOT NULL
+            $filtroMes
+            $filtroPersona
+            AND a.id_tenant = :id_tenant
+        ");
+        if ($mes !== null) {
+            $stmtAcudientes->bindValue(':mes', $mes, PDO::PARAM_INT);
+        }
+        if ($esPortalPadres) {
+            $stmtAcudientes->bindValue(':id_persona_usuario', $idPersonaUsuario);
+        }
+        $stmtAcudientes->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmtAcudientes->execute();
+
         $cumpleanos = [];
-        foreach (array_merge($cumpleEstudiantes, $cumpleColaboradores) as $c) {
-            $diaCumple = (int) date('d', strtotime($c['fecha_nacimiento']));
-            
-            // Para colaboradores: usar sobrenombre si existe, si no primer_nombre
-            if ($c['tipo_persona'] === 'colaborador') {
-                $nombre = !empty($c['sobrenombre']) ? $c['sobrenombre'] : trim($c['primer_nombre'] . ' ' . $c['primer_apellido']);
-            } else {
-                $nombre = trim($c['primer_nombre'] . ' ' . $c['primer_apellido']);
-            }
 
-            $cumpleanos[] = [
-                'id_persona' => $c['id_persona'],
-                'nombre' => $nombre,
-                'tipo_persona' => $c['tipo_persona'],
-                'dia' => $diaCumple,
-                'fecha_nacimiento' => $c['fecha_nacimiento'],
-                'cargo' => $c['cargo_nombre_corto']
-            ];
+        foreach ($stmtEstudiantes->fetchAll() as $c) {
+            $cumpleanos[] = self::armarCumpleanos($c, $anio, 'estudiante', [
+                'nombre' => trim($c['primer_nombre'] . ' ' . $c['primer_apellido']),
+                'nombre_corto' => trim((string) $c['primer_nombre']),
+                'es_usuario_actual' => $c['id_persona'] === $idPersonaUsuario
+            ]);
         }
 
-        // Ordenar cumpleaños por día
-        usort($cumpleanos, function($a, $b) {
-            return $a['dia'] - $b['dia'];
+        foreach ($stmtColaboradores->fetchAll() as $c) {
+            // Para colaboradores: usar sobrenombre si existe, si no primer nombre y apellido
+            $cumpleanos[] = self::armarCumpleanos($c, $anio, 'colaborador', [
+                'nombre' => !empty($c['sobrenombre']) ? $c['sobrenombre'] : trim($c['primer_nombre'] . ' ' . $c['primer_apellido']),
+                'nombre_corto' => !empty($c['sobrenombre']) ? trim($c['sobrenombre']) : trim((string) $c['primer_nombre']),
+                'cargo' => $c['cargo_nombre_corto'],
+                'es_usuario_actual' => $c['id_persona'] === $idPersonaUsuario
+            ]);
+        }
+
+        // Un acudiente con varios niños llega en varias filas: se agrupa por persona
+        $acudientes = [];
+        foreach ($stmtAcudientes->fetchAll() as $c) {
+            $id = $c['id_persona'];
+            if (!isset($acudientes[$id])) {
+                $acudientes[$id] = ['fila' => $c, 'estudiantes' => [], 'parentescos' => []];
+            }
+            $nombreEstudiante = trim((string) $c['estudiante_nombre']);
+            if ($nombreEstudiante !== '' && !in_array($nombreEstudiante, $acudientes[$id]['estudiantes'], true)) {
+                $acudientes[$id]['estudiantes'][] = $nombreEstudiante;
+            }
+            $acudientes[$id]['parentescos'][] = self::parentesco($c['id_genero'], $c['nombre_femenino'], $c['nombre_masculino']);
+        }
+
+        foreach ($acudientes as $id => $a) {
+            $c = $a['fila'];
+            $parentescos = array_unique($a['parentescos']);
+            // Si con todos sus niños tiene el mismo parentesco se usa; si no, "familiar"
+            $parentesco = (count($parentescos) === 1 && reset($parentescos) !== null) ? reset($parentescos) : 'familiar';
+
+            $cumpleanos[] = self::armarCumpleanos($c, $anio, 'acudiente', [
+                'nombre' => trim($c['primer_nombre'] . ' ' . $c['primer_apellido']),
+                'nombre_corto' => trim((string) $c['primer_nombre']),
+                'parentesco' => $parentesco,
+                'estudiantes' => self::unirNombres($a['estudiantes']),
+                'es_usuario_actual' => $id === $idPersonaUsuario
+            ]);
+        }
+
+        // Ordenar cumpleaños por mes y día
+        usort($cumpleanos, function ($a, $b) {
+            return ($a['mes'] - $b['mes']) ?: ($a['dia'] - $b['dia']);
         });
 
-        Flight::json([
-            'anio' => (int) $anio,
-            'mes' => (int) $mes,
-            'dias' => $dias,
-            'eventos' => $eventos,
-            'cumpleanos' => $cumpleanos
-        ]);
+        return $cumpleanos;
+    }
+
+    /**
+     * Arma el registro de cumpleaños con los campos comunes a todos los tipos.
+     * El 29 de febrero se muestra el 28 en los años que no son bisiestos.
+     */
+    private static function armarCumpleanos($fila, $anio, $tipoPersona, $extra)
+    {
+        // Nombres sin espacios dobles (hay registros con espacios de más)
+        foreach (['nombre', 'nombre_corto'] as $campo) {
+            if (isset($extra[$campo])) {
+                $extra[$campo] = trim(preg_replace('/\s+/u', ' ', (string) $extra[$campo]));
+            }
+        }
+
+        $mesCumple = (int) date('n', strtotime($fila['fecha_nacimiento']));
+        $diaCumple = (int) date('j', strtotime($fila['fecha_nacimiento']));
+        if ($mesCumple === 2 && $diaCumple === 29 && !checkdate(2, 29, (int) $anio)) {
+            $diaCumple = 28;
+        }
+
+        return array_merge([
+            'id_persona' => $fila['id_persona'],
+            'nombre' => '',
+            'nombre_corto' => '',
+            'tipo_persona' => $tipoPersona,
+            'dia' => $diaCumple,
+            'mes' => $mesCumple,
+            'fecha' => sprintf('%04d-%02d-%02d', $anio, $mesCumple, $diaCumple),
+            'fecha_nacimiento' => $fila['fecha_nacimiento'],
+            'id_genero' => $fila['id_genero'] !== null ? (int) $fila['id_genero'] : null,
+            'cargo' => null,
+            'parentesco' => null,
+            'estudiantes' => null,
+            'es_usuario_actual' => false
+        ], $extra);
+    }
+
+    /**
+     * Parentesco según el género de la persona (1 femenino, 2 masculino).
+     * Sin género solo se usa si es igual en las dos formas (ej. mamá, papá).
+     * Devuelve null cuando no aplica, para que el mensaje diga "familiar".
+     */
+    private static function parentesco($idGenero, $nombreFemenino, $nombreMasculino)
+    {
+        $femenino = trim((string) $nombreFemenino);
+        $masculino = trim((string) $nombreMasculino);
+
+        if ((int) $idGenero === 1) {
+            return $femenino !== '' ? $femenino : null;
+        }
+        if ((int) $idGenero === 2) {
+            return $masculino !== '' ? $masculino : null;
+        }
+        return ($femenino !== '' && $femenino === $masculino) ? $femenino : null;
+    }
+
+    /** "Sofía", "Sofía y Juan", "Sofía, Juan y Ana" */
+    private static function unirNombres($nombres)
+    {
+        if (count($nombres) <= 1) {
+            return implode('', $nombres);
+        }
+        $ultimo = array_pop($nombres);
+        return implode(', ', $nombres) . ' y ' . $ultimo;
     }
 
     private static function convertirDiaSemana($dia_php)
