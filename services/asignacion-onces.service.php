@@ -105,6 +105,9 @@ class AsignacionOnces
     /**
      * Retorna las asignaciones ya hechas para una fecha y horario.
      * El frontend cruza con la lista de estudiantes para excluir los ya asignados.
+     * Incluye el id de la cuenta y lo pagado, para poder anular la asignación.
+     * Trae también las anuladas (anulado = 1) para mostrarlas en la pantalla:
+     * el estudiante sigue disponible, pero se ve que ese día tuvo una asignación anulada.
      * Body: { fecha, id_horario }
      */
     public static function getAsignacionesDelDia()
@@ -131,13 +134,18 @@ class AsignacionOnces
             $db = Flight::db();
 
             $sql = "SELECT 
+                        id,
                         id_persona,
                         id_producto_servicio,
-                        id_horario_alimentacion
+                        id_horario_alimentacion,
+                        valor,
+                        anulado,
+                        COALESCE((SELECT SUM(cp.valor_aplicado)
+                                  FROM cuenta_pagada cp
+                                  WHERE cp.id_cuenta_por_cobrar = cuentas_por_cobrar.id), 0) AS valor_pagado
                     FROM cuentas_por_cobrar
                     WHERE fecha = :fecha
                       AND id_horario_alimentacion = :id_horario
-                      AND anulado = 0
                       AND id_tenant = :id_tenant";
 
             $stmt = $db->prepare($sql);
@@ -148,9 +156,13 @@ class AsignacionOnces
             $asignaciones = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             foreach ($asignaciones as &$a) {
+                $a['id']                   = (string)$a['id'];
                 $a['id_persona']           = (string)$a['id_persona'];
                 $a['id_producto_servicio'] = (string)$a['id_producto_servicio'];
                 $a['id_horario_alimentacion'] = (string)$a['id_horario_alimentacion'];
+                $a['valor']                = (float)$a['valor'];
+                $a['anulado']              = (int)$a['anulado'];
+                $a['valor_pagado']         = (float)$a['valor_pagado'];
             }
 
             Flight::json($asignaciones);
@@ -215,11 +227,13 @@ class AsignacionOnces
             }
 
             // Retornar las nuevas asignaciones para que el frontend actualice su caché
-            $sqlNuevas = "SELECT id_persona, id_producto_servicio, id_horario_alimentacion
+            $sqlNuevas = "SELECT id, id_persona, id_producto_servicio, id_horario_alimentacion, valor, anulado,
+                                 COALESCE((SELECT SUM(cp.valor_aplicado)
+                                           FROM cuenta_pagada cp
+                                           WHERE cp.id_cuenta_por_cobrar = cuentas_por_cobrar.id), 0) AS valor_pagado
                           FROM cuentas_por_cobrar
                           WHERE fecha = :fecha
                             AND id_horario_alimentacion = :id_horario
-                            AND anulado = 0
                             AND id_tenant = :id_tenant";
             $stmtN = $db->prepare($sqlNuevas);
             $stmtN->bindValue(':fecha',      $fecha);
@@ -229,9 +243,13 @@ class AsignacionOnces
             $asignaciones = $stmtN->fetchAll(PDO::FETCH_ASSOC);
 
             foreach ($asignaciones as &$a) {
+                $a['id']                      = (string)$a['id'];
                 $a['id_persona']              = (string)$a['id_persona'];
                 $a['id_producto_servicio']    = (string)$a['id_producto_servicio'];
                 $a['id_horario_alimentacion'] = (string)$a['id_horario_alimentacion'];
+                $a['valor']                   = (float)$a['valor'];
+                $a['anulado']                 = (int)$a['anulado'];
+                $a['valor_pagado']            = (float)$a['valor_pagado'];
             }
 
             Flight::json([
