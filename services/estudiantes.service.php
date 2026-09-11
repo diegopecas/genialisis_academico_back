@@ -921,7 +921,7 @@ class Estudiantes
             // escogio otro grupo hay que moverlo, o el cambio se perderia sin
             // que nadie se entere.
             if ($grupoActual && $grupoActual['id_grupo'] !== $id_grupo) {
-                $stmt = $db->prepare("UPDATE estudiantes_x_grupos SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
+                $stmt = $db->prepare("UPDATE estudiantes_x_grupos SET activo = 0, fecha_fin = CURDATE() WHERE id = :id AND id_tenant = :id_tenant");
                 $stmt->bindValue(':id', $grupoActual['id']);
                 $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmt->execute();
@@ -930,7 +930,7 @@ class Estudiantes
 
             if (!$grupoActual) {
                 $anno_actual = date('Y');
-                $stmt = $db->prepare("INSERT INTO estudiantes_x_grupos (id_tenant, id_estudiante, id_grupo, anio, activo) VALUES (:id_tenant, :id_estudiante, :id_grupo, :anio, 1)");
+                $stmt = $db->prepare("INSERT INTO estudiantes_x_grupos (id_tenant, id_estudiante, id_grupo, anio, activo, fecha_inicio) VALUES (:id_tenant, :id_estudiante, :id_grupo, :anio, 1, CURDATE())");
                 $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmt->bindParam(':id_estudiante', $id_estudiante);
                 $stmt->bindParam(':id_grupo', $id_grupo);
@@ -1738,7 +1738,7 @@ class Estudiantes
 
             // Reactivado: si viene otro grupo, se mueve.
             if ($grupoActual && $grupoActual['id_grupo'] !== $id_grupo) {
-                $stmt = $db->prepare("UPDATE estudiantes_x_grupos SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
+                $stmt = $db->prepare("UPDATE estudiantes_x_grupos SET activo = 0, fecha_fin = CURDATE() WHERE id = :id AND id_tenant = :id_tenant");
                 $stmt->bindValue(':id', $grupoActual['id']);
                 $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
                 $stmt->execute();
@@ -1746,13 +1746,21 @@ class Estudiantes
             }
 
             if (!$grupoActual) {
-                $stmt = $db->prepare("INSERT INTO estudiantes_x_grupos (id_tenant, id_estudiante, id_grupo, id_grado, anio, activo)
-                    VALUES (:id_tenant, :id_estudiante, :id_grupo, :id_grado, :anio, 1)");
+                // Un niño nuevo esta en el grupo desde su fecha de ingreso, que
+                // en este asistente puede ser anterior a hoy. Uno reactivado o
+                // movido, desde hoy.
+                $fecha_inicio_grupo = (!$estudiante_reactivado && !empty($fecha_ingreso))
+                    ? $fecha_ingreso
+                    : date('Y-m-d');
+
+                $stmt = $db->prepare("INSERT INTO estudiantes_x_grupos (id_tenant, id_estudiante, id_grupo, id_grado, anio, activo, fecha_inicio)
+                    VALUES (:id_tenant, :id_estudiante, :id_grupo, :id_grado, :anio, 1, :fecha_inicio)");
                 $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
                 $stmt->bindParam(':id_estudiante', $id_estudiante);
                 $stmt->bindParam(':id_grupo', $id_grupo);
                 $stmt->bindValue(':id_grado', $id_grado ? $id_grado : null);
                 $stmt->bindParam(':anio', $anno);
+                $stmt->bindValue(':fecha_inicio', $fecha_inicio_grupo);
                 $stmt->execute();
             }
 

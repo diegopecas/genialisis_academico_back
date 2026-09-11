@@ -58,8 +58,8 @@ class MiAgenda
      * Catalogo de fuentes. 'permiso_padres' es el permiso que el rol del
      * acudiente debe tener para que la fuente salga en su agenda: el mismo
      * que abre la pantalla donde vive ese dato en el portal de padres, o uno
-     * propio de Mi Agenda cuando el dato solo existe aqui (utiles,
-     * alimentacion y actividades del dia). Asi, quitarle un permiso al rol
+     * propio de Mi Agenda cuando el dato solo existe aqui (utiles y
+     * alimentacion). Asi, quitarle un permiso al rol
      * lo quita tambien de la agenda. En el institucional no aplica.
      */
     const FUENTES = [
@@ -84,7 +84,7 @@ class MiAgenda
             'icono'  => '🎨',
             'color'  => '#E17055',
             'metodo' => 'fuenteActividades',
-            'permiso_padres' => 'padres.mi_agenda.actividades',
+            'permiso_padres' => 'padres.estudiante.actividades',
             'orden'  => 3,
         ],
         'observaciones' => [
@@ -169,11 +169,11 @@ class MiAgenda
      * @param string $tab      id de la pestana en vista-estudiante
      * @param string $permiso  permiso de esa pestana
      */
-    private static function rutaFichaEstudiante($id_estudiante, $tab, $permiso)
+    private static function rutaFichaEstudiante($id_estudiante, $tab, $permiso, $query = [])
     {
         return [
             'ruta'          => '/estudiantes-vista/' . $id_estudiante,
-            'ruta_query'    => ['tab' => $tab],
+            'ruta_query'    => ['tab' => $tab] + $query,
             'ruta_permisos' => ['padres.estudiantes.ver', $permiso],
         ];
     }
@@ -238,8 +238,12 @@ class MiAgenda
 
         // Contexto compartido por todas las fuentes. Se calcula una sola vez
         // para que ninguna tenga que volver a resolver el grupo ni la persona.
+        // El grupo es el que tenia el niño en esa fecha, no el de hoy: un
+        // dia de antes de un cambio de grupo muestra lo del grupo anterior.
+        $grupoEnFecha = EstudiantesXGrupos::grupoEnFecha($db, $id_estudiante, $fecha);
+
         $contexto = [
-            'id_grupo'   => $estudiante['id_grupo'],
+            'id_grupo'   => $grupoEnFecha,
             'id_persona' => $estudiante['id_persona'],
             'anio'       => (int) date('Y', strtotime($fecha)),
         ];
@@ -543,7 +547,10 @@ class MiAgenda
             // observacion de la clase viajaba en meta sin que nadie la
             // pintara. Ahora las dos observaciones van aparte, con su propio
             // rotulo en la tarjeta, y no se pierde ninguna de las tres cosas.
-            $detalle = $fila['descripcion'];
+            // La descripcion viene del editor de actividades y trae HTML
+            // (<p>, <br>, &nbsp;). La agenda la pinta como texto, asi que
+            // aqui se deja en texto plano para los dos portales.
+            $detalle = self::textoPlano($fila['descripcion']);
 
             $eventos[] = self::evento('actividades', 'actividad', $fila['id'], [
                 'fecha_hora' => $fila['fecha_ejecucion'],
@@ -557,11 +564,11 @@ class MiAgenda
                 'meta'       => [
                     'tipo_actividad'         => $fila['nombre_tipo_actividad'],
                     'minutos_duracion'       => $fila['minutos_duracion'],
-                    'descripcion_actividad'  => $fila['descripcion'],
+                    'descripcion_actividad'  => $detalle,
                     'observacion_estudiante' => $fila['observacion_estudiante'],
                     'observacion_grupo'      => $fila['observacion_grupo'],
                     'calificaciones'         => self::desarmarCalificaciones($fila['calificaciones_crudas']),
-                ] + self::rutaFichaEstudiante($id_estudiante, 'evaluaciones', 'padres.estudiante.evaluaciones'),
+                ] + self::rutaFichaEstudiante($id_estudiante, 'actividades', 'padres.estudiante.actividades', ['fecha' => $fecha]),
             ]);
         }
 
@@ -1466,6 +1473,38 @@ class MiAgenda
             $evento['meta']     = ['restringido' => true];
             return $evento;
         }, $eventos);
+    }
+
+    /**
+     * HTML del editor a texto plano: los parrafos, saltos y elementos de
+     * lista quedan como saltos de linea, las entidades (&nbsp;, &aacute;) se
+     * vuelven su caracter y se quitan las etiquetas. Devuelve null si no
+     * queda texto, para que una descripcion como "<p></p>" no cuente como
+     * contenido.
+     *
+     * @param string|null $html
+     * @return string|null
+     */
+    private static function textoPlano($html)
+    {
+        if ($html === null || trim($html) === '') {
+            return null;
+        }
+
+        $texto = preg_replace('/<\s*br\s*\/?\s*>/i', "\n", $html);
+        $texto = preg_replace('/<\s*li[^>]*>/i', "\n• ", $texto);
+        $texto = preg_replace('/<\s*\/\s*(p|div|h[1-6]|ul|ol)\s*>/i', "\n", $texto);
+        $texto = strip_tags($texto);
+        $texto = html_entity_decode($texto, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        // &nbsp; decodificado es U+00A0: se trata como espacio normal.
+        $texto = str_replace("\xC2\xA0", ' ', $texto);
+        $texto = preg_replace('/[ \t]+/u', ' ', $texto);
+        $texto = preg_replace('/ *\n */u', "\n", $texto);
+        $texto = preg_replace('/\n{3,}/u', "\n\n", $texto);
+        $texto = trim($texto);
+
+        return $texto === '' ? null : $texto;
     }
 
     /**

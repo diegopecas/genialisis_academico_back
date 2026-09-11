@@ -1,4 +1,13 @@
 <?php
+/**
+ * Grupo de cada estudiante.
+ *
+ * fecha_inicio y fecha_fin dicen desde y hasta cuando estuvo el estudiante
+ * en el grupo. Al crear la fila se pone fecha_inicio y al inactivarla
+ * fecha_fin; en un cambio de grupo las dos quedan con la fecha del cambio.
+ * Con eso la agenda y las actividades del estudiante saben en que grupo
+ * estaba en cada fecha, y no solo en cual esta hoy.
+ */
 class EstudiantesXGrupos
 {
 
@@ -203,7 +212,7 @@ class EstudiantesXGrupos
             ? Flight::request()->data['id_grado']
             : null;
         $idNew = Uuid::generar();
-        $sentence = $db->prepare("insert into estudiantes_x_grupos(id, id_tenant, anio, id_estudiante, id_grupo, id_grado, activo) values (:id, :id_tenant, :anio, :id_estudiante, :id_grupo, :id_grado, 1)");
+        $sentence = $db->prepare("insert into estudiantes_x_grupos(id, id_tenant, anio, id_estudiante, id_grupo, id_grado, activo, fecha_inicio) values (:id, :id_tenant, :anio, :id_estudiante, :id_grupo, :id_grado, 1, CURDATE())");
         $sentence->bindValue(':id', $idNew);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':anio', $anio);
@@ -223,7 +232,7 @@ class EstudiantesXGrupos
 
             $db = Flight::db();
             $id = Flight::request()->data['id'];
-            $sentence = $db->prepare("update estudiantes_x_grupos set activo = 0 where id = :id and id_tenant = :id_tenant");
+            $sentence = $db->prepare("update estudiantes_x_grupos set activo = 0, fecha_fin = CURDATE() where id = :id and id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
@@ -258,13 +267,13 @@ class EstudiantesXGrupos
                 $id_grado_est = isset($est['id_grado']) ? $est['id_grado'] : $id_grado_nuevo;
 
                 // Inactivar registro actual
-                $sentenceInactivar = $db->prepare("UPDATE estudiantes_x_grupos SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
+                $sentenceInactivar = $db->prepare("UPDATE estudiantes_x_grupos SET activo = 0, fecha_fin = CURDATE() WHERE id = :id AND id_tenant = :id_tenant");
                 $sentenceInactivar->bindParam(':id', $id_estudiante_grupo);
                 $sentenceInactivar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentenceInactivar->execute();
 
                 // Crear nuevo registro con el año del estudiante
-                $sentenceNuevo = $db->prepare("INSERT INTO estudiantes_x_grupos (id_tenant, anio, id_estudiante, id_grupo, id_grado, activo) VALUES (:id_tenant, :anio, :id_estudiante, :id_grupo, :id_grado, 1)");
+                $sentenceNuevo = $db->prepare("INSERT INTO estudiantes_x_grupos (id_tenant, anio, id_estudiante, id_grupo, id_grado, activo, fecha_inicio) VALUES (:id_tenant, :anio, :id_estudiante, :id_grupo, :id_grado, 1, CURDATE())");
                 $sentenceNuevo->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $sentenceNuevo->bindParam(':anio', $anno);
                 $sentenceNuevo->bindParam(':id_estudiante', $id_estudiante);
@@ -288,5 +297,99 @@ class EstudiantesXGrupos
             error_log("Error en cambioGrupoMasivo: " . $e->getMessage());
             Flight::json(array('success' => false, 'message' => $e->getMessage()), 500);
         }
+    }
+
+    /**
+     * Periodos del estudiante en cada grupo, del mas antiguo al mas reciente.
+     *
+     * Cada periodo trae id_grupo, nombre_grupo, desde y hasta (Y-m-d, o null
+     * cuando el periodo no tiene limite por ese lado). Se arman asi:
+     * - Si dos filas se cruzan (el dia de un cambio de grupo las dos tienen
+     *   esa fecha), gana la que empezo mas reciente; a igual inicio, la
+     *   activa. La anterior se corta el dia antes.
+     * - El primer periodo no tiene desde: si el grupo se asigno despues de
+     *   que el niño entro, los dias previos quedan en su primer grupo, que es
+     *   el unico que tuvo.
+     * - La fila activa no tiene hasta.
+     *
+     * No es un endpoint: lo usan la agenda y las actividades del estudiante.
+     *
+     * @param PDO $db
+     * @param string $id_estudiante
+     * @return array
+     */
+    public static function periodosDelEstudiante(PDO $db, $id_estudiante)
+    {
+        $sentence = $db->prepare("
+            SELECT exg.id_grupo,
+                   g.nombre AS nombre_grupo,
+                   exg.fecha_inicio,
+                   exg.fecha_fin,
+                   exg.activo
+            FROM estudiantes_x_grupos exg
+            LEFT JOIN grupos g ON g.id = exg.id_grupo
+            WHERE exg.id_estudiante = :id_estudiante
+              AND exg.id_tenant = :id_tenant
+            ORDER BY exg.fecha_inicio ASC, exg.activo ASC
+        ");
+        $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $filas = $sentence->fetchAll(PDO::FETCH_ASSOC);
+
+        $periodos = [];
+        $total = count($filas);
+
+        for ($i = 0; $i < $total; $i++) {
+            $fila = $filas[$i];
+
+            $desde = $i === 0 ? null : $fila['fecha_inicio'];
+            $hasta = ((int) $fila['activo'] === 1) ? null : $fila['fecha_fin'];
+
+            // La fila siguiente manda desde su inicio.
+            if ($i + 1 < $total && !empty($filas[$i + 1]['fecha_inicio'])) {
+                $corte = date('Y-m-d', strtotime($filas[$i + 1]['fecha_inicio'] . ' -1 day'));
+                if ($hasta === null || $corte < $hasta) {
+                    $hasta = $corte;
+                }
+            }
+
+            // Tapada por completo por la siguiente: no aporta ningun dia.
+            if ($desde !== null && $hasta !== null && $hasta < $desde) {
+                continue;
+            }
+
+            $periodos[] = [
+                'id_grupo'     => $fila['id_grupo'],
+                'nombre_grupo' => $fila['nombre_grupo'],
+                'desde'        => $desde,
+                'hasta'        => $hasta,
+            ];
+        }
+
+        return $periodos;
+    }
+
+    /**
+     * Grupo en el que estaba el estudiante en una fecha, o null si en esa
+     * fecha no estaba en ninguno (por ejemplo, despues de retirarse).
+     *
+     * @param PDO $db
+     * @param string $id_estudiante
+     * @param string $fecha Y-m-d
+     * @return string|null id_grupo
+     */
+    public static function grupoEnFecha(PDO $db, $id_estudiante, $fecha)
+    {
+        foreach (self::periodosDelEstudiante($db, $id_estudiante) as $periodo) {
+            $empezo = $periodo['desde'] === null || $periodo['desde'] <= $fecha;
+            $seguia = $periodo['hasta'] === null || $periodo['hasta'] >= $fecha;
+
+            if ($empezo && $seguia) {
+                return $periodo['id_grupo'];
+            }
+        }
+
+        return null;
     }
 }

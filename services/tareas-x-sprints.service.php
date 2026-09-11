@@ -1157,4 +1157,228 @@ class TareasXSprints
             Flight::json(['error' => 'Error al obtener reporte: ' . $e->getMessage()], 500);
         }
     }
+
+    /** Estado de tareas_x_sprints que significa actividad ejecutada. */
+    const ESTADO_TAREA_EJECUTADA = 2;
+
+    /** Rango maximo que se deja consultar de una vez, en dias. */
+    const MAX_DIAS_ACTIVIDADES_ESTUDIANTE = 366;
+
+    /**
+     * Actividades ejecutadas de un estudiante entre dos fechas, para la
+     * pestaña Actividades de la vista 360 (portal institucional y de padres).
+     *
+     * Trae las actividades de los grupos en que estuvo el niño en cada fecha
+     * (ver EstudiantesXGrupos::periodosDelEstudiante), con sus calificaciones
+     * y observaciones. Las del sprint de informe no salen: son para el
+     * informe del corte, que tiene su propio flujo de autorizacion.
+     *
+     * Query string: desde y hasta en Y-m-d. Sin ellas, el mes en curso.
+     *
+     * @param string $id_estudiante
+     */
+    public static function getActividadesEstudiante($id_estudiante)
+    {
+        try {
+            $userData = JWTService::requerirAutenticacion();
+            $db = Flight::db();
+
+            $portal = isset($userData->portal) ? $userData->portal : JWTService::PORTAL_INSTITUCIONAL;
+
+            if ($portal === JWTService::PORTAL_PADRES) {
+                // El acudiente solo ve a sus niños y solo si el rol tiene la
+                // pestaña habilitada. El front ya lo filtra, pero eso no sirve
+                // si alguien cambia el uuid en la URL.
+                $esSuyo = !empty($userData->id_persona)
+                    && Acudientes::esEstudianteDelAcudiente($db, $userData->id_persona, $id_estudiante);
+
+                if (!$esSuyo || !PermisosService::tiene($userData, 'padres.estudiante.actividades')) {
+                    Flight::json(['error' => 'No tienes acceso a la informacion de este estudiante', 'code' => 'FORBIDDEN'], 403);
+                    return;
+                }
+            } else {
+                PermisosService::validar($userData, 'estudiantes.vista_360.actividades');
+            }
+
+            $desde = isset(Flight::request()->query['desde']) ? trim(Flight::request()->query['desde']) : '';
+            $hasta = isset(Flight::request()->query['hasta']) ? trim(Flight::request()->query['hasta']) : '';
+
+            if ($desde === '') {
+                $desde = date('Y-m-01');
+            }
+            if ($hasta === '') {
+                $hasta = date('Y-m-d');
+            }
+
+            if (!self::fechaValida($desde) || !self::fechaValida($hasta)) {
+                Flight::json(['error' => 'Formato de fecha invalido. Se espera Y-m-d'], 400);
+                return;
+            }
+
+            if ($desde > $hasta) {
+                Flight::json(['error' => 'La fecha inicial no puede ser mayor que la final'], 400);
+                return;
+            }
+
+            $dias = (strtotime($hasta) - strtotime($desde)) / 86400;
+            if ($dias > self::MAX_DIAS_ACTIVIDADES_ESTUDIANTE) {
+                Flight::json(['error' => 'El rango no puede pasar de un año'], 400);
+                return;
+            }
+
+            // Un bloque por cada periodo del niño en un grupo, recortado al
+            // rango pedido. Los periodos que no tocan el rango se descartan.
+            $condiciones = [];
+            $params = [
+                ':id_tenant'            => TenantContext::id(),
+                ':id_estudiante'        => $id_estudiante,
+                ':estado'               => self::ESTADO_TAREA_EJECUTADA,
+            ];
+
+            foreach (EstudiantesXGrupos::periodosDelEstudiante($db, $id_estudiante) as $i => $periodo) {
+                $inicio = ($periodo['desde'] !== null && $periodo['desde'] > $desde) ? $periodo['desde'] : $desde;
+                $fin = ($periodo['hasta'] !== null && $periodo['hasta'] < $hasta) ? $periodo['hasta'] : $hasta;
+
+                if ($inicio > $fin) {
+                    continue;
+                }
+
+                $condiciones[] = "(ts.id_grupo = :grupo_$i AND DATE(ts.fecha_ejecucion) BETWEEN :inicio_$i AND :fin_$i)";
+                $params[":grupo_$i"] = $periodo['id_grupo'];
+                $params[":inicio_$i"] = $inicio;
+                $params[":fin_$i"] = $fin;
+            }
+
+            if (empty($condiciones)) {
+                Flight::json(['desde' => $desde, 'hasta' => $hasta, 'actividades' => []]);
+                return;
+            }
+
+            $sentence = $db->prepare("
+                SELECT ts.id,
+                       ts.fecha_ejecucion,
+                       ts.orden_ejecucion,
+                       ts.observaciones AS observacion_grupo,
+                       aa.titulo,
+                       aa.descripcion,
+                       aa.minutos_duracion,
+                       ta.nombre AS nombre_tipo_actividad,
+                       ta.icono AS icono_tipo_actividad,
+                       ar.nombre AS nombre_area_academica,
+                       ar.color AS color_area_academica,
+                       g.nombre AS nombre_grupo,
+                       txe.observacion AS observacion_estudiante,
+                       TRIM(CONCAT_WS(' ', pd.primer_nombre, pd.primer_apellido)) AS nombre_docente
+                FROM tareas_x_sprints ts
+                INNER JOIN actividades_academicas aa ON aa.id = ts.id_actividad_academica
+                LEFT JOIN tipos_actividades_academicas ta ON ta.id = aa.id_tipo_actividad_academica
+                LEFT JOIN areas_academicas ar ON ar.id = ts.id_area_academica
+                LEFT JOIN grupos g ON g.id = ts.id_grupo
+                LEFT JOIN tareas_x_sprints_x_estudiante txe
+                       ON txe.id_tarea_x_sprint = ts.id
+                      AND txe.id_estudiante = :id_estudiante
+                LEFT JOIN docentes d ON d.id = ts.id_docente
+                LEFT JOIN personas pd ON pd.id = d.id_persona
+                LEFT JOIN sprints sp ON sp.id = ts.id_sprint
+                WHERE ts.id_tenant = :id_tenant
+                  AND ts.id_estado_tarea = :estado
+                  AND COALESCE(sp.sprint_informe, 0) = 0
+                  AND (" . implode(' OR ', $condiciones) . ")
+                ORDER BY ts.fecha_ejecucion DESC, ts.orden_ejecucion DESC
+            ");
+            foreach ($params as $clave => $valor) {
+                $sentence->bindValue($clave, $valor);
+            }
+            $sentence->execute();
+            $filas = $sentence->fetchAll(PDO::FETCH_ASSOC);
+
+            $calificaciones = self::calificacionesDelEstudiante($db, $id_estudiante, array_column($filas, 'id'));
+
+            $actividades = [];
+            foreach ($filas as $fila) {
+                $actividades[] = [
+                    'id'                     => $fila['id'],
+                    'fecha_ejecucion'        => $fila['fecha_ejecucion'],
+                    'titulo'                 => $fila['titulo'],
+                    'descripcion'            => $fila['descripcion'],
+                    'minutos_duracion'       => $fila['minutos_duracion'],
+                    'tipo_actividad'         => $fila['nombre_tipo_actividad'],
+                    'icono_tipo_actividad'   => $fila['icono_tipo_actividad'],
+                    'area'                   => $fila['nombre_area_academica'],
+                    'color_area'             => $fila['color_area_academica'],
+                    'grupo'                  => $fila['nombre_grupo'],
+                    'docente'                => $fila['nombre_docente'],
+                    'observacion_grupo'      => $fila['observacion_grupo'],
+                    'observacion_estudiante' => $fila['observacion_estudiante'],
+                    'calificaciones'         => isset($calificaciones[$fila['id']]) ? $calificaciones[$fila['id']] : [],
+                ];
+            }
+
+            Flight::json(['desde' => $desde, 'hasta' => $hasta, 'actividades' => $actividades]);
+        } catch (Exception $e) {
+            error_log("Error en getActividadesEstudiante: " . $e->getMessage());
+            Flight::json(['error' => 'Error al obtener las actividades del estudiante'], 500);
+        }
+    }
+
+    /**
+     * Calificaciones de un estudiante en varias actividades, agrupadas por
+     * actividad. Misma forma que en la agenda (parametro, cualitativo,
+     * cuantitativo, icono) para que el front las pinte con el mismo componente.
+     *
+     * @param PDO $db
+     * @param string $id_estudiante
+     * @param array $idsTareas ids de tareas_x_sprints
+     * @return array [id_tarea_x_sprint => [calificacion, ...]]
+     */
+    private static function calificacionesDelEstudiante(PDO $db, $id_estudiante, $idsTareas)
+    {
+        if (empty($idsTareas)) {
+            return [];
+        }
+
+        $marcadores = implode(',', array_fill(0, count($idsTareas), '?'));
+
+        $sentence = $db->prepare("
+            SELECT c.id_tarea_x_sprint,
+                   pc.nombre AS parametro,
+                   vpc.valor_cualitativo,
+                   vpc.valor_cuantitativo,
+                   vpc.icono
+            FROM calificaciones c
+            INNER JOIN parametros_calificaciones pc ON pc.id = c.id_parametro_calificacion
+            INNER JOIN valores_parametros_calificaciones vpc ON vpc.id = c.id_valor_parametro_calificacion
+            WHERE c.id_tarea_x_sprint IN ($marcadores)
+              AND c.id_estudiante = ?
+              AND c.id_tenant = ?
+            ORDER BY pc.nombre
+        ");
+
+        $posicion = 1;
+        foreach ($idsTareas as $idTarea) {
+            $sentence->bindValue($posicion++, $idTarea);
+        }
+        $sentence->bindValue($posicion++, $id_estudiante);
+        $sentence->bindValue($posicion, TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+
+        $salida = [];
+        foreach ($sentence->fetchAll(PDO::FETCH_ASSOC) as $fila) {
+            $salida[$fila['id_tarea_x_sprint']][] = [
+                'parametro'    => $fila['parametro'],
+                'cualitativo'  => $fila['valor_cualitativo'] !== null ? $fila['valor_cualitativo'] : '',
+                'cuantitativo' => $fila['valor_cuantitativo'] !== null ? (int) $fila['valor_cuantitativo'] : null,
+                'icono'        => $fila['icono'] !== null ? $fila['icono'] : '',
+            ];
+        }
+
+        return $salida;
+    }
+
+    /** Fecha en formato Y-m-d y que exista en el calendario. */
+    private static function fechaValida($fecha)
+    {
+        $objeto = DateTime::createFromFormat('Y-m-d', $fecha);
+        return $objeto && $objeto->format('Y-m-d') === $fecha;
+    }
 }

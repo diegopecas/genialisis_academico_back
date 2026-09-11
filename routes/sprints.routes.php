@@ -27,6 +27,7 @@ Flight::route('GET /sprints/validar-actividad/@id_sprint/@id_actividad', [Sprint
 // TAREAS X SPRINTS
 Flight::route('GET /tareas-x-sprints', [TareasXSprints::class, 'getAll']);
 Flight::route('GET /tareas-x-sprints/reporte-ejecucion', [TareasXSprints::class, 'getReporteEjecucionTareas']);
+Flight::route('GET /tareas-x-sprints/estudiante/@id_estudiante', [TareasXSprints::class, 'getActividadesEstudiante']);
 Flight::route('GET /tareas-x-sprints/@id', [TareasXSprints::class, 'getById']);
 Flight::route('GET /tareas-x-sprints/sprint/@id_sprint', [TareasXSprints::class, 'getBySprintId']);
 Flight::route('GET /tareas-x-sprints/actividad/@id_actividad', [TareasXSprints::class, 'getByActividadId']);
