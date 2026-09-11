@@ -547,10 +547,14 @@ class MiAgenda
             // observacion de la clase viajaba en meta sin que nadie la
             // pintara. Ahora las dos observaciones van aparte, con su propio
             // rotulo en la tarjeta, y no se pierde ninguna de las tres cosas.
-            // La descripcion viene del editor de actividades y trae HTML
-            // (<p>, <br>, &nbsp;). La agenda la pinta como texto, asi que
-            // aqui se deja en texto plano para los dos portales.
+            // La descripcion viene del editor de actividades y muchas veces
+            // trae HTML (<p>, <br>, &nbsp;). En detalle va en texto plano,
+            // que es lo que usan el buscador y las reglas del front; el HTML
+            // viaja aparte en meta para pintarla con su formato.
             $detalle = self::textoPlano($fila['descripcion']);
+            $detalleHtml = self::tieneHtml($fila['descripcion']) && $detalle !== null
+                ? $fila['descripcion']
+                : null;
 
             $eventos[] = self::evento('actividades', 'actividad', $fila['id'], [
                 'fecha_hora' => $fila['fecha_ejecucion'],
@@ -565,6 +569,7 @@ class MiAgenda
                     'tipo_actividad'         => $fila['nombre_tipo_actividad'],
                     'minutos_duracion'       => $fila['minutos_duracion'],
                     'descripcion_actividad'  => $detalle,
+                    'descripcion_html'       => $detalleHtml,
                     'observacion_estudiante' => $fila['observacion_estudiante'],
                     'observacion_grupo'      => $fila['observacion_grupo'],
                     'calificaciones'         => self::desarmarCalificaciones($fila['calificaciones_crudas']),
@@ -1505,6 +1510,18 @@ class MiAgenda
         $texto = trim($texto);
 
         return $texto === '' ? null : $texto;
+    }
+
+    /**
+     * El texto trae etiquetas HTML. Un texto plano con saltos de linea se
+     * pinta mejor como texto, por eso no se manda como HTML.
+     *
+     * @param string|null $texto
+     * @return bool
+     */
+    private static function tieneHtml($texto)
+    {
+        return $texto !== null && preg_match('/<\s*[a-z][^>]*>/i', $texto) === 1;
     }
 
     /**

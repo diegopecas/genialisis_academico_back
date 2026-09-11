@@ -2,7 +2,11 @@
 class AsignacionOnces
 {
     /**
-     * Retorna todos los estudiantes activos separados en presentes y ausentes.
+     * Retorna los estudiantes activos separados según su asistencia en la fecha:
+     * - presentes: entraron y siguen en el jardín (tienen un ingreso sin salida).
+     * - salieron:  estuvieron ese día y ya salieron (para asignar lo que se olvidó).
+     * - ausentes:  no vinieron ese día.
+     * Si un niño salió y volvió a entrar, cuenta como presente.
      * Sin filtro de producto — el frontend hace el cruce.
      * Body: { fecha }
      */
@@ -38,16 +42,20 @@ class AsignacionOnces
                         g.nombre AS nombre_grupo,
                         g.orden AS orden_grupo,
                         TIME(ae.fecha_ingreso) AS hora_ingreso,
-                        CASE WHEN ae.id_estudiante IS NOT NULL THEN 1 ELSE 0 END AS presente
+                        TIME(ae.ultima_salida) AS hora_salida,
+                        CASE WHEN ae.abiertos > 0 THEN 1 ELSE 0 END AS presente,
+                        CASE WHEN ae.id_estudiante IS NOT NULL AND ae.abiertos = 0 THEN 1 ELSE 0 END AS salio
                     FROM estudiantes e
                     INNER JOIN personas p ON e.id_persona = p.id
                     INNER JOIN estudiantes_x_grupos exg ON e.id = exg.id_estudiante AND exg.activo = 1
                     INNER JOIN grupos g ON exg.id_grupo = g.id
                     LEFT JOIN (
-                        SELECT id_estudiante, MIN(fecha_ingreso) AS fecha_ingreso
+                        SELECT id_estudiante,
+                               MIN(fecha_ingreso) AS fecha_ingreso,
+                               SUM(fecha_salida IS NULL) AS abiertos,
+                               MAX(fecha_salida) AS ultima_salida
                         FROM asistencia_estudiantes
                         WHERE DATE(fecha_ingreso) = :fecha
-                          AND fecha_salida IS NULL
                         GROUP BY id_estudiante
                     ) ae ON ae.id_estudiante = e.id
                     WHERE e.activo = 1
@@ -61,6 +69,7 @@ class AsignacionOnces
             $todos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             $presentes = [];
+            $salieron  = [];
             $ausentes  = [];
 
             foreach ($todos as &$est) {
@@ -68,10 +77,14 @@ class AsignacionOnces
                 $est['id_persona']    = (string)$est['id_persona'];
                 $est['id_grupo']      = (string)$est['id_grupo'];
                 $est['presente']      = (int)$est['presente'];
+                $est['salio']         = (int)$est['salio'];
                 $est['orden_grupo']   = (int)$est['orden_grupo'];
 
                 if ($est['presente'] === 1) {
+                    $est['hora_salida'] = null;
                     $presentes[] = $est;
+                } elseif ($est['salio'] === 1) {
+                    $salieron[] = $est;
                 } else {
                     $ausentes[] = $est;
                 }
@@ -79,6 +92,7 @@ class AsignacionOnces
 
             Flight::json([
                 'presentes' => $presentes,
+                'salieron'  => $salieron,
                 'ausentes'  => $ausentes
             ]);
 
