@@ -8,6 +8,10 @@ Flight::route('GET /niveles-escolaridad', [NivelesEscolaridad::class, 'getAll'])
 
 Flight::route('GET /tipos-dias', [TiposDias::class, 'getAll']);
 Flight::route('GET /tipos-evento-calendario', [TiposEventoCalendario::class, 'getAll']);
+Flight::route('GET /tipos-evento-calendario/@id', [TiposEventoCalendario::class, 'getById']);
+Flight::route('POST /tipos-evento-calendario', [TiposEventoCalendario::class, 'new']);
+Flight::route('PUT /tipos-evento-calendario', [TiposEventoCalendario::class, 'replace']);
+Flight::route('DELETE /tipos-evento-calendario', [TiposEventoCalendario::class, 'delete']);
 Flight::route('GET /dias-semana', [DiasSemana::class, 'getAll']);
 
 // PAISES

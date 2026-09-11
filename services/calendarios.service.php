@@ -94,14 +94,14 @@ class Calendarios
 
         $stmtEventos = $db->prepare("
             SELECT 
-                ce.id, ce.fecha, ce.id_tipo_evento_calendario, ce.descripcion,
+                ce.id, ce.fecha, ce.hora_inicio, ce.hora_fin, ce.id_tipo_evento_calendario, ce.descripcion,
                 tec.nombre AS tipo_evento_nombre,
                 tec.icono AS tipo_evento_icono
             FROM calendarios_eventos ce
             LEFT JOIN tipos_evento_calendario tec ON tec.id = ce.id_tipo_evento_calendario
             WHERE ce.fecha BETWEEN :fecha_inicio AND :fecha_fin
             AND ce.id_tenant = :id_tenant
-            ORDER BY ce.fecha
+            ORDER BY ce.fecha, ce.hora_inicio
         ");
         $stmtEventos->bindParam(':fecha_inicio', $fecha_inicio);
         $stmtEventos->bindParam(':fecha_fin', $fecha_fin);

@@ -54,12 +54,21 @@ class MiAgenda
      * orden = posicion por defecto dentro del dia cuando el evento no tiene
      * hora propia. Los que si tienen hora se ordenan por hora.
      */
+    /**
+     * Catalogo de fuentes. 'permiso_padres' es el permiso que el rol del
+     * acudiente debe tener para que la fuente salga en su agenda: el mismo
+     * que abre la pantalla donde vive ese dato en el portal de padres, o uno
+     * propio de Mi Agenda cuando el dato solo existe aqui (utiles,
+     * alimentacion y actividades del dia). Asi, quitarle un permiso al rol
+     * lo quita tambien de la agenda. En el institucional no aplica.
+     */
     const FUENTES = [
         'asistencia' => [
             'nombre' => 'Entradas y salidas',
             'icono'  => '🚪',
             'color'  => '#00B894',
             'metodo' => 'fuenteAsistencia',
+            'permiso_padres' => 'padres.estudiante.asistencia',
             'orden'  => 1,
         ],
         'utiles' => [
@@ -67,6 +76,7 @@ class MiAgenda
             'icono'  => '🎒',
             'color'  => '#0984E3',
             'metodo' => 'fuenteUtiles',
+            'permiso_padres' => 'padres.mi_agenda.utiles',
             'orden'  => 2,
         ],
         'actividades' => [
@@ -74,6 +84,7 @@ class MiAgenda
             'icono'  => '🎨',
             'color'  => '#E17055',
             'metodo' => 'fuenteActividades',
+            'permiso_padres' => 'padres.mi_agenda.actividades',
             'orden'  => 3,
         ],
         'observaciones' => [
@@ -81,6 +92,7 @@ class MiAgenda
             'icono'  => '💬',
             'color'  => '#6C5CE7',
             'metodo' => 'fuenteObservaciones',
+            'permiso_padres' => 'padres.estudiante.observaciones',
             'orden'  => 4,
         ],
         'alimentacion' => [
@@ -88,6 +100,7 @@ class MiAgenda
             'icono'  => '🍽️',
             'color'  => '#00CEC9',
             'metodo' => 'fuenteAlimentacion',
+            'permiso_padres' => 'padres.mi_agenda.alimentacion',
             'orden'  => 5,
         ],
         'solicitudes' => [
@@ -95,6 +108,7 @@ class MiAgenda
             'icono'  => '📝',
             'color'  => '#F39C12',
             'metodo' => 'fuenteSolicitudes',
+            'permiso_padres' => 'padres.solicitudes.ver',
             'orden'  => 6,
         ],
         'galerias' => [
@@ -102,6 +116,7 @@ class MiAgenda
             'icono'  => '📷',
             'color'  => '#E84393',
             'metodo' => 'fuenteGalerias',
+            'permiso_padres' => 'padres.galeria.ver',
             'orden'  => 7,
         ],
         'notificaciones' => [
@@ -109,6 +124,7 @@ class MiAgenda
             'icono'  => '🔔',
             'color'  => '#D63031',
             'metodo' => 'fuenteNotificaciones',
+            'permiso_padres' => 'padres.notificaciones.ver',
             'orden'  => 8,
         ],
         'medidas' => [
@@ -116,6 +132,7 @@ class MiAgenda
             'icono'  => '📏',
             'color'  => '#16A085',
             'metodo' => 'fuenteMedidas',
+            'permiso_padres' => 'padres.estudiante.medidas',
             'orden'  => 9,
         ],
         'pagos' => [
@@ -123,6 +140,7 @@ class MiAgenda
             'icono'  => '💰',
             'color'  => '#27AE60',
             'metodo' => 'fuentePagos',
+            'permiso_padres' => 'padres.mi_cuenta.pagos',
             'orden'  => 10,
         ],
         'cuentas' => [
@@ -130,6 +148,7 @@ class MiAgenda
             'icono'  => '🧾',
             'color'  => '#8E44AD',
             'metodo' => 'fuenteCuentas',
+            'permiso_padres' => 'padres.mi_cuenta.cobros',
             'orden'  => 11,
         ],
     ];
@@ -225,7 +244,7 @@ class MiAgenda
             'anio'       => (int) date('Y', strtotime($fecha)),
         ];
 
-        $clavesPedidas = self::clavesPedidas();
+        $clavesPedidas = self::filtrarPorPermisosPadres(self::clavesPedidas(), $userData);
 
         // Se resuelve una sola vez: PermisosService consulta la BD la primera
         // vez y luego responde de cache, pero no hace falta preguntar por cada
@@ -495,10 +514,15 @@ class MiAgenda
                   AND txe.id_estudiante = :id_estudiante
             LEFT JOIN docentes d ON d.id = ts.id_docente
             LEFT JOIN personas pd ON pd.id = d.id_persona
+            -- Las actividades del sprint de informe son para el informe del
+            -- corte, que tiene su propio flujo de autorizacion: no salen en la
+            -- agenda, en ningun portal, este o no autorizado el informe.
+            LEFT JOIN sprints sp ON sp.id = ts.id_sprint
             WHERE ts.id_tenant = :id_tenant
               AND ts.id_grupo = :id_grupo
               AND DATE(ts.fecha_ejecucion) = :fecha
               AND ts.id_estado_tarea = :estado
+              AND COALESCE(sp.sprint_informe, 0) = 0
             ORDER BY ts.fecha_ejecucion, ts.orden_ejecucion
         ");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -1283,6 +1307,30 @@ class MiAgenda
         $validas = array_values(array_intersect($claves, array_keys(self::FUENTES)));
 
         return empty($validas) ? array_keys(self::FUENTES) : $validas;
+    }
+
+    /**
+     * En el portal de padres deja solo las fuentes cuyo permiso tiene el rol
+     * del acudiente. Las que no, ni se consultan: no salen como evento ni
+     * como pestaña. En el institucional se devuelven todas.
+     *
+     * @param array $claves Claves de FUENTES pedidas
+     * @param object $userData
+     * @return array
+     */
+    private static function filtrarPorPermisosPadres($claves, $userData)
+    {
+        $portal = isset($userData->portal)
+            ? $userData->portal
+            : JWTService::PORTAL_INSTITUCIONAL;
+
+        if ($portal !== JWTService::PORTAL_PADRES) {
+            return $claves;
+        }
+
+        return array_values(array_filter($claves, function ($clave) use ($userData) {
+            return PermisosService::tiene($userData, self::FUENTES[$clave]['permiso_padres']);
+        }));
     }
 
     /** Resumen por fuente para pintar los tabs con su contador. */
