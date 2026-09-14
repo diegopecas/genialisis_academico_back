@@ -148,6 +148,7 @@ Flight::route('GET /autorizados-recoger-historial', [AutorizadosRecogerHistorial
 Flight::route('GET /autorizados-recoger-historial/@id', [AutorizadosRecogerHistorial::class, 'getById']);
 Flight::route('GET /autorizados-recoger-historial/autorizado/@id', [AutorizadosRecogerHistorial::class, 'getByAutorizado']);
 Flight::route('POST /autorizados-recoger-historial', [AutorizadosRecogerHistorial::class, 'new']);
+Flight::route('PUT /autorizados-recoger-historial', [AutorizadosRecogerHistorial::class, 'replace']);
 Flight::route('DELETE /autorizados-recoger-historial/@id', [AutorizadosRecogerHistorial::class, 'delete']);
 
 // TIPOS DATOS MÉDICOS

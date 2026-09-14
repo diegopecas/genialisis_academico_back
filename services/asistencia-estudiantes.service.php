@@ -2,6 +2,12 @@
 class AsistenciaEstudiantes
 {
     /**
+     * Codigo del tipo de documento con el que se carga la cedula. Viene
+     * sembrado en todos los tenants.
+     */
+    const CODIGO_DOCUMENTO_CEDULA = 'cedula';
+
+    /**
      * Configura la zona horaria de la sesión a Colombia (UTC-5)
      */
     private static function setTimeZone() {
@@ -114,17 +120,43 @@ class AsistenciaEstudiantes
      * Si una persona es acudiente y ademas autorizado, sale una sola vez,
      * como acudiente.
      *
+     * Cada persona trae ademas foto, documento y la linea de autorizacion,
+     * para que la pantalla muestre la ficha sin tener que ir otra vez al back.
+     *
+     * 'id_documento_cedula' es el archivo de la cedula si la persona lo tiene
+     * cargado, para que la ficha lo deje descargar. Va como subconsulta y no
+     * como JOIN a proposito: un JOIN con documentos_personas multiplicaria las
+     * filas por cada documento de la persona.
+     *
      * @param string $tipo  'ingreso' | 'salida'
      * @param string $fecha Y-m-d
-     * @return array [ { id_persona, nombre, parentesco, icono, origen, temporal } ]
+     * @return array [ { id_persona, nombre, nombre_completo, documento, foto,
+     *                  parentesco, icono, origen, temporal, autorizado_por,
+     *                  id_documento_cedula } ]
      */
     public static function personasEntregaRecoge($db, $id_estudiante, $tipo, $fecha)
     {
+        // Ultima cedula cargada y activa de la persona. Si el jardin la subio
+        // con otro tipo de documento, aqui no sale.
+        $sqlCedula = "(SELECT dp.id
+                         FROM documentos_personas dp
+                         INNER JOIN tipos_documentos td ON td.id = dp.id_tipo_documento
+                        WHERE dp.id_persona = p.id
+                          AND dp.id_tenant = :id_tenant_cedula
+                          AND dp.activo = 1
+                          AND td.codigo = '" . self::CODIGO_DOCUMENTO_CEDULA . "'
+                        ORDER BY dp.fecha_subida DESC
+                        LIMIT 1) AS id_documento_cedula";
+
         $sqlAcudientes = "SELECT a.id_persona,
                                  TRIM(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido)) AS nombre,
+                                 TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_completo,
+                                 p.numero_identificacion AS documento,
+                                 p.foto,
                                  ta.nombre AS parentesco,
                                  ta.icono,
-                                 a.autorizado_recoger
+                                 a.autorizado_recoger,
+                                 $sqlCedula
                           FROM acudientes a
                           INNER JOIN personas p ON p.id = a.id_persona
                           LEFT JOIN tipos_acudiente ta ON ta.id = a.id_tipo_acudiente
@@ -141,6 +173,7 @@ class AsistenciaEstudiantes
         $sentence = $db->prepare($sqlAcudientes);
         $sentence->bindValue(':id_estudiante', $id_estudiante);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_cedula', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         $personas = array();
@@ -149,21 +182,32 @@ class AsistenciaEstudiantes
         foreach ($sentence->fetchAll() as $fila) {
             $yaEstan[$fila['id_persona']] = true;
             $personas[] = array(
-                'id_persona' => $fila['id_persona'],
-                'nombre'     => $fila['nombre'],
-                'parentesco' => $fila['parentesco'],
-                'icono'      => $fila['icono'],
-                'origen'     => 'acudiente',
-                'temporal'   => 0
+                'id_persona'      => $fila['id_persona'],
+                'nombre'          => $fila['nombre'],
+                'nombre_completo' => $fila['nombre_completo'],
+                'documento'       => $fila['documento'],
+                'foto'            => $fila['foto'],
+                'parentesco'      => $fila['parentesco'],
+                'icono'           => $fila['icono'],
+                'origen'          => 'acudiente',
+                'temporal'        => 0,
+                'autorizado_por'  => null,
+                'id_documento_cedula' => $fila['id_documento_cedula']
             );
         }
 
         $sentence = $db->prepare("SELECT ar.id_persona, ar.id_tipo_autorizacion,
                                          TRIM(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido)) AS nombre,
-                                         tar.nombre AS nombre_tipo_autorizacion
+                                         TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_completo,
+                                         p.numero_identificacion AS documento,
+                                         p.foto,
+                                         tar.nombre AS nombre_tipo_autorizacion,
+                                         TRIM(CONCAT_WS(' ', pa.primer_nombre, pa.primer_apellido)) AS autorizado_por,
+                                         $sqlCedula
                                   FROM autorizados_recoger ar
                                   INNER JOIN tipos_autorizacion_recoger tar ON tar.id = ar.id_tipo_autorizacion
                                   INNER JOIN personas p ON p.id = ar.id_persona
+                                  INNER JOIN personas pa ON pa.id = ar.id_persona_autoriza
                                   WHERE ar.id_estudiante = :id_estudiante
                                     AND ar.id_tenant = :id_tenant
                                     AND ar.activo = 1
@@ -178,6 +222,7 @@ class AsistenciaEstudiantes
                                   ORDER BY p.primer_nombre, p.primer_apellido");
         $sentence->bindValue(':id_estudiante', $id_estudiante);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_cedula', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindValue(':fecha', $fecha);
         $sentence->execute();
 
@@ -187,12 +232,17 @@ class AsistenciaEstudiantes
             }
             $yaEstan[$fila['id_persona']] = true;
             $personas[] = array(
-                'id_persona' => $fila['id_persona'],
-                'nombre'     => $fila['nombre'],
-                'parentesco' => 'Autorizado ' . mb_strtolower($fila['nombre_tipo_autorizacion']),
-                'icono'      => null,
-                'origen'     => 'autorizado',
-                'temporal'   => intval($fila['id_tipo_autorizacion']) === 1 ? 0 : 1
+                'id_persona'      => $fila['id_persona'],
+                'nombre'          => $fila['nombre'],
+                'nombre_completo' => $fila['nombre_completo'],
+                'documento'       => $fila['documento'],
+                'foto'            => $fila['foto'],
+                'parentesco'      => 'Autorizado ' . mb_strtolower($fila['nombre_tipo_autorizacion']),
+                'icono'           => null,
+                'origen'          => 'autorizado',
+                'temporal'        => intval($fila['id_tipo_autorizacion']) === 1 ? 0 : 1,
+                'autorizado_por'  => $fila['autorizado_por'],
+                'id_documento_cedula' => $fila['id_documento_cedula']
             );
         }
 
@@ -253,6 +303,36 @@ class AsistenciaEstudiantes
     }
 
     /**
+     * Persona que queda marcada por defecto.
+     *
+     * Si para esa fecha hay un autorizado temporal, es el, porque el acudiente
+     * lo autorizo justamente para ese dia: eso manda sobre la costumbre. Si
+     * hay varios temporales no se asume ninguno y se deja sin marcar, para que
+     * la usuaria escoja. Cuando no hay temporal se sugiere la ultima eleccion.
+     *
+     * Aplica igual en el ingreso y en la salida.
+     *
+     * @param array $personas Resultado de personasEntregaRecoge
+     * @return string|null
+     */
+    public static function personaSugerida($db, $id_estudiante, $tipo, $personas)
+    {
+        $temporales = array_values(array_filter($personas, function ($persona) {
+            return intval($persona['temporal']) === 1;
+        }));
+
+        if (count($temporales) === 1) {
+            return $temporales[0]['id_persona'];
+        }
+
+        if (count($temporales) > 1) {
+            return null;
+        }
+
+        return self::ultimaPersonaEntregaRecoge($db, $id_estudiante, $tipo, $personas);
+    }
+
+    /**
      * Opciones de quien trae o recoge al nino, con la sugerida.
      * GET /asistencia-estudiantes/personas-entrega/@id_estudiante?tipo=ingreso|salida&fecha=YYYY-MM-DD
      */
@@ -270,7 +350,7 @@ class AsistenciaEstudiantes
             'tipo'                => $tipo,
             'fecha'               => $fecha,
             'personas'            => $personas,
-            'id_persona_sugerida' => self::ultimaPersonaEntregaRecoge($db, $id_estudiante, $tipo, $personas)
+            'id_persona_sugerida' => self::personaSugerida($db, $id_estudiante, $tipo, $personas)
         ));
     }
 
@@ -383,12 +463,20 @@ class AsistenciaEstudiantes
         self::setTimeZone();
         $db = Flight::db();
 
-        $sentence = $db->prepare("select ae.id, e.id_persona, ae.id_estudiante, ae.fecha_ingreso, ae.fecha_salida, ae.observacion_ingreso, ae.observacion_salida, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido, g.nombre nombre_grupo, g.icono, g.color 
+        $sentence = $db->prepare("select ae.id, e.id_persona, ae.id_estudiante, ae.fecha_ingreso, ae.fecha_salida, ae.observacion_ingreso, ae.observacion_salida, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido, g.nombre nombre_grupo, g.icono, g.color,
+        case when ae.id_usuario_ingreso is not null then CONCAT(p_ui.primer_nombre, ' ', p_ui.primer_apellido) else null end usuario_ingreso,
+        NULLIF(TRIM(CONCAT_WS(' ', p_cr.primer_nombre, p_cr.primer_apellido)), '') colaborador_recibe,
+        NULLIF(TRIM(CONCAT_WS(' ', p_pe.primer_nombre, p_pe.primer_apellido)), '') persona_entrega
         from asistencia_estudiantes ae
         inner join estudiantes e on ae.id_estudiante = e.id
         inner join personas p on e.id_persona = p.id
         inner join estudiantes_x_grupos exg on e.id = exg.id_estudiante
         inner join grupos g on exg.id_grupo = g.id 
+        left join usuarios u_ing on ae.id_usuario_ingreso = u_ing.id
+        left join personas p_ui on u_ing.id_persona = p_ui.id
+        left join colaboradores c_cr on ae.id_colaborador_recibe = c_cr.id
+        left join personas p_cr on c_cr.id_persona = p_cr.id
+        left join personas p_pe on ae.id_persona_entrega = p_pe.id
         where DATE(ae.fecha_ingreso) = CURDATE()
         and ae.fecha_salida is null
         and exg.activo = 1
@@ -405,7 +493,9 @@ class AsistenciaEstudiantes
         case when ae.id_usuario_ingreso is not null then CONCAT(p_ui.primer_nombre, ' ', p_ui.primer_apellido) else null end usuario_ingreso,
         case when ae.id_usuario_salida is not null then CONCAT(p_us.primer_nombre, ' ', p_us.primer_apellido) else null end usuario_salida,
         NULLIF(TRIM(CONCAT_WS(' ', p_ce.primer_nombre, p_ce.primer_apellido)), '') colaborador_entrega,
-        NULLIF(TRIM(CONCAT_WS(' ', p_pr.primer_nombre, p_pr.primer_apellido)), '') persona_recoge
+        NULLIF(TRIM(CONCAT_WS(' ', p_pr.primer_nombre, p_pr.primer_apellido)), '') persona_recoge,
+        NULLIF(TRIM(CONCAT_WS(' ', p_cr.primer_nombre, p_cr.primer_apellido)), '') colaborador_recibe,
+        NULLIF(TRIM(CONCAT_WS(' ', p_pe.primer_nombre, p_pe.primer_apellido)), '') persona_entrega
         from asistencia_estudiantes ae
         inner join estudiantes e on ae.id_estudiante = e.id
         inner join personas p on e.id_persona = p.id
@@ -418,6 +508,9 @@ class AsistenciaEstudiantes
         left join colaboradores c_ce on ae.id_colaborador_entrega = c_ce.id
         left join personas p_ce on c_ce.id_persona = p_ce.id
         left join personas p_pr on ae.id_persona_recoge = p_pr.id
+        left join colaboradores c_cr on ae.id_colaborador_recibe = c_cr.id
+        left join personas p_cr on c_cr.id_persona = p_cr.id
+        left join personas p_pe on ae.id_persona_entrega = p_pe.id
         where DATE(ae.fecha_salida) = CURDATE()
         and exg.activo = 1
         and ae.id_tenant = :id_tenant

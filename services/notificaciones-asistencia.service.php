@@ -27,6 +27,14 @@ class NotificacionesAsistencia
     const TIPO_ELIMINACION = 'eliminacion';
 
     /**
+     * Lo manda la grilla de utiles y accesorios diarios cuando la docente
+     * graba, para contarle al acudiente que trajo y que no trajo el nino.
+     * Ese dato no alcanza a ir en la notificacion de ingreso, porque al
+     * registrar la asistencia casi siempre queda en sin verificar.
+     */
+    const TIPO_UTILES = 'utiles';
+
+    /**
      * Categorias propias de asistencia. Van separadas por evento para que el
      * jardin pueda filtrar y reportar las llegadas aparte de las salidas.
      *
@@ -36,6 +44,107 @@ class NotificacionesAsistencia
     const CODIGO_CATEGORIA_INGRESO = 'ASISTENCIA_INGRESO';
     const CODIGO_CATEGORIA_SALIDA  = 'ASISTENCIA_SALIDA';
     const CODIGO_CATEGORIA_RESPALDO = 'GENERAL';
+
+    /**
+     * Envia la notificacion de los utiles de un estudiante en una fecha.
+     *
+     * La invoca la grilla de utiles y accesorios diarios, y solo cuando la
+     * docente graba a peticion: en el autoguardado no, porque le llegarian
+     * avisos al acudiente cada vez que toca una celda.
+     *
+     * Igual que enviar(), nada de lo que pase aqui puede tumbar el guardado.
+     *
+     * @param  PDO    $db
+     * @param  string $idEstudiante
+     * @param  string $fecha        Y-m-d
+     * @param  string $modo         'entrada' o 'salida'
+     * @param  string $idUsuario    Usuario que grabo
+     * @return array  Resultado informativo; nunca lanza excepcion
+     */
+    public static function enviarUtiles(PDO $db, $idEstudiante, $fecha, $modo, $idUsuario)
+    {
+        $resultado = array('enviada' => false, 'motivo' => null);
+
+        try {
+            if (empty($idEstudiante) || empty($fecha)) {
+                $resultado['motivo'] = 'sin estudiante o sin fecha';
+                return $resultado;
+            }
+
+            $cuerpo = self::armarCuerpoUtiles($db, $idEstudiante, $fecha, $modo);
+
+            // Si quedo todo en sin verificar no hay nada que contar.
+            if ($cuerpo === '') {
+                $resultado['motivo'] = 'no hay útiles marcados';
+                return $resultado;
+            }
+
+            $categoria = self::obtenerCategoria($db, $modo === 'salida' ? self::TIPO_SALIDA : self::TIPO_INGRESO);
+
+            if (!$categoria) {
+                $resultado['motivo'] = 'no hay categoria de notificaciones configurada';
+                return $resultado;
+            }
+
+            $destinatarios = self::obtenerAcudientes($db, $idEstudiante);
+
+            if (count($destinatarios) === 0) {
+                $resultado['motivo'] = 'el estudiante no tiene acudientes habilitados en el portal';
+                return $resultado;
+            }
+
+            $nombre = self::obtenerNombreEstudiante($db, $idEstudiante);
+            $titulo = $modo === 'salida'
+                ? 'Lo que ' . $nombre . ' se llevó a casa'
+                : 'Lo que ' . $nombre . ' trajo al jardín';
+
+            // guardar() solo usa id y id_estudiante del registro de asistencia,
+            // asi que se le pasa lo minimo: aqui no hay movimiento asociado.
+            $idNotificacion = self::guardar(
+                $db,
+                array('id' => null, 'id_estudiante' => $idEstudiante),
+                $categoria,
+                $titulo,
+                $cuerpo,
+                $destinatarios,
+                $idUsuario
+            );
+
+            $idsUsuarios = array();
+            foreach ($destinatarios as $destinatario) {
+                if (!empty($destinatario['id_usuario'])) {
+                    $idsUsuarios[$destinatario['id_usuario']] = true;
+                }
+            }
+
+            $push = array('enviadas' => 0);
+
+            if (count($idsUsuarios) > 0) {
+                $pushService = new PushNotificationService($db);
+                $push = $pushService->notificarAUsuarios(
+                    array_keys($idsUsuarios),
+                    $titulo,
+                    self::generarPreview($cuerpo),
+                    array(
+                        'id_notificacion' => $idNotificacion,
+                        'tipo'            => 'notificacion',
+                    ),
+                    JWTService::PORTAL_PADRES
+                );
+            }
+
+            $resultado['enviada'] = true;
+            $resultado['id_notificacion'] = $idNotificacion;
+            $resultado['destinatarios'] = count($destinatarios);
+            $resultado['push'] = $push;
+
+            return $resultado;
+        } catch (Exception $e) {
+            error_log('[NotificacionesAsistencia] Error enviando útiles: ' . $e->getMessage());
+            $resultado['motivo'] = $e->getMessage();
+            return $resultado;
+        }
+    }
 
     /**
      * Envia la notificacion de asistencia.
@@ -139,10 +248,20 @@ class NotificacionesAsistencia
                 a.observacion_ingreso,
                 a.observacion_salida,
                 p.primer_nombre    AS estudiante_primer_nombre,
-                p.primer_apellido  AS estudiante_primer_apellido
+                p.primer_apellido  AS estudiante_primer_apellido,
+                NULLIF(TRIM(CONCAT_WS(' ', ppe.primer_nombre, ppe.primer_apellido)), '') AS persona_entrega,
+                NULLIF(TRIM(CONCAT_WS(' ', ppr.primer_nombre, ppr.primer_apellido)), '') AS persona_recoge,
+                NULLIF(TRIM(CONCAT_WS(' ', pcr.primer_nombre, pcr.primer_apellido)), '') AS colaborador_recibe,
+                NULLIF(TRIM(CONCAT_WS(' ', pce.primer_nombre, pce.primer_apellido)), '') AS colaborador_entrega
             FROM asistencia_estudiantes a
             INNER JOIN estudiantes e ON e.id = a.id_estudiante
             INNER JOIN personas p    ON p.id = e.id_persona
+            LEFT JOIN personas ppe ON ppe.id = a.id_persona_entrega
+            LEFT JOIN personas ppr ON ppr.id = a.id_persona_recoge
+            LEFT JOIN colaboradores ccr ON ccr.id = a.id_colaborador_recibe
+            LEFT JOIN personas pcr ON pcr.id = ccr.id_persona
+            LEFT JOIN colaboradores cce ON cce.id = a.id_colaborador_entrega
+            LEFT JOIN personas pce ON pce.id = cce.id_persona
             WHERE a.id = :id AND a.id_tenant = :id_tenant
         ");
         $sentence->bindValue(':id', $idAsistencia);
@@ -231,6 +350,41 @@ class NotificacionesAsistencia
      * Arma el cuerpo con lo que quedo registrado en el movimiento: hora,
      * observacion de la docente, utiles del dia y cobros generados.
      */
+    /**
+     * Quien entrego o recogio al nino y que persona del jardin lo recibio o
+     * lo entrego. Los dos datos son opcionales: se arma solo con lo que haya
+     * y devuelve cadena vacia si no hay ninguno.
+     *
+     * @param string $tipo self::TIPO_INGRESO o self::TIPO_SALIDA
+     * @return string
+     */
+    private static function armarLineaEntrega($asistencia, $tipo)
+    {
+        if ($tipo === self::TIPO_SALIDA) {
+            $persona = isset($asistencia['persona_recoge']) ? $asistencia['persona_recoge'] : null;
+            $colaborador = isset($asistencia['colaborador_entrega']) ? $asistencia['colaborador_entrega'] : null;
+            $textoPersona = 'Lo recogió ';
+            $textoColaborador = 'Lo entregó ';
+        } else {
+            $persona = isset($asistencia['persona_entrega']) ? $asistencia['persona_entrega'] : null;
+            $colaborador = isset($asistencia['colaborador_recibe']) ? $asistencia['colaborador_recibe'] : null;
+            $textoPersona = 'Lo trajo ';
+            $textoColaborador = 'Lo recibió ';
+        }
+
+        $partes = array();
+
+        if (!empty($persona)) {
+            $partes[] = $textoPersona . $persona;
+        }
+
+        if (!empty($colaborador)) {
+            $partes[] = $textoColaborador . $colaborador;
+        }
+
+        return count($partes) > 0 ? implode('. ', $partes) . '.' : '';
+    }
+
     private static function armarCuerpo(PDO $db, $asistencia, $tipo)
     {
         $nombre = trim($asistencia['estudiante_primer_nombre'] ?? '');
@@ -257,7 +411,20 @@ class NotificacionesAsistencia
                 . ($fecha !== '' ? ' del ' . $fecha : '') . '. Así quedó:';
             $lineas[] = '';
             $lineas[] = 'Ingreso: ' . ($horaIngreso ? $horaIngreso : 'sin registrar');
+
+            $entrega = self::armarLineaEntrega($asistencia, self::TIPO_INGRESO);
+            if ($entrega !== '') {
+                $lineas[] = $entrega;
+            }
+
             $lineas[] = 'Salida: ' . ($horaSalida ? $horaSalida : 'sin registrar');
+
+            if (!empty($asistencia['fecha_salida'])) {
+                $recogida = self::armarLineaEntrega($asistencia, self::TIPO_SALIDA);
+                if ($recogida !== '') {
+                    $lineas[] = $recogida;
+                }
+            }
 
             if (!empty($asistencia['observacion_ingreso'])) {
                 $lineas[] = 'Observación de ingreso: ' . $asistencia['observacion_ingreso'];
@@ -282,6 +449,12 @@ class NotificacionesAsistencia
                 ? $nombre . ' salió del jardín a las ' . $hora . '.'
                 : $nombre . ' salió del jardín.';
 
+            $entrega = self::armarLineaEntrega($asistencia, self::TIPO_SALIDA);
+            if ($entrega !== '') {
+                $lineas[] = '';
+                $lineas[] = $entrega;
+            }
+
             if (!empty($asistencia['observacion_salida'])) {
                 $lineas[] = '';
                 $lineas[] = 'Observación: ' . $asistencia['observacion_salida'];
@@ -291,6 +464,12 @@ class NotificacionesAsistencia
             $lineas[] = $hora
                 ? $nombre . ' llegó al jardín a las ' . $hora . '.'
                 : $nombre . ' llegó al jardín.';
+
+            $entrega = self::armarLineaEntrega($asistencia, self::TIPO_INGRESO);
+            if ($entrega !== '') {
+                $lineas[] = '';
+                $lineas[] = $entrega;
+            }
 
             if (!empty($asistencia['observacion_ingreso'])) {
                 $lineas[] = '';
@@ -318,6 +497,103 @@ class NotificacionesAsistencia
      * listan los que no regresaron, que es lo que al acudiente le interesa
      * saber esa tarde.
      */
+    /**
+     * Cuerpo del mensaje de utiles: lo que trajo y lo que no trajo en modo
+     * entrada, y lo que regreso y lo que no en modo salida. Lo que quedo sin
+     * verificar no se nombra.
+     *
+     * @return string Cadena vacia si no hay nada marcado.
+     */
+    private static function armarCuerpoUtiles(PDO $db, $idEstudiante, $fecha, $modo)
+    {
+        $columna = $modo === 'salida' ? 'r.regreso' : 'r.trajo';
+
+        $sentence = $db->prepare("
+            SELECT COALESCE(ud.nombre, r.nombre_libre) AS nombre,
+                   $columna AS estado,
+                   r.observacion
+            FROM utiles_diarios_registro r
+            LEFT JOIN utiles_diarios ud ON ud.id = r.id_util_diario
+            WHERE r.id_tenant = :id_tenant
+              AND r.id_estudiante = :id_estudiante
+              AND r.fecha = :fecha
+              AND $columna IS NOT NULL
+            ORDER BY nombre
+        ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_estudiante', $idEstudiante);
+        $sentence->bindValue(':fecha', $fecha);
+        $sentence->execute();
+
+        $si = array();
+        $no = array();
+        $notas = array();
+
+        foreach ($sentence->fetchAll() as $fila) {
+            if (empty($fila['nombre'])) {
+                continue;
+            }
+
+            if (intval($fila['estado']) === 1) {
+                $si[] = $fila['nombre'];
+            } else {
+                $no[] = $fila['nombre'];
+            }
+
+            if (!empty($fila['observacion'])) {
+                $notas[] = $fila['nombre'] . ': ' . $fila['observacion'];
+            }
+        }
+
+        if (count($si) === 0 && count($no) === 0) {
+            return '';
+        }
+
+        $lineas = array();
+
+        if ($modo === 'salida') {
+            if (count($si) > 0) {
+                $lineas[] = 'Regresó a casa con: ' . implode(', ', $si) . '.';
+            }
+            if (count($no) > 0) {
+                $lineas[] = 'No regresaron a casa: ' . implode(', ', $no) . '.';
+            }
+        } else {
+            if (count($si) > 0) {
+                $lineas[] = 'Útiles que trajo: ' . implode(', ', $si) . '.';
+            }
+            if (count($no) > 0) {
+                $lineas[] = 'No trajo: ' . implode(', ', $no) . '.';
+            }
+        }
+
+        if (count($notas) > 0) {
+            $lineas[] = '';
+            $lineas[] = 'Notas: ' . implode(' · ', $notas);
+        }
+
+        return implode("\n", $lineas);
+    }
+
+    /**
+     * Primer nombre del estudiante, para el titulo del mensaje.
+     */
+    private static function obtenerNombreEstudiante(PDO $db, $idEstudiante)
+    {
+        $sentence = $db->prepare("
+            SELECT p.primer_nombre
+            FROM estudiantes e
+            INNER JOIN personas p ON p.id = e.id_persona
+            WHERE e.id = :id AND e.id_tenant = :id_tenant
+        ");
+        $sentence->bindValue(':id', $idEstudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $fila = $sentence->fetch();
+
+        return $fila ? trim($fila['primer_nombre']) : 'tu hijo';
+    }
+
     private static function armarBloqueUtiles(PDO $db, $asistencia, $tipo)
     {
         try {

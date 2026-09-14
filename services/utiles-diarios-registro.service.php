@@ -501,6 +501,11 @@ class RegistroUtilesDiarios
         $nuevos = isset(Flight::request()->data['nuevos']) ? Flight::request()->data['nuevos'] : array();
         $eliminados = isset(Flight::request()->data['eliminados']) ? Flight::request()->data['eliminados'] : array();
 
+        // Solo el guardado a peticion avisa al acudiente. El autoguardado
+        // manda notificar en false: si no, le llegaria un mensaje cada vez
+        // que la docente toca una celda.
+        $notificar = isset(Flight::request()->data['notificar']) ? (bool) Flight::request()->data['notificar'] : false;
+
         $hayCambios = is_array($cambios) && count($cambios) > 0;
         $hayNuevos = is_array($nuevos) && count($nuevos) > 0;
         $hayEliminados = is_array($eliminados) && count($eliminados) > 0;
@@ -625,12 +630,77 @@ class RegistroUtilesDiarios
             }
 
             $db->commit();
-            Flight::json(array('actualizados' => $actualizados, 'creados' => $creados, 'eliminados' => $borrados));
+
+            $notificados = 0;
+            if ($notificar) {
+                $notificados = self::notificarCambios($db, $cambios, $nuevos, $modo, $id_usuario);
+            }
+
+            Flight::json(array('actualizados' => $actualizados, 'creados' => $creados, 'eliminados' => $borrados, 'notificados' => $notificados));
         } catch (Exception $e) {
             $db->rollBack();
             error_log("Error en RegistroUtilesDiarios::guardarLote: " . $e->getMessage());
             Flight::json(array('error' => 'No se pudieron guardar los cambios'), 500);
         }
+    }
+
+    /**
+     * Avisa a los acudientes de los estudiantes que quedaron con útiles
+     * marcados en este guardado.
+     *
+     * Los cambios solo traen el id de la fila, así que se releen para saber
+     * de qué estudiante y de qué fecha son. Los útiles que se quitaron no
+     * entran: avisarle al papá que le borraron un ítem de la lista no le
+     * dice nada.
+     *
+     * Nunca tumba el guardado: ya se hizo commit y los errores quedan en el
+     * log.
+     *
+     * @return int Cuántos estudiantes quedaron avisados
+     */
+    private static function notificarCambios($db, $cambios, $nuevos, $modo, $id_usuario)
+    {
+        $notificados = 0;
+
+        try {
+            $afectados = array();
+
+            $ids = array();
+            foreach ($cambios as $cambio) {
+                if (!empty($cambio['id'])) {
+                    $ids[] = $cambio['id'];
+                }
+            }
+
+            if (count($ids) > 0) {
+                $marcadores = implode(',', array_fill(0, count($ids), '?'));
+                $sentence = $db->prepare("SELECT DISTINCT id_estudiante, fecha
+                                          FROM utiles_diarios_registro
+                                          WHERE id_tenant = ? AND id IN ($marcadores)");
+                $sentence->execute(array_merge(array(TenantContext::id()), $ids));
+
+                foreach ($sentence->fetchAll() as $fila) {
+                    $afectados[$fila['id_estudiante'] . '|' . $fila['fecha']] = array($fila['id_estudiante'], $fila['fecha']);
+                }
+            }
+
+            foreach ($nuevos as $nuevo) {
+                if (!empty($nuevo['id_estudiante']) && !empty($nuevo['fecha'])) {
+                    $afectados[$nuevo['id_estudiante'] . '|' . $nuevo['fecha']] = array($nuevo['id_estudiante'], $nuevo['fecha']);
+                }
+            }
+
+            foreach ($afectados as $afectado) {
+                $resultado = NotificacionesAsistencia::enviarUtiles($db, $afectado[0], $afectado[1], $modo, $id_usuario);
+                if ($resultado['enviada']) {
+                    $notificados++;
+                }
+            }
+        } catch (Exception $e) {
+            error_log('Error notificando útiles: ' . $e->getMessage());
+        }
+
+        return $notificados;
     }
 
     /**

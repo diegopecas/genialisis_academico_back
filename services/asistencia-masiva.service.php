@@ -101,7 +101,7 @@ class AsistenciaMasiva
             // Quien puede traerlo o recogerlo en esa fecha y la ultima eleccion,
             // con el mismo criterio de la pantalla de asistencia.
             $fila['personas'] = AsistenciaEstudiantes::personasEntregaRecoge($db, $fila['id_estudiante'], $tipo, $fecha);
-            $fila['id_persona_sugerida'] = AsistenciaEstudiantes::ultimaPersonaEntregaRecoge($db, $fila['id_estudiante'], $tipo, $fila['personas']);
+            $fila['id_persona_sugerida'] = AsistenciaEstudiantes::personaSugerida($db, $fila['id_estudiante'], $tipo, $fila['personas']);
         }
         unset($fila);
 

@@ -22,6 +22,11 @@ class AutorizadosRecoger
         Flight::json($response);
     }
 
+    /**
+     * Autorizados del estudiante. En los temporales, 'fechas_autorizadas' trae
+     * las fechas de hoy en adelante separadas por coma, para que la tarjeta
+     * diga para cuando esta autorizada la persona y no solo que esta activa.
+     */
     public static function getByEstudiante($idEstudiante)
     {
         $db = Flight::db();
@@ -38,7 +43,11 @@ class AutorizadosRecoger
                                     TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_persona,
                                     p.numero_identificacion AS documento_persona,
                                     p.foto,
-                                    TRIM(CONCAT_WS(' ', pa.primer_nombre, pa.segundo_nombre, pa.primer_apellido, pa.segundo_apellido)) AS nombre_persona_autoriza
+                                    TRIM(CONCAT_WS(' ', pa.primer_nombre, pa.segundo_nombre, pa.primer_apellido, pa.segundo_apellido)) AS nombre_persona_autoriza,
+                                    (SELECT GROUP_CONCAT(arh.fecha_autorizada ORDER BY arh.fecha_autorizada SEPARATOR ',')
+                                       FROM autorizados_recoger_historial arh
+                                      WHERE arh.id_autorizado_recoger = ar.id
+                                        AND arh.fecha_autorizada >= CURDATE()) AS fechas_autorizadas
                                   FROM autorizados_recoger ar
                                   INNER JOIN tipos_autorizacion_recoger tar ON tar.id = ar.id_tipo_autorizacion
                                   INNER JOIN personas p ON p.id = ar.id_persona
