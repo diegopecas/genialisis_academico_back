@@ -316,6 +316,10 @@ class MiAgenda
     /**
      * Entradas y salidas del dia. Genera un evento por cada ingreso y otro
      * por cada salida, porque un nino puede entrar y salir varias veces.
+     *
+     * El pie dice quien lo trajo y quien lo recibio (o quien lo entrego y
+     * quien lo recogio). El colaborador elegido en el registro manda; si no
+     * hay, se usa el usuario que registro, como antes.
      */
     private static function fuenteAsistencia($db, $id_estudiante, $fecha, $contexto)
     {
@@ -326,12 +330,22 @@ class MiAgenda
                    a.observacion_ingreso,
                    a.observacion_salida,
                    TRIM(CONCAT_WS(' ', pi.primer_nombre, pi.primer_apellido)) AS nombre_usuario_ingreso,
-                   TRIM(CONCAT_WS(' ', ps.primer_nombre, ps.primer_apellido)) AS nombre_usuario_salida
+                   TRIM(CONCAT_WS(' ', ps.primer_nombre, ps.primer_apellido)) AS nombre_usuario_salida,
+                   TRIM(CONCAT_WS(' ', pcr.primer_nombre, pcr.primer_apellido)) AS nombre_colaborador_recibe,
+                   TRIM(CONCAT_WS(' ', pce.primer_nombre, pce.primer_apellido)) AS nombre_colaborador_entrega,
+                   TRIM(CONCAT_WS(' ', ppe.primer_nombre, ppe.primer_apellido)) AS nombre_persona_entrega,
+                   TRIM(CONCAT_WS(' ', ppr.primer_nombre, ppr.primer_apellido)) AS nombre_persona_recoge
             FROM asistencia_estudiantes a
             LEFT JOIN usuarios ui ON ui.id = a.id_usuario_ingreso
             LEFT JOIN personas pi ON pi.id = ui.id_persona
             LEFT JOIN usuarios us ON us.id = a.id_usuario_salida
             LEFT JOIN personas ps ON ps.id = us.id_persona
+            LEFT JOIN colaboradores ccr ON ccr.id = a.id_colaborador_recibe
+            LEFT JOIN personas pcr ON pcr.id = ccr.id_persona
+            LEFT JOIN colaboradores cce ON cce.id = a.id_colaborador_entrega
+            LEFT JOIN personas pce ON pce.id = cce.id_persona
+            LEFT JOIN personas ppe ON ppe.id = a.id_persona_entrega
+            LEFT JOIN personas ppr ON ppr.id = a.id_persona_recoge
             WHERE a.id_tenant = :id_tenant
               AND a.id_estudiante = :id_estudiante
               AND (DATE(a.fecha_ingreso) = :fecha OR DATE(a.fecha_salida) = :fecha_salida)
@@ -352,7 +366,10 @@ class MiAgenda
                     'fecha_hora' => $fila['fecha_ingreso'],
                     'titulo'     => 'Llegó al jardín',
                     'detalle'    => $fila['observacion_ingreso'],
-                    'pie'        => $fila['nombre_usuario_ingreso'] ? 'Recibido por ' . $fila['nombre_usuario_ingreso'] : null,
+                    'pie'        => self::pieMovimiento(
+                        'Lo trajo', $fila['nombre_persona_entrega'],
+                        'Recibido por', $fila['nombre_colaborador_recibe'] ?: $fila['nombre_usuario_ingreso']
+                    ),
                     'orden'      => 10,
                     'meta'       => array_merge(
                         ['id_asistencia' => $fila['id']],
@@ -366,7 +383,10 @@ class MiAgenda
                     'fecha_hora' => $fila['fecha_salida'],
                     'titulo'     => 'Salió del jardín',
                     'detalle'    => $fila['observacion_salida'],
-                    'pie'        => $fila['nombre_usuario_salida'] ? 'Entregado por ' . $fila['nombre_usuario_salida'] : null,
+                    'pie'        => self::pieMovimiento(
+                        'Lo recogió', $fila['nombre_persona_recoge'],
+                        'Entregado por', $fila['nombre_colaborador_entrega'] ?: $fila['nombre_usuario_salida']
+                    ),
                     'orden'      => 900,
                     'meta'       => array_merge(
                         ['id_asistencia' => $fila['id']],
@@ -377,6 +397,24 @@ class MiAgenda
         }
 
         return $eventos;
+    }
+
+    /**
+     * Arma el pie del evento de asistencia con las partes que tengan nombre.
+     * Ej: "Lo trajo Ana Pérez · Recibido por Marta Gómez". Null si no hay nada.
+     */
+    private static function pieMovimiento($etiquetaPersona, $persona, $etiquetaColaborador, $colaborador)
+    {
+        $partes = [];
+
+        if (!empty($persona)) {
+            $partes[] = $etiquetaPersona . ' ' . $persona;
+        }
+        if (!empty($colaborador)) {
+            $partes[] = $etiquetaColaborador . ' ' . $colaborador;
+        }
+
+        return count($partes) > 0 ? implode(' · ', $partes) : null;
     }
 
     /**

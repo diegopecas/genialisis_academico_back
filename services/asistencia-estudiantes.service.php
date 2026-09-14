@@ -50,6 +50,230 @@ class AsistenciaEstudiantes
         return trim($fecha) . ' ' . $hora;
     }
 
+    /**
+     * Lee un id opcional de la peticion. Vacio o ausente es null: el dato de
+     * quien entrega o recoge al nino no es obligatorio.
+     */
+    private static function valorOpcional($data, $clave)
+    {
+        if (!isset($data[$clave]) || $data[$clave] === null) {
+            return null;
+        }
+
+        $valor = trim((string) $data[$clave]);
+
+        return $valor === '' ? null : $valor;
+    }
+
+    /**
+     * Devuelve el id del colaborador solo si es de este jardin. Si no, null,
+     * para que un id mal enviado no tumbe el registro de asistencia.
+     */
+    public static function colaboradorValido($db, $id_colaborador)
+    {
+        if (empty($id_colaborador)) {
+            return null;
+        }
+
+        $sentence = $db->prepare("SELECT id FROM colaboradores WHERE id = :id AND id_tenant = :id_tenant");
+        $sentence->bindValue(':id', $id_colaborador);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+
+        return $sentence->fetch() ? $id_colaborador : null;
+    }
+
+    /**
+     * Mismo criterio de colaboradorValido, para la persona que trae o recoge.
+     */
+    public static function personaValida($db, $id_persona)
+    {
+        if (empty($id_persona)) {
+            return null;
+        }
+
+        $sentence = $db->prepare("SELECT id FROM personas WHERE id = :id AND id_tenant = :id_tenant");
+        $sentence->bindValue(':id', $id_persona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+
+        return $sentence->fetch() ? $id_persona : null;
+    }
+
+    /**
+     * Personas que pueden traer o recoger al nino en una fecha.
+     *
+     *   - ingreso: todos los acudientes activos y los autorizados vigentes.
+     *   - salida:  solo los acudientes autorizados a recoger y los
+     *              autorizados vigentes.
+     *
+     * Un autorizado esta vigente si es permanente o si es temporal y tiene
+     * historial para esa fecha. Es el mismo criterio de
+     * AutorizadosRecoger::getActivosHoyByEstudiante (tipo 1 = permanente).
+     *
+     * Si una persona es acudiente y ademas autorizado, sale una sola vez,
+     * como acudiente.
+     *
+     * @param string $tipo  'ingreso' | 'salida'
+     * @param string $fecha Y-m-d
+     * @return array [ { id_persona, nombre, parentesco, icono, origen, temporal } ]
+     */
+    public static function personasEntregaRecoge($db, $id_estudiante, $tipo, $fecha)
+    {
+        $sqlAcudientes = "SELECT a.id_persona,
+                                 TRIM(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido)) AS nombre,
+                                 ta.nombre AS parentesco,
+                                 ta.icono,
+                                 a.autorizado_recoger
+                          FROM acudientes a
+                          INNER JOIN personas p ON p.id = a.id_persona
+                          LEFT JOIN tipos_acudiente ta ON ta.id = a.id_tipo_acudiente
+                          WHERE a.id_estudiante = :id_estudiante
+                            AND a.id_tenant = :id_tenant
+                            AND a.activo = 1";
+
+        if ($tipo === 'salida') {
+            $sqlAcudientes .= " AND a.autorizado_recoger = 1";
+        }
+
+        $sqlAcudientes .= " ORDER BY p.primer_nombre, p.primer_apellido";
+
+        $sentence = $db->prepare($sqlAcudientes);
+        $sentence->bindValue(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+
+        $personas = array();
+        $yaEstan = array();
+
+        foreach ($sentence->fetchAll() as $fila) {
+            $yaEstan[$fila['id_persona']] = true;
+            $personas[] = array(
+                'id_persona' => $fila['id_persona'],
+                'nombre'     => $fila['nombre'],
+                'parentesco' => $fila['parentesco'],
+                'icono'      => $fila['icono'],
+                'origen'     => 'acudiente',
+                'temporal'   => 0
+            );
+        }
+
+        $sentence = $db->prepare("SELECT ar.id_persona, ar.id_tipo_autorizacion,
+                                         TRIM(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido)) AS nombre,
+                                         tar.nombre AS nombre_tipo_autorizacion
+                                  FROM autorizados_recoger ar
+                                  INNER JOIN tipos_autorizacion_recoger tar ON tar.id = ar.id_tipo_autorizacion
+                                  INNER JOIN personas p ON p.id = ar.id_persona
+                                  WHERE ar.id_estudiante = :id_estudiante
+                                    AND ar.id_tenant = :id_tenant
+                                    AND ar.activo = 1
+                                    AND (
+                                      ar.id_tipo_autorizacion = 1
+                                      OR EXISTS (
+                                        SELECT 1 FROM autorizados_recoger_historial arh
+                                        WHERE arh.id_autorizado_recoger = ar.id
+                                          AND arh.fecha_autorizada = :fecha
+                                      )
+                                    )
+                                  ORDER BY p.primer_nombre, p.primer_apellido");
+        $sentence->bindValue(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':fecha', $fecha);
+        $sentence->execute();
+
+        foreach ($sentence->fetchAll() as $fila) {
+            if (isset($yaEstan[$fila['id_persona']])) {
+                continue;
+            }
+            $yaEstan[$fila['id_persona']] = true;
+            $personas[] = array(
+                'id_persona' => $fila['id_persona'],
+                'nombre'     => $fila['nombre'],
+                'parentesco' => 'Autorizado ' . mb_strtolower($fila['nombre_tipo_autorizacion']),
+                'icono'      => null,
+                'origen'     => 'autorizado',
+                'temporal'   => intval($fila['id_tipo_autorizacion']) === 1 ? 0 : 1
+            );
+        }
+
+        return $personas;
+    }
+
+    /**
+     * Ultima persona que trajo (ingreso) o recogio (salida) al nino, para
+     * dejarla preseleccionada.
+     *
+     * Se saltan los autorizados temporales: esos son de un dia y no deben
+     * quedar como sugerencia. Si la persona ya no esta entre las opciones de
+     * hoy (por ejemplo, un acudiente inactivado) no se sugiere a nadie.
+     *
+     * @param array $personas Resultado de personasEntregaRecoge.
+     * @return string|null
+     */
+    public static function ultimaPersonaEntregaRecoge($db, $id_estudiante, $tipo, $personas)
+    {
+        $columna = $tipo === 'salida' ? 'id_persona_recoge' : 'id_persona_entrega';
+        $orden   = $tipo === 'salida' ? 'COALESCE(ae.fecha_salida, ae.fecha_ingreso)' : 'ae.fecha_ingreso';
+
+        $sentence = $db->prepare("SELECT ae.$columna AS id_persona
+                                  FROM asistencia_estudiantes ae
+                                  WHERE ae.id_tenant = :id_tenant
+                                    AND ae.id_estudiante = :id_estudiante
+                                    AND ae.$columna IS NOT NULL
+                                    AND NOT (
+                                          EXISTS (SELECT 1 FROM autorizados_recoger ar
+                                                   WHERE ar.id_estudiante = ae.id_estudiante
+                                                     AND ar.id_persona = ae.$columna
+                                                     AND ar.id_tenant = ae.id_tenant
+                                                     AND ar.id_tipo_autorizacion <> 1)
+                                      AND NOT EXISTS (SELECT 1 FROM acudientes a
+                                                   WHERE a.id_estudiante = ae.id_estudiante
+                                                     AND a.id_persona = ae.$columna
+                                                     AND a.id_tenant = ae.id_tenant
+                                                     AND a.activo = 1)
+                                    )
+                                  ORDER BY $orden DESC
+                                  LIMIT 1");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_estudiante', $id_estudiante);
+        $sentence->execute();
+        $fila = $sentence->fetch();
+
+        if (!$fila) {
+            return null;
+        }
+
+        foreach ($personas as $persona) {
+            if ($persona['id_persona'] === $fila['id_persona'] && intval($persona['temporal']) === 0) {
+                return $fila['id_persona'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Opciones de quien trae o recoge al nino, con la sugerida.
+     * GET /asistencia-estudiantes/personas-entrega/@id_estudiante?tipo=ingreso|salida&fecha=YYYY-MM-DD
+     */
+    public static function getPersonasEntregaRecoge($id_estudiante)
+    {
+        self::setTimeZone();
+        $db = Flight::db();
+
+        $tipo  = isset($_GET['tipo']) && $_GET['tipo'] === 'salida' ? 'salida' : 'ingreso';
+        $fecha = isset($_GET['fecha']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $_GET['fecha']) ? $_GET['fecha'] : date('Y-m-d');
+
+        $personas = self::personasEntregaRecoge($db, $id_estudiante, $tipo, $fecha);
+
+        Flight::json(array(
+            'tipo'                => $tipo,
+            'fecha'               => $fecha,
+            'personas'            => $personas,
+            'id_persona_sugerida' => self::ultimaPersonaEntregaRecoge($db, $id_estudiante, $tipo, $personas)
+        ));
+    }
+
     public static function getAll()
     {
         self::setTimeZone();
@@ -179,7 +403,9 @@ class AsistenciaEstudiantes
         // lo que importa es que ya no esta en el jardin.
         $sentenceSalidas = $db->prepare("select ae.id, e.id_persona, ae.id_estudiante, ae.fecha_ingreso, ae.fecha_salida, ae.observacion_ingreso, ae.observacion_salida, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido, g.nombre nombre_grupo, g.icono, g.color,
         case when ae.id_usuario_ingreso is not null then CONCAT(p_ui.primer_nombre, ' ', p_ui.primer_apellido) else null end usuario_ingreso,
-        case when ae.id_usuario_salida is not null then CONCAT(p_us.primer_nombre, ' ', p_us.primer_apellido) else null end usuario_salida
+        case when ae.id_usuario_salida is not null then CONCAT(p_us.primer_nombre, ' ', p_us.primer_apellido) else null end usuario_salida,
+        NULLIF(TRIM(CONCAT_WS(' ', p_ce.primer_nombre, p_ce.primer_apellido)), '') colaborador_entrega,
+        NULLIF(TRIM(CONCAT_WS(' ', p_pr.primer_nombre, p_pr.primer_apellido)), '') persona_recoge
         from asistencia_estudiantes ae
         inner join estudiantes e on ae.id_estudiante = e.id
         inner join personas p on e.id_persona = p.id
@@ -189,6 +415,9 @@ class AsistenciaEstudiantes
         left join personas p_ui on u_ing.id_persona = p_ui.id
         left join usuarios u_sal on ae.id_usuario_salida = u_sal.id
         left join personas p_us on u_sal.id_persona = p_us.id
+        left join colaboradores c_ce on ae.id_colaborador_entrega = c_ce.id
+        left join personas p_ce on c_ce.id_persona = p_ce.id
+        left join personas p_pr on ae.id_persona_recoge = p_pr.id
         where DATE(ae.fecha_salida) = CURDATE()
         and exg.activo = 1
         and ae.id_tenant = :id_tenant
@@ -214,11 +443,16 @@ class AsistenciaEstudiantes
         $fechaMovimiento = isset(Flight::request()->data['fecha']) ? Flight::request()->data['fecha'] : null;
         $fechaIngreso = self::construirFechaMovimiento($hora, $fechaMovimiento);
 
+        // Quien recibe al nino y quien lo trae. Son opcionales y distintos de
+        // id_usuario_ingreso, que sigue siendo quien hace el registro.
+        $id_colaborador_recibe = self::colaboradorValido($db, self::valorOpcional(Flight::request()->data, 'id_colaborador_recibe'));
+        $id_persona_entrega = self::personaValida($db, self::valorOpcional(Flight::request()->data, 'id_persona_entrega'));
+
         $idNew = Uuid::generar();
 
         $sqlIngreso = $fechaIngreso === null
-            ? "insert into asistencia_estudiantes(id, id_tenant, id_estudiante, fecha_ingreso, observacion_ingreso, id_usuario_ingreso) values (:id, :id_tenant, :id_estudiante, NOW(), :observacion, :id_usuario_ingreso)"
-            : "insert into asistencia_estudiantes(id, id_tenant, id_estudiante, fecha_ingreso, observacion_ingreso, id_usuario_ingreso) values (:id, :id_tenant, :id_estudiante, :fecha_ingreso, :observacion, :id_usuario_ingreso)";
+            ? "insert into asistencia_estudiantes(id, id_tenant, id_estudiante, fecha_ingreso, observacion_ingreso, id_usuario_ingreso, id_colaborador_recibe, id_persona_entrega) values (:id, :id_tenant, :id_estudiante, NOW(), :observacion, :id_usuario_ingreso, :id_colaborador_recibe, :id_persona_entrega)"
+            : "insert into asistencia_estudiantes(id, id_tenant, id_estudiante, fecha_ingreso, observacion_ingreso, id_usuario_ingreso, id_colaborador_recibe, id_persona_entrega) values (:id, :id_tenant, :id_estudiante, :fecha_ingreso, :observacion, :id_usuario_ingreso, :id_colaborador_recibe, :id_persona_entrega)";
 
         $sentence = $db->prepare($sqlIngreso);
         $sentence->bindValue(':id', $idNew);
@@ -226,6 +460,8 @@ class AsistenciaEstudiantes
         $sentence->bindParam(':id_estudiante', $id_estudiante);
         $sentence->bindParam(':observacion', $observacion);
         $sentence->bindParam(':id_usuario_ingreso', $id_usuario_ingreso);
+        $sentence->bindValue(':id_colaborador_recibe', $id_colaborador_recibe, $id_colaborador_recibe === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+        $sentence->bindValue(':id_persona_entrega', $id_persona_entrega, $id_persona_entrega === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
         if ($fechaIngreso !== null) {
             $sentence->bindParam(':fecha_ingreso', $fechaIngreso);
         }
@@ -310,15 +546,21 @@ class AsistenciaEstudiantes
         $fechaMovimiento = isset(Flight::request()->data['fecha']) ? Flight::request()->data['fecha'] : null;
         $fechaSalida = self::construirFechaMovimiento($hora, $fechaMovimiento);
 
+        // Quien entrega al nino y quien lo recoge. Mismo criterio del ingreso.
+        $id_colaborador_entrega = self::colaboradorValido($db, self::valorOpcional(Flight::request()->data, 'id_colaborador_entrega'));
+        $id_persona_recoge = self::personaValida($db, self::valorOpcional(Flight::request()->data, 'id_persona_recoge'));
+
         $sqlSalida = $fechaSalida === null
-            ? "update asistencia_estudiantes set fecha_salida = NOW(), observacion_salida = :observacion, id_usuario_salida = :id_usuario_salida where id = :id AND id_tenant = :id_tenant"
-            : "update asistencia_estudiantes set fecha_salida = :fecha_salida, observacion_salida = :observacion, id_usuario_salida = :id_usuario_salida where id = :id AND id_tenant = :id_tenant";
+            ? "update asistencia_estudiantes set fecha_salida = NOW(), observacion_salida = :observacion, id_usuario_salida = :id_usuario_salida, id_colaborador_entrega = :id_colaborador_entrega, id_persona_recoge = :id_persona_recoge where id = :id AND id_tenant = :id_tenant"
+            : "update asistencia_estudiantes set fecha_salida = :fecha_salida, observacion_salida = :observacion, id_usuario_salida = :id_usuario_salida, id_colaborador_entrega = :id_colaborador_entrega, id_persona_recoge = :id_persona_recoge where id = :id AND id_tenant = :id_tenant";
 
         $sentence = $db->prepare($sqlSalida);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':observacion', $observacion);
         $sentence->bindParam(':id', $id);
         $sentence->bindParam(':id_usuario_salida', $id_usuario_salida);
+        $sentence->bindValue(':id_colaborador_entrega', $id_colaborador_entrega, $id_colaborador_entrega === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+        $sentence->bindValue(':id_persona_recoge', $id_persona_recoge, $id_persona_recoge === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
         if ($fechaSalida !== null) {
             $sentence->bindParam(':fecha_salida', $fechaSalida);
         }
@@ -504,12 +746,22 @@ class AsistenciaEstudiantes
         CASE 
             WHEN ae.fecha_salida IS NOT NULL AND TIME(ae.fecha_salida) > ds.hora_salida THEN 'Sí'
             ELSE 'No'
-        END as salida_tarde
+        END as salida_tarde,
+        NULLIF(TRIM(CONCAT_WS(' ', p_pe.primer_nombre, p_pe.primer_apellido)), '') as persona_entrega,
+        NULLIF(TRIM(CONCAT_WS(' ', p_cr.primer_nombre, p_cr.primer_apellido)), '') as colaborador_recibe,
+        NULLIF(TRIM(CONCAT_WS(' ', p_ce.primer_nombre, p_ce.primer_apellido)), '') as colaborador_entrega,
+        NULLIF(TRIM(CONCAT_WS(' ', p_pr.primer_nombre, p_pr.primer_apellido)), '') as persona_recoge
         FROM asistencia_estudiantes ae
         INNER JOIN estudiantes e ON ae.id_estudiante = e.id
         INNER JOIN personas p ON e.id_persona = p.id
         INNER JOIN calendarios c ON DATE(ae.fecha_ingreso) = c.fecha
         INNER JOIN dias_semana ds ON c.id_dia_semana = ds.id
+        LEFT JOIN personas p_pe ON p_pe.id = ae.id_persona_entrega
+        LEFT JOIN colaboradores c_cr ON c_cr.id = ae.id_colaborador_recibe
+        LEFT JOIN personas p_cr ON p_cr.id = c_cr.id_persona
+        LEFT JOIN colaboradores c_ce ON c_ce.id = ae.id_colaborador_entrega
+        LEFT JOIN personas p_ce ON p_ce.id = c_ce.id_persona
+        LEFT JOIN personas p_pr ON p_pr.id = ae.id_persona_recoge
         WHERE ae.id_estudiante = :id_estudiante 
         AND DATE(ae.fecha_ingreso) BETWEEN :fecha_inicio AND :fecha_fin
         AND ae.id_tenant = :id_tenant
@@ -749,6 +1001,11 @@ class AsistenciaEstudiantes
                     CONCAT(p_us.primer_nombre, ' ', COALESCE(p_us.segundo_nombre, ''), ' ', p_us.primer_apellido, ' ', COALESCE(p_us.segundo_apellido, ''))
                 ELSE NULL
             END as usuario_salida,
+
+            NULLIF(TRIM(CONCAT_WS(' ', p_pe.primer_nombre, p_pe.primer_apellido)), '') as persona_entrega,
+            NULLIF(TRIM(CONCAT_WS(' ', p_cr.primer_nombre, p_cr.primer_apellido)), '') as colaborador_recibe,
+            NULLIF(TRIM(CONCAT_WS(' ', p_ce.primer_nombre, p_ce.primer_apellido)), '') as colaborador_entrega,
+            NULLIF(TRIM(CONCAT_WS(' ', p_pr.primer_nombre, p_pr.primer_apellido)), '') as persona_recoge,
             
             COALESCE((SELECT SUM(cpc.valor)
                 FROM cobros_automaticos_historial cah
@@ -769,6 +1026,12 @@ class AsistenciaEstudiantes
         LEFT JOIN personas p_ui ON u_ing.id_persona = p_ui.id
         LEFT JOIN usuarios u_sal ON ae.id_usuario_salida = u_sal.id
         LEFT JOIN personas p_us ON u_sal.id_persona = p_us.id
+        LEFT JOIN personas p_pe ON p_pe.id = ae.id_persona_entrega
+        LEFT JOIN colaboradores c_cr ON c_cr.id = ae.id_colaborador_recibe
+        LEFT JOIN personas p_cr ON p_cr.id = c_cr.id_persona
+        LEFT JOIN colaboradores c_ce ON c_ce.id = ae.id_colaborador_entrega
+        LEFT JOIN personas p_ce ON p_ce.id = c_ce.id_persona
+        LEFT JOIN personas p_pr ON p_pr.id = ae.id_persona_recoge
         WHERE e.activo = 1 AND e.id_tenant = :id_tenant";
 
             $sql .= " ORDER BY 
@@ -798,6 +1061,10 @@ class AsistenciaEstudiantes
                 $asistencia['horas_extras'] = $asistencia['horas_extras'] ?: 0;
                 $asistencia['usuario_ingreso'] = $asistencia['usuario_ingreso'] ?: '';
                 $asistencia['usuario_salida'] = $asistencia['usuario_salida'] ?: '';
+                $asistencia['persona_entrega'] = $asistencia['persona_entrega'] ?: '';
+                $asistencia['colaborador_recibe'] = $asistencia['colaborador_recibe'] ?: '';
+                $asistencia['colaborador_entrega'] = $asistencia['colaborador_entrega'] ?: '';
+                $asistencia['persona_recoge'] = $asistencia['persona_recoge'] ?: '';
                 $asistencia['valor_cobros'] = $asistencia['valor_cobros'] ?: 0;
             }
 

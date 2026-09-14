@@ -19,6 +19,9 @@ Reglas del modulo:
     borran. Va con permiso aparte.
   - Al acudiente se le avisa, con un mensaje propio de correccion o
     de eliminacion (NotificacionesAsistencia).
+  - Quien recibio y trajo al nino (ingreso) y quien lo entrego y lo
+    recogio (salida) tambien se corrigen aqui. Si el movimiento queda
+    sin salida, los datos de la salida se limpian.
 =============================================*/
 
 class AsistenciaEdicion
@@ -156,6 +159,14 @@ class AsistenciaEdicion
 
         $fecha = date('Y-m-d', strtotime($movimiento['fecha_ingreso']));
 
+        // Opciones de quien trae y quien recoge, con la fecha del movimiento:
+        // un autorizado temporal de ese dia tiene que salir.
+        $personasIngreso = AsistenciaEstudiantes::personasEntregaRecoge($db, $movimiento['id_estudiante'], 'ingreso', $fecha);
+        $personasSalida = AsistenciaEstudiantes::personasEntregaRecoge($db, $movimiento['id_estudiante'], 'salida', $fecha);
+
+        $personasIngreso = self::incluirPersonaGuardada($db, $personasIngreso, $movimiento['id_persona_entrega']);
+        $personasSalida = self::incluirPersonaGuardada($db, $personasSalida, $movimiento['id_persona_recoge']);
+
         Flight::json(array(
             'movimiento' => array(
                 'id'                  => $movimiento['id'],
@@ -170,8 +181,14 @@ class AsistenciaEdicion
                 'hora_ingreso'        => date('H:i', strtotime($movimiento['fecha_ingreso'])),
                 'hora_salida'         => !empty($movimiento['fecha_salida']) ? date('H:i', strtotime($movimiento['fecha_salida'])) : '',
                 'observacion_ingreso' => $movimiento['observacion_ingreso'],
-                'observacion_salida'  => $movimiento['observacion_salida']
+                'observacion_salida'  => $movimiento['observacion_salida'],
+                'id_colaborador_recibe'  => $movimiento['id_colaborador_recibe'],
+                'id_persona_entrega'     => $movimiento['id_persona_entrega'],
+                'id_colaborador_entrega' => $movimiento['id_colaborador_entrega'],
+                'id_persona_recoge'      => $movimiento['id_persona_recoge']
             ),
+            'personas_ingreso' => $personasIngreso,
+            'personas_salida'  => $personasSalida,
             'utiles'    => self::obtenerUtiles($db, $movimiento['id_estudiante'], $fecha),
             'cobros'    => self::obtenerCobros($db, $id),
             'bloqueado' => self::tienePagosAplicados($db, $id) ? 1 : 0
@@ -182,7 +199,12 @@ class AsistenciaEdicion
      * Guarda la correccion.
      * PUT /asistencia-edicion
      *   { id, hora_ingreso, hora_salida, observacion_ingreso, observacion_salida,
-     *     utiles: [ { id, trajo, regreso } ], id_usuario }
+     *     utiles: [ { id, trajo, regreso } ], id_usuario,
+     *     id_colaborador_recibe, id_persona_entrega,
+     *     id_colaborador_entrega, id_persona_recoge }
+     *
+     * Los cuatro ultimos son opcionales: si no vienen en la peticion se
+     * conserva lo que ya tenia el registro.
      *
      * Devuelve `recalcular_cobros` en true cuando las horas cambiaron y se
      * anularon los cobros anteriores: el front debe volver a evaluar y
@@ -236,6 +258,26 @@ class AsistenciaEdicion
         $cambioSalida  = $fechaSalida !== $movimiento['fecha_salida'];
         $cambiaronHoras = $cambioIngreso || $cambioSalida;
 
+        // Quien recibe, trae, entrega y recoge. Si la clave no viene se deja
+        // lo que habia; si viene vacia se limpia. Sin salida no hay quien
+        // entregue ni quien recoja.
+        $datosPlanos = $data->getData();
+        $personas = array();
+        foreach (array('id_colaborador_recibe', 'id_persona_entrega', 'id_colaborador_entrega', 'id_persona_recoge') as $clave) {
+            $valor = array_key_exists($clave, $datosPlanos)
+                ? (trim((string) $datosPlanos[$clave]) === '' ? null : trim((string) $datosPlanos[$clave]))
+                : $movimiento[$clave];
+
+            $personas[$clave] = strpos($clave, 'id_colaborador') === 0
+                ? AsistenciaEstudiantes::colaboradorValido($db, $valor)
+                : AsistenciaEstudiantes::personaValida($db, $valor);
+        }
+
+        if ($fechaSalida === null) {
+            $personas['id_colaborador_entrega'] = null;
+            $personas['id_persona_recoge'] = null;
+        }
+
         $db->beginTransaction();
 
         try {
@@ -243,8 +285,15 @@ class AsistenciaEdicion
                                       SET fecha_ingreso = :fecha_ingreso,
                                           fecha_salida = :fecha_salida,
                                           observacion_ingreso = :observacion_ingreso,
-                                          observacion_salida = :observacion_salida
+                                          observacion_salida = :observacion_salida,
+                                          id_colaborador_recibe = :id_colaborador_recibe,
+                                          id_persona_entrega = :id_persona_entrega,
+                                          id_colaborador_entrega = :id_colaborador_entrega,
+                                          id_persona_recoge = :id_persona_recoge
                                       WHERE id = :id AND id_tenant = :id_tenant");
+            foreach ($personas as $clave => $valor) {
+                $sentence->bindValue(':' . $clave, $valor, $valor === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+            }
             $sentence->bindValue(':fecha_ingreso', $fechaIngreso);
             $sentence->bindValue(':fecha_salida', $fechaSalida);
             $sentence->bindValue(':observacion_ingreso', isset($data['observacion_ingreso']) && trim($data['observacion_ingreso']) !== '' ? trim($data['observacion_ingreso']) : null);
@@ -528,6 +577,8 @@ class AsistenciaEdicion
     {
         $sentence = $db->prepare("SELECT ae.id, ae.id_estudiante, ae.fecha_ingreso, ae.fecha_salida,
                                          ae.observacion_ingreso, ae.observacion_salida,
+                                         ae.id_colaborador_recibe, ae.id_persona_entrega,
+                                         ae.id_colaborador_entrega, ae.id_persona_recoge,
                                          CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) AS estudiante,
                                          g.nombre AS nombre_grupo, g.icono, g.color
                                   FROM asistencia_estudiantes ae
@@ -541,6 +592,45 @@ class AsistenciaEdicion
         $sentence->execute();
 
         return $sentence->fetch();
+    }
+
+    /**
+     * Si la persona guardada en el registro ya no esta entre las opciones
+     * (acudiente inactivado, autorizacion retirada), se agrega al final para
+     * que el selector la siga mostrando y no se pierda al grabar.
+     */
+    private static function incluirPersonaGuardada($db, $personas, $id_persona)
+    {
+        if (empty($id_persona)) {
+            return $personas;
+        }
+
+        foreach ($personas as $persona) {
+            if ($persona['id_persona'] === $id_persona) {
+                return $personas;
+            }
+        }
+
+        $sentence = $db->prepare("SELECT TRIM(CONCAT_WS(' ', primer_nombre, primer_apellido)) AS nombre
+                                  FROM personas
+                                  WHERE id = :id AND id_tenant = :id_tenant");
+        $sentence->bindValue(':id', $id_persona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $fila = $sentence->fetch();
+
+        if ($fila) {
+            $personas[] = array(
+                'id_persona' => $id_persona,
+                'nombre'     => $fila['nombre'],
+                'parentesco' => 'Ya no vigente',
+                'icono'      => null,
+                'origen'     => 'historico',
+                'temporal'   => 0
+            );
+        }
+
+        return $personas;
     }
 
     /**

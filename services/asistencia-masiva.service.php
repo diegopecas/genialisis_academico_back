@@ -97,6 +97,11 @@ class AsistenciaMasiva
             $fila['utiles'] = $tipo === self::TIPO_SALIDA
                 ? self::utilesQueTrajo($db, $fila['id_estudiante'], $fecha)
                 : self::propuestaUtiles($db, $fila['id_estudiante'], $fecha);
+
+            // Quien puede traerlo o recogerlo en esa fecha y la ultima eleccion,
+            // con el mismo criterio de la pantalla de asistencia.
+            $fila['personas'] = AsistenciaEstudiantes::personasEntregaRecoge($db, $fila['id_estudiante'], $tipo, $fecha);
+            $fila['id_persona_sugerida'] = AsistenciaEstudiantes::ultimaPersonaEntregaRecoge($db, $fila['id_estudiante'], $tipo, $fila['personas']);
         }
         unset($fila);
 
@@ -367,6 +372,8 @@ class AsistenciaMasiva
      *     filas: [
      *       { id_estudiante, id_asistencia (solo salida), hora,
      *         observacion (opcional),
+     *         id_colaborador (opcional): recibe en ingreso, entrega en salida,
+     *         id_persona (opcional): quien lo trae en ingreso, quien lo recoge en salida,
      *         utiles: [ { id, id_util_diario, nombre_libre, trajo, regreso } ],
      *         cobros: [ ...los que la usuaria dejo marcados... ] }
      *     ]
@@ -502,15 +509,20 @@ class AsistenciaMasiva
 
         $idNew = Uuid::generar();
 
+        $id_colaborador = AsistenciaEstudiantes::colaboradorValido($db, !empty($fila['id_colaborador']) ? $fila['id_colaborador'] : null);
+        $id_persona = AsistenciaEstudiantes::personaValida($db, !empty($fila['id_persona']) ? $fila['id_persona'] : null);
+
         $sentence = $db->prepare("INSERT INTO asistencia_estudiantes
-                                  (id, id_tenant, id_estudiante, fecha_ingreso, observacion_ingreso, id_usuario_ingreso)
-                                  VALUES (:id, :id_tenant, :id_estudiante, :fecha_ingreso, :observacion, :id_usuario)");
+                                  (id, id_tenant, id_estudiante, fecha_ingreso, observacion_ingreso, id_usuario_ingreso, id_colaborador_recibe, id_persona_entrega)
+                                  VALUES (:id, :id_tenant, :id_estudiante, :fecha_ingreso, :observacion, :id_usuario, :id_colaborador, :id_persona)");
         $sentence->bindValue(':id', $idNew);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindValue(':id_estudiante', $id_estudiante);
         $sentence->bindValue(':fecha_ingreso', $fechaIngreso);
         $sentence->bindValue(':observacion', $observacion !== '' ? $observacion : null);
         $sentence->bindValue(':id_usuario', $id_usuario);
+        $sentence->bindValue(':id_colaborador', $id_colaborador, $id_colaborador === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+        $sentence->bindValue(':id_persona', $id_persona, $id_persona === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
         $sentence->execute();
 
         // La observacion tambien queda en el observador del estudiante, con la
@@ -597,14 +609,21 @@ class AsistenciaMasiva
             );
         }
 
+        $id_colaborador = AsistenciaEstudiantes::colaboradorValido($db, !empty($fila['id_colaborador']) ? $fila['id_colaborador'] : null);
+        $id_persona = AsistenciaEstudiantes::personaValida($db, !empty($fila['id_persona']) ? $fila['id_persona'] : null);
+
         $sentence = $db->prepare("UPDATE asistencia_estudiantes
                                   SET fecha_salida = :fecha_salida,
                                       observacion_salida = :observacion,
-                                      id_usuario_salida = :id_usuario
+                                      id_usuario_salida = :id_usuario,
+                                      id_colaborador_entrega = :id_colaborador,
+                                      id_persona_recoge = :id_persona
                                   WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindValue(':fecha_salida', $fechaSalida);
         $sentence->bindValue(':observacion', $observacion !== '' ? $observacion : null);
         $sentence->bindValue(':id_usuario', $id_usuario);
+        $sentence->bindValue(':id_colaborador', $id_colaborador, $id_colaborador === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+        $sentence->bindValue(':id_persona', $id_persona, $id_persona === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
         $sentence->bindValue(':id', $id_asistencia);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();

@@ -15,6 +15,7 @@ Flight::route('GET /asistencia-estudiantes/resumen-grupo/@id_grupo', [Asistencia
 Flight::route('POST /asistencia-estudiantes/reporte-por-fecha', [AsistenciaEstudiantes::class, 'getReporteAsistenciaPorFecha']); // Reporte de asistencia por fecha específica
 Flight::route('GET /asistencia-estudiantes-reporte-indicadores', [AsistenciaEstudiantes::class, 'getReporteIndicadoresAsistencia']); // Reporte de indicadores de asistencia por estudiante
 Flight::route('GET /asistencia-estudiantes-fecha/@fecha', [AsistenciaEstudiantes::class, 'getEstudiantesPorFecha']); // estudiantes que asistieron en una fecha
+Flight::route('GET /asistencia-estudiantes/personas-entrega/@id_estudiante', [AsistenciaEstudiantes::class, 'getPersonasEntregaRecoge']); // quien puede traer o recoger al nino, con la ultima eleccion
 
 // Seguimiento de asistencia
 Flight::route('GET /seguimiento-asistencia-estudiantes', [AsistenciaEstudiantes::class, 'getSeguimientoAsistencia']);

@@ -357,7 +357,11 @@ class Auditoria
                 ELSE 'Normal'
             END as estado,
             CONCAT_WS(' ', pu1.primer_nombre, pu1.primer_apellido) as registrado_entrada,
-            CONCAT_WS(' ', pu2.primer_nombre, pu2.primer_apellido) as registrado_salida
+            CONCAT_WS(' ', pu2.primer_nombre, pu2.primer_apellido) as registrado_salida,
+            CONCAT_WS(' ', p_pe.primer_nombre, p_pe.primer_apellido) as persona_entrega,
+            CONCAT_WS(' ', p_cr.primer_nombre, p_cr.primer_apellido) as colaborador_recibe,
+            CONCAT_WS(' ', p_ce.primer_nombre, p_ce.primer_apellido) as colaborador_entrega,
+            CONCAT_WS(' ', p_pr.primer_nombre, p_pr.primer_apellido) as persona_recoge
         FROM asistencia_estudiantes ae
         INNER JOIN estudiantes e ON ae.id_estudiante = e.id
         INNER JOIN personas p ON e.id_persona = p.id
@@ -366,6 +370,12 @@ class Auditoria
         LEFT JOIN personas pu1 ON u1.id_persona = pu1.id
         LEFT JOIN usuarios u2 ON ae.id_usuario_salida = u2.id
         LEFT JOIN personas pu2 ON u2.id_persona = pu2.id
+        LEFT JOIN personas p_pe ON ae.id_persona_entrega = p_pe.id
+        LEFT JOIN colaboradores c_cr ON ae.id_colaborador_recibe = c_cr.id
+        LEFT JOIN personas p_cr ON c_cr.id_persona = p_cr.id
+        LEFT JOIN colaboradores c_ce ON ae.id_colaborador_entrega = c_ce.id
+        LEFT JOIN personas p_ce ON c_ce.id_persona = p_ce.id
+        LEFT JOIN personas p_pr ON ae.id_persona_recoge = p_pr.id
         WHERE eg.id_grupo = :id_grupo
         AND eg.activo = 1
         AND DATE(ae.fecha_ingreso) BETWEEN :fecha_inicio AND :fecha_fin
