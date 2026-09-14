@@ -31,12 +31,14 @@ class ContratosColaborador
                 SELECT cc.*,
                        CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) AS colaborador_nombre,
                        p.numero_identificacion AS colaborador_documento,
+                       ti.sigla AS sigla_identificacion,
                        car.nombre AS cargo_nombre,
                        tc.nombre AS tipo_contrato_nombre,
                        tc.codigo AS tipo_contrato_codigo
                 FROM contratos_colaborador cc
                 INNER JOIN colaboradores col ON cc.id_colaborador = col.id
                 INNER JOIN personas p ON col.id_persona = p.id
+                LEFT JOIN tipos_identificacion ti ON ti.id = p.id_tipo_identificacion
                 INNER JOIN cargos car ON cc.id_cargo = car.id
                 INNER JOIN tipos_contrato tc ON cc.id_tipo_contrato = tc.id
                 WHERE cc.activo = 1
@@ -68,12 +70,14 @@ class ContratosColaborador
                 SELECT cc.*,
                        CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) AS colaborador_nombre,
                        p.numero_identificacion AS colaborador_documento,
+                       ti.sigla AS sigla_identificacion,
                        car.nombre AS cargo_nombre,
                        tc.nombre AS tipo_contrato_nombre,
                        tc.codigo AS tipo_contrato_codigo
                 FROM contratos_colaborador cc
                 INNER JOIN colaboradores col ON cc.id_colaborador = col.id
                 INNER JOIN personas p ON col.id_persona = p.id
+                LEFT JOIN tipos_identificacion ti ON ti.id = p.id_tipo_identificacion
                 INNER JOIN cargos car ON cc.id_cargo = car.id
                 INNER JOIN tipos_contrato tc ON cc.id_tipo_contrato = tc.id
                 WHERE cc.id = :id

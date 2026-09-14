@@ -633,9 +633,12 @@ class NotificacionesAsistencia
                 return '';
             }
 
+            // En el ingreso se dice "registrados" y no "que trajo" porque en ese
+            // momento la docente casi nunca ha revisado toda la maleta: lo que
+            // va en la lista es lo que alcanzo a marcar.
             $encabezado = $tipo === self::TIPO_SALIDA
                 ? 'No regresaron a casa: '
-                : 'Útiles que trajo: ';
+                : 'Útiles registrados en el ingreso: ';
 
             return $encabezado . implode(', ', $nombres) . '.';
         } catch (Exception $e) {

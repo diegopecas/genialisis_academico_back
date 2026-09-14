@@ -8,6 +8,7 @@ class TiposDocumentos
         $sentence = $db->prepare("
             SELECT td.id, td.codigo, td.nombre, td.requiere_vencimiento, td.dias_alerta_vencimiento, 
                    td.permite_multiples, td.descripcion, td.activo, td.modificable_acudientes, td.requiere_firma,
+                   td.es_identidad,
                    td.id_categoria, cd.nombre AS categoria_nombre, cd.icono AS categoria_icono, cd.orden AS categoria_orden
             FROM tipos_documentos td
             LEFT JOIN categorias_documentos cd ON cd.id = td.id_categoria
@@ -35,6 +36,7 @@ class TiposDocumentos
                 td.descripcion,
                 td.modificable_acudientes,
                 td.requiere_firma,
+                td.es_identidad,
                 td.id_categoria,
                 cd.nombre AS categoria_nombre,
                 cd.icono AS categoria_icono,
@@ -64,7 +66,7 @@ class TiposDocumentos
         $sentence = $db->prepare("
             SELECT id, codigo, nombre, requiere_vencimiento, dias_alerta_vencimiento,
                    permite_multiples, descripcion, activo, modificable_acudientes, requiere_firma,
-                   id_categoria
+                   es_identidad, id_categoria
             FROM tipos_documentos
             WHERE id = :id
             AND id_tenant = :id_tenant
@@ -90,6 +92,9 @@ class TiposDocumentos
         $permite_multiples = isset($data['permite_multiples']) ? $data['permite_multiples'] : 1;
         $requiere_firma = isset($data['requiere_firma']) ? $data['requiere_firma'] : 0;
         $modificable_acudientes = isset($data['modificable_acudientes']) ? $data['modificable_acudientes'] : 1;
+        // Marca los documentos que sirven de identidad (cedula, tarjeta,
+        // registro civil). Apagada por defecto.
+        $es_identidad = isset($data['es_identidad']) ? $data['es_identidad'] : 0;
         $activo = isset($data['activo']) ? $data['activo'] : 1;
         $id_categoria = isset($data['id_categoria']) && $data['id_categoria'] !== '' ? $data['id_categoria'] : null;
 
@@ -98,11 +103,11 @@ class TiposDocumentos
             INSERT INTO tipos_documentos (
                 id, id_tenant, codigo, nombre, descripcion, requiere_vencimiento, 
                 dias_alerta_vencimiento, permite_multiples, requiere_firma, 
-                modificable_acudientes, activo, id_categoria
+                modificable_acudientes, es_identidad, activo, id_categoria
             ) VALUES (
                 :id, :id_tenant, :codigo, :nombre, :descripcion, :requiere_vencimiento, 
                 :dias_alerta_vencimiento, :permite_multiples, :requiere_firma, 
-                :modificable_acudientes, :activo, :id_categoria
+                :modificable_acudientes, :es_identidad, :activo, :id_categoria
             )
         ");
         $sentence->bindValue(':id', $id);
@@ -115,6 +120,7 @@ class TiposDocumentos
         $sentence->bindParam(':permite_multiples', $permite_multiples);
         $sentence->bindParam(':requiere_firma', $requiere_firma);
         $sentence->bindParam(':modificable_acudientes', $modificable_acudientes);
+        $sentence->bindParam(':es_identidad', $es_identidad);
         $sentence->bindParam(':activo', $activo);
         $sentence->bindParam(':id_categoria', $id_categoria);
         $sentence->execute();
@@ -137,6 +143,7 @@ class TiposDocumentos
         $permite_multiples = isset($data['permite_multiples']) ? $data['permite_multiples'] : 1;
         $requiere_firma = isset($data['requiere_firma']) ? $data['requiere_firma'] : 0;
         $modificable_acudientes = isset($data['modificable_acudientes']) ? $data['modificable_acudientes'] : 1;
+        $es_identidad = isset($data['es_identidad']) ? $data['es_identidad'] : 0;
         $activo = isset($data['activo']) ? $data['activo'] : 1;
         $id_categoria = isset($data['id_categoria']) && $data['id_categoria'] !== '' ? $data['id_categoria'] : null;
 
@@ -150,6 +157,7 @@ class TiposDocumentos
                 permite_multiples = :permite_multiples, 
                 requiere_firma = :requiere_firma,
                 modificable_acudientes = :modificable_acudientes, 
+                es_identidad = :es_identidad,
                 activo = :activo,
                 id_categoria = :id_categoria
             WHERE id = :id
@@ -164,6 +172,7 @@ class TiposDocumentos
         $sentence->bindParam(':permite_multiples', $permite_multiples);
         $sentence->bindParam(':requiere_firma', $requiere_firma);
         $sentence->bindParam(':modificable_acudientes', $modificable_acudientes);
+        $sentence->bindParam(':es_identidad', $es_identidad);
         $sentence->bindParam(':activo', $activo);
         $sentence->bindParam(':id_categoria', $id_categoria);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);

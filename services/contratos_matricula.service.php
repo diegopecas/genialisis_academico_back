@@ -493,6 +493,7 @@ class ContratosMatricula
                    CONCAT(p.primer_nombre, ' ', IFNULL(p.segundo_nombre, ''), ' ', 
                           p.primer_apellido, ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo,
                    p.numero_identificacion, ti.nombre AS tipo_identificacion,
+                   ti.sigla AS sigla_identificacion,
                    p.direccion, c.nombre AS ciudad
             FROM estudiantes e
             INNER JOIN personas p ON e.id_persona = p.id
@@ -510,6 +511,7 @@ class ContratosMatricula
                    CONCAT(p.primer_nombre, ' ', IFNULL(p.segundo_nombre, ''), ' ', 
                           p.primer_apellido, ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo,
                    p.numero_identificacion, ti.nombre AS tipo_identificacion,
+                   ti.sigla AS sigla_identificacion,
                    p.direccion, c.nombre AS ciudad,
                    ta.nombre AS tipo_acudiente
             FROM contratos_matricula_acudientes cma

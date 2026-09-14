@@ -2,12 +2,6 @@
 class AsistenciaEstudiantes
 {
     /**
-     * Codigo del tipo de documento con el que se carga la cedula. Viene
-     * sembrado en todos los tenants.
-     */
-    const CODIGO_DOCUMENTO_CEDULA = 'cedula';
-
-    /**
      * Configura la zona horaria de la sesión a Colombia (UTC-5)
      */
     private static function setTimeZone() {
@@ -123,30 +117,44 @@ class AsistenciaEstudiantes
      * Cada persona trae ademas foto, documento y la linea de autorizacion,
      * para que la pantalla muestre la ficha sin tener que ir otra vez al back.
      *
-     * 'id_documento_cedula' es el archivo de la cedula si la persona lo tiene
-     * cargado, para que la ficha lo deje descargar. Va como subconsulta y no
-     * como JOIN a proposito: un JOIN con documentos_personas multiplicaria las
-     * filas por cada documento de la persona.
+     * 'id_documento_identidad' es el archivo de identidad si la persona lo
+     * tiene cargado, para que la ficha lo deje descargar. Va como subconsulta
+     * y no como JOIN a proposito: un JOIN con documentos_personas
+     * multiplicaria las filas por cada documento de la persona.
      *
      * @param string $tipo  'ingreso' | 'salida'
      * @param string $fecha Y-m-d
      * @return array [ { id_persona, nombre, nombre_completo, documento, foto,
      *                  parentesco, icono, origen, temporal, autorizado_por,
-     *                  id_documento_cedula } ]
+     *                  sigla_identificacion, id_documento_identidad,
+     *                  nombre_documento_identidad } ]
      */
     public static function personasEntregaRecoge($db, $id_estudiante, $tipo, $fecha)
     {
-        // Ultima cedula cargada y activa de la persona. Si el jardin la subio
-        // con otro tipo de documento, aqui no sale.
-        $sqlCedula = "(SELECT dp.id
-                         FROM documentos_personas dp
-                         INNER JOIN tipos_documentos td ON td.id = dp.id_tipo_documento
-                        WHERE dp.id_persona = p.id
-                          AND dp.id_tenant = :id_tenant_cedula
-                          AND dp.activo = 1
-                          AND td.codigo = '" . self::CODIGO_DOCUMENTO_CEDULA . "'
-                        ORDER BY dp.fecha_subida DESC
-                        LIMIT 1) AS id_documento_cedula";
+        // Ultimo documento de identidad cargado y activo de la persona. Cual
+        // sirve de identidad lo decide la bandera es_identidad del catalogo de
+        // tipos de documento, que se administra desde la pantalla: asi un tipo
+        // nuevo entra sin tocar esta consulta.
+        $sqlIdentidad = "(SELECT dp.id
+                            FROM documentos_personas dp
+                            INNER JOIN tipos_documentos td ON td.id = dp.id_tipo_documento
+                           WHERE dp.id_persona = p.id
+                             AND dp.id_tenant = :id_tenant_identidad
+                             AND dp.activo = 1
+                             AND td.activo = 1
+                             AND td.es_identidad = 1
+                           ORDER BY dp.fecha_subida DESC
+                           LIMIT 1) AS id_documento_identidad,
+                         (SELECT td.nombre
+                            FROM documentos_personas dp
+                            INNER JOIN tipos_documentos td ON td.id = dp.id_tipo_documento
+                           WHERE dp.id_persona = p.id
+                             AND dp.id_tenant = :id_tenant_identidad_nombre
+                             AND dp.activo = 1
+                             AND td.activo = 1
+                             AND td.es_identidad = 1
+                           ORDER BY dp.fecha_subida DESC
+                           LIMIT 1) AS nombre_documento_identidad";
 
         $sqlAcudientes = "SELECT a.id_persona,
                                  TRIM(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido)) AS nombre,
@@ -156,9 +164,11 @@ class AsistenciaEstudiantes
                                  ta.nombre AS parentesco,
                                  ta.icono,
                                  a.autorizado_recoger,
-                                 $sqlCedula
+                                 ti.sigla AS sigla_identificacion,
+                                 $sqlIdentidad
                           FROM acudientes a
                           INNER JOIN personas p ON p.id = a.id_persona
+                          LEFT JOIN tipos_identificacion ti ON ti.id = p.id_tipo_identificacion
                           LEFT JOIN tipos_acudiente ta ON ta.id = a.id_tipo_acudiente
                           WHERE a.id_estudiante = :id_estudiante
                             AND a.id_tenant = :id_tenant
@@ -173,7 +183,8 @@ class AsistenciaEstudiantes
         $sentence = $db->prepare($sqlAcudientes);
         $sentence->bindValue(':id_estudiante', $id_estudiante);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-        $sentence->bindValue(':id_tenant_cedula', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_identidad', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_identidad_nombre', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
 
         $personas = array();
@@ -192,7 +203,9 @@ class AsistenciaEstudiantes
                 'origen'          => 'acudiente',
                 'temporal'        => 0,
                 'autorizado_por'  => null,
-                'id_documento_cedula' => $fila['id_documento_cedula']
+                'sigla_identificacion'       => $fila['sigla_identificacion'],
+                'id_documento_identidad'     => $fila['id_documento_identidad'],
+                'nombre_documento_identidad' => $fila['nombre_documento_identidad']
             );
         }
 
@@ -203,11 +216,13 @@ class AsistenciaEstudiantes
                                          p.foto,
                                          tar.nombre AS nombre_tipo_autorizacion,
                                          TRIM(CONCAT_WS(' ', pa.primer_nombre, pa.primer_apellido)) AS autorizado_por,
-                                         $sqlCedula
+                                         ti.sigla AS sigla_identificacion,
+                                         $sqlIdentidad
                                   FROM autorizados_recoger ar
                                   INNER JOIN tipos_autorizacion_recoger tar ON tar.id = ar.id_tipo_autorizacion
                                   INNER JOIN personas p ON p.id = ar.id_persona
                                   INNER JOIN personas pa ON pa.id = ar.id_persona_autoriza
+                                  LEFT JOIN tipos_identificacion ti ON ti.id = p.id_tipo_identificacion
                                   WHERE ar.id_estudiante = :id_estudiante
                                     AND ar.id_tenant = :id_tenant
                                     AND ar.activo = 1
@@ -222,7 +237,8 @@ class AsistenciaEstudiantes
                                   ORDER BY p.primer_nombre, p.primer_apellido");
         $sentence->bindValue(':id_estudiante', $id_estudiante);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-        $sentence->bindValue(':id_tenant_cedula', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_identidad', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_identidad_nombre', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindValue(':fecha', $fecha);
         $sentence->execute();
 
@@ -242,7 +258,9 @@ class AsistenciaEstudiantes
                 'origen'          => 'autorizado',
                 'temporal'        => intval($fila['id_tipo_autorizacion']) === 1 ? 0 : 1,
                 'autorizado_por'  => $fila['autorizado_por'],
-                'id_documento_cedula' => $fila['id_documento_cedula']
+                'sigla_identificacion'       => $fila['sigla_identificacion'],
+                'id_documento_identidad'     => $fila['id_documento_identidad'],
+                'nombre_documento_identidad' => $fila['nombre_documento_identidad']
             );
         }
 
@@ -305,28 +323,33 @@ class AsistenciaEstudiantes
     /**
      * Persona que queda marcada por defecto.
      *
-     * Si para esa fecha hay un autorizado temporal, es el, porque el acudiente
-     * lo autorizo justamente para ese dia: eso manda sobre la costumbre. Si
-     * hay varios temporales no se asume ninguno y se deja sin marcar, para que
-     * la usuaria escoja. Cuando no hay temporal se sugiere la ultima eleccion.
+     * En la salida, si para esa fecha hay un autorizado temporal, es el: el
+     * acudiente lo autorizo justamente para ese dia y eso manda sobre la
+     * costumbre. Si hay varios temporales no se asume ninguno y se deja sin
+     * marcar, para que la usuaria escoja.
      *
-     * Aplica igual en el ingreso y en la salida.
+     * En el ingreso siempre manda la ultima eleccion: la autorizacion es para
+     * recoger, no para traer, asi que dar por hecho que el temporal de las
+     * cuatro fue quien lo trajo a las siete deja un dato falso si la docente
+     * no se fija.
      *
      * @param array $personas Resultado de personasEntregaRecoge
      * @return string|null
      */
     public static function personaSugerida($db, $id_estudiante, $tipo, $personas)
     {
-        $temporales = array_values(array_filter($personas, function ($persona) {
-            return intval($persona['temporal']) === 1;
-        }));
+        if ($tipo === 'salida') {
+            $temporales = array_values(array_filter($personas, function ($persona) {
+                return intval($persona['temporal']) === 1;
+            }));
 
-        if (count($temporales) === 1) {
-            return $temporales[0]['id_persona'];
-        }
+            if (count($temporales) === 1) {
+                return $temporales[0]['id_persona'];
+            }
 
-        if (count($temporales) > 1) {
-            return null;
+            if (count($temporales) > 1) {
+                return null;
+            }
         }
 
         return self::ultimaPersonaEntregaRecoge($db, $id_estudiante, $tipo, $personas);
