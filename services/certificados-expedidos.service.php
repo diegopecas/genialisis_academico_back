@@ -143,6 +143,8 @@ class CertificadosExpedidos
                     'nombre' => CertificadosConfiguracion::$NOMBRES[$clave],
                     'modo' => $modo,
                     'regla' => $configuracion ? $configuracion['regla'] : 'libre',
+                    'agrupar_por_mes' => isset($configuracion['agrupar_por_mes']) ? (int) $configuracion['agrupar_por_mes'] : 0,
+                    'es_de_pagos' => CertificadosConfiguracion::esDePagos($clave) ? 1 : 0,
                     'cumple' => $evaluacion['cumple'] ? 1 : 0,
                     'mensaje' => $evaluacion['mensaje'],
                     'saldo_pendiente' => $evaluacion['saldo']
@@ -210,6 +212,12 @@ class CertificadosExpedidos
             $fechaDesde = isset($datos['fecha_desde']) && $datos['fecha_desde'] !== '' ? $datos['fecha_desde'] : null;
             $fechaHasta = isset($datos['fecha_hasta']) && $datos['fecha_hasta'] !== '' ? $datos['fecha_hasta'] : null;
             $origen = isset($datos['origen']) && $datos['origen'] === 'padres' ? 'padres' : 'institucional';
+            // Lista de productos a certificar. Vacia = todos los conceptos.
+            $productos = isset($datos['productos']) && is_array($datos['productos'])
+                ? array_values(array_unique($datos['productos'])) : [];
+            // La agrupacion llega de la pantalla; si no viene, manda el
+            // parametro del jardin.
+            $agruparPorMes = isset($datos['agrupar_por_mes']) ? (int) $datos['agrupar_por_mes'] : null;
 
             if (!in_array($clave, CertificadosConfiguracion::$CLAVES, true)) {
                 Flight::json(['error' => true, 'message' => 'Certificado no válido'], 400);
@@ -262,9 +270,24 @@ class CertificadosExpedidos
                     Flight::json(['error' => true, 'message' => $evaluacion['mensaje']], 403);
                     return;
                 }
+
+                // El acudiente no escoge conceptos ni formato: manda lo que el
+                // jardin dejo configurado.
+                $productos = [];
+                $agruparPorMes = null;
             }
 
-            $variables = self::armarVariables($db, $clave, $idEstudiante, $idAcudiente, $anioCertificado, $fechaDesde, $fechaHasta);
+            if ($agruparPorMes === null) {
+                $agruparPorMes = isset($configuracion['agrupar_por_mes']) ? (int) $configuracion['agrupar_por_mes'] : 0;
+            }
+
+            if (!CertificadosConfiguracion::esDePagos($clave)) {
+                $agruparPorMes = 0;
+                $productos = [];
+            }
+
+            $variables = self::armarVariables($db, $clave, $idEstudiante, $idAcudiente, $anioCertificado,
+                                              $fechaDesde, $fechaHasta, $productos, $agruparPorMes);
             if (isset($variables['__error'])) {
                 Flight::json(['error' => true, 'message' => $variables['__error']], 400);
                 return;
@@ -291,9 +314,11 @@ class CertificadosExpedidos
             $sentence = $db->prepare("
                 INSERT INTO certificados_expedidos
                     (id, id_tenant, anio, numero, clave_certificado, id_estudiante, id_acudiente,
-                     anio_certificado, fecha_desde, fecha_hasta, contenido_html, origen, id_usuario)
+                     anio_certificado, fecha_desde, fecha_hasta, agrupado_por_mes,
+                     contenido_html, origen, id_usuario)
                 VALUES (:id, :id_tenant, :anio, :numero, :clave, :id_estudiante, :id_acudiente,
-                        :anio_certificado, :fecha_desde, :fecha_hasta, :contenido_html, :origen, :id_usuario)
+                        :anio_certificado, :fecha_desde, :fecha_hasta, :agrupado,
+                        :contenido_html, :origen, :id_usuario)
             ");
             $idUsuario = isset($userData->id) ? $userData->id : null;
             $sentence->bindParam(':id', $id);
@@ -306,10 +331,29 @@ class CertificadosExpedidos
             $sentence->bindValue(':anio_certificado', $anioCertificado, $anioCertificado === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
             $sentence->bindParam(':fecha_desde', $fechaDesde);
             $sentence->bindParam(':fecha_hasta', $fechaHasta);
+            $sentence->bindValue(':agrupado', $agruparPorMes, PDO::PARAM_INT);
             $sentence->bindParam(':contenido_html', $contenidoHtml);
             $sentence->bindParam(':origen', $origen);
             $sentence->bindParam(':id_usuario', $idUsuario);
             $sentence->execute();
+
+            // Queda el detalle de que se certifico, para que el historico se
+            // explique solo.
+            if (count($productos) > 0) {
+                $insertar = $db->prepare("
+                    INSERT INTO certificados_expedidos_productos
+                        (id, id_tenant, id_certificado_expedido, id_producto_servicio)
+                    VALUES (:id, :id_tenant, :id_certificado, :id_producto)
+                ");
+                foreach ($productos as $idProducto) {
+                    $idFila = Uuid::generar();
+                    $insertar->bindParam(':id', $idFila);
+                    $insertar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $insertar->bindParam(':id_certificado', $id);
+                    $insertar->bindParam(':id_producto', $idProducto);
+                    $insertar->execute();
+                }
+            }
 
             $db->commit();
 
@@ -475,7 +519,8 @@ class CertificadosExpedidos
     private static function configuraciones($db)
     {
         $sentence = $db->prepare("
-            SELECT id, clave_certificado, modo, regla, mensaje_no_cumple, activo
+            SELECT id, clave_certificado, modo, regla, agrupar_por_mes,
+                   mensaje_no_cumple, activo
             FROM certificados_configuracion
             WHERE id_tenant = :id_tenant
         ");
@@ -498,7 +543,8 @@ class CertificadosExpedidos
      * Arma el diccionario de variables con el que se resuelve la plantilla.
      * Las claves llegan con las llaves puestas para reemplazar de una.
      */
-    private static function armarVariables($db, $clave, $idEstudiante, $idAcudiente, $anioCertificado, $fechaDesde, $fechaHasta)
+    private static function armarVariables($db, $clave, $idEstudiante, $idAcudiente, $anioCertificado,
+                                          $fechaDesde, $fechaHasta, $productos = [], $agruparPorMes = 0)
     {
         $configuracion = self::configuracionGlobal($db);
         $estudiante = self::datosEstudiante($db, $idEstudiante, $anioCertificado);
@@ -513,7 +559,7 @@ class CertificadosExpedidos
             '{{institucion_nombre}}' => self::valor($configuracion, 'institucion_nombre'),
             '{{institucion_nit}}' => self::valor($configuracion, 'institucion_nit'),
             '{{institucion_direccion}}' => self::valor($configuracion, 'institucion_direccion'),
-            '{{ciudad}}' => self::valor($configuracion, 'certificado_ciudad'),
+            '{{ciudad}}' => self::ciudad($configuracion),
             '{{fecha_larga}}' => self::fechaLarga(date('Y-m-d')),
             '{{anio}}' => date('Y'),
             '{{estudiante_nombre}}' => $estudiante['nombre_completo'],
@@ -537,7 +583,9 @@ class CertificadosExpedidos
             '{{fecha_desde}}' => $fechaDesde ? self::fechaLarga($fechaDesde) : '',
             '{{fecha_hasta}}' => $fechaHasta ? self::fechaLarga($fechaHasta) : '',
             '{{tabla_pagos}}' => '',
-            '{{tabla_cuentas_pendientes}}' => ''
+            '{{tabla_cuentas_pendientes}}' => '',
+            '{{conceptos_certificados}}' => self::nombresProductos($db, $productos),
+            '{{pie_contacto}}' => self::lineaContacto($configuracion)
         ];
 
         if ($clave === 'pagos_acudiente') {
@@ -546,20 +594,23 @@ class CertificadosExpedidos
                 return ['__error' => 'Acudiente no encontrado'];
             }
 
-            $pagos = self::pagosDeAcudiente($db, $idAcudiente, $fechaDesde, $fechaHasta);
+            $pagos = self::pagosDeAcudiente($db, $idAcudiente, $fechaDesde, $fechaHasta, $productos);
             $variables['{{acudiente_nombre}}'] = $acudiente['nombre_completo'];
             $variables['{{acudiente_tipo_documento}}'] = $acudiente['tipo_identificacion'];
             $variables['{{acudiente_documento}}'] = $acudiente['numero_identificacion'];
             $variables['{{estudiantes_nombres}}'] = self::nombresEstudiantes($pagos);
-            $variables['{{tabla_pagos}}'] = self::tablaPagos($pagos, true);
+            // La columna del estudiante solo aporta si el acudiente pago por mas
+            // de uno; si no, repite el mismo nombre en cada fila y estrecha el
+            // concepto.
+            $variables['{{tabla_pagos}}'] = self::tablaPagos($pagos, count(self::estudiantesDistintos($pagos)) > 1, $agruparPorMes);
             $total = self::totalPagos($pagos);
             $variables['{{total_pagado}}'] = self::formatearMoneda($total);
             $variables['{{total_pagado_letras}}'] = self::numeroALetras($total);
         }
 
         if ($clave === 'pagos_estudiante') {
-            $pagos = self::pagosDeEstudiante($db, $idEstudiante, $fechaDesde, $fechaHasta);
-            $variables['{{tabla_pagos}}'] = self::tablaPagos($pagos, false);
+            $pagos = self::pagosDeEstudiante($db, $idEstudiante, $fechaDesde, $fechaHasta, $productos);
+            $variables['{{tabla_pagos}}'] = self::tablaPagos($pagos, false, $agruparPorMes);
             $total = self::totalPagos($pagos);
             $variables['{{total_pagado}}'] = self::formatearMoneda($total);
             $variables['{{total_pagado_letras}}'] = self::numeroALetras($total);
@@ -581,6 +632,31 @@ class CertificadosExpedidos
         $variables['{{tabla_cuentas_pendientes}}'] = self::tablaCuentasPendientes($db, $idEstudiante);
 
         return $variables;
+    }
+
+    /** Conceptos certificados, por si el jardin los quiere citar en el texto. */
+    private static function nombresProductos($db, $productos)
+    {
+        if (count($productos) === 0) {
+            return '';
+        }
+
+        $marcadores = self::marcadores($productos, 'np');
+
+        $sentence = $db->prepare("
+            SELECT GROUP_CONCAT(nombre ORDER BY nombre SEPARATOR ', ')
+            FROM productos_servicios
+            WHERE id_tenant = :id_tenant AND id IN ($marcadores)
+        ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        foreach ($productos as $indice => $idProducto) {
+            $sentence->bindValue(':np' . $indice, $idProducto);
+        }
+        $sentence->execute();
+
+        $nombres = $sentence->fetchColumn();
+
+        return $nombres ? $nombres : '';
     }
 
     private static function datosEstudiante($db, $idEstudiante, $anioCertificado)
@@ -651,19 +727,24 @@ class CertificadosExpedidos
      * por la fila de acudiente, porque un mismo papa tiene una fila de
      * acudiente por cada hijo y el certificado debe traerlos todos.
      */
-    private static function pagosDeAcudiente($db, $idAcudiente, $fechaDesde, $fechaHasta)
+    /**
+     * Pagos hechos por una persona acudiente. Se resuelve por la persona y no
+     * por la fila de acudiente, porque un mismo papa tiene una fila de
+     * acudiente por cada hijo y el certificado debe traerlos todos.
+     *
+     * Con $productos el valor deja de ser el del recibo y pasa a ser lo aplicado
+     * a cuentas de esos productos: un recibo suele cubrir varios a la vez.
+     */
+    private static function pagosDeAcudiente($db, $idAcudiente, $fechaDesde, $fechaHasta, $productos)
     {
-        $sentence = $db->prepare("
-            SELECT pr.id, pr.fecha, pr.anio, pr.numero, pr.valor_recibido,
+        $sql = "
+            SELECT pr.id, pr.fecha, pr.anio, pr.numero,
+                   " . self::expresionValor($productos) . " AS valor_recibido,
                    pr.referencia_bancaria, pr.id_acudiente,
                    tp.nombre AS tipo_pago,
                    TRIM(CONCAT_WS(' ', pe.primer_nombre, pe.segundo_nombre,
                                   pe.primer_apellido, pe.segundo_apellido)) AS estudiante_nombre,
-                   (SELECT GROUP_CONCAT(DISTINCT ps.nombre ORDER BY ps.nombre SEPARATOR ', ')
-                      FROM cuenta_pagada cp
-                      INNER JOIN cuentas_por_cobrar cc ON cc.id = cp.id_cuenta_por_cobrar
-                      INNER JOIN productos_servicios ps ON ps.id = cc.id_producto_servicio
-                     WHERE cp.id_pago_recibido = pr.id) AS conceptos
+                   " . self::expresionConceptos($productos) . " AS conceptos
             FROM pagos_recibidos pr
             INNER JOIN acudientes ap ON ap.id = pr.id_acudiente
             LEFT JOIN tipos_pagos tp ON tp.id = pr.id_tipo_pago
@@ -673,30 +754,31 @@ class CertificadosExpedidos
               AND COALESCE(pr.anulado, 0) = 0
               AND ap.id_persona = (SELECT a2.id_persona FROM acudientes a2 WHERE a2.id = :id_acudiente)
               AND DATE(pr.fecha) BETWEEN :fecha_desde AND :fecha_hasta
+            " . self::filtroProductos($productos) . "
             ORDER BY pr.fecha, pr.numero
-        ");
+        ";
+
+        $sentence = $db->prepare($sql);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_acudiente', $idAcudiente);
         $sentence->bindParam(':fecha_desde', $fechaDesde);
         $sentence->bindParam(':fecha_hasta', $fechaHasta);
+        self::ligarProductos($sentence, $productos);
         $sentence->execute();
 
         return $sentence->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    private static function pagosDeEstudiante($db, $idEstudiante, $fechaDesde, $fechaHasta)
+    private static function pagosDeEstudiante($db, $idEstudiante, $fechaDesde, $fechaHasta, $productos)
     {
-        $sentence = $db->prepare("
-            SELECT pr.id, pr.fecha, pr.anio, pr.numero, pr.valor_recibido,
+        $sql = "
+            SELECT pr.id, pr.fecha, pr.anio, pr.numero,
+                   " . self::expresionValor($productos) . " AS valor_recibido,
                    pr.referencia_bancaria, pr.id_acudiente,
                    tp.nombre AS tipo_pago,
                    TRIM(CONCAT_WS(' ', pa.primer_nombre, pa.segundo_nombre,
                                   pa.primer_apellido, pa.segundo_apellido)) AS acudiente_nombre,
-                   (SELECT GROUP_CONCAT(DISTINCT ps.nombre ORDER BY ps.nombre SEPARATOR ', ')
-                      FROM cuenta_pagada cp
-                      INNER JOIN cuentas_por_cobrar cc ON cc.id = cp.id_cuenta_por_cobrar
-                      INNER JOIN productos_servicios ps ON ps.id = cc.id_producto_servicio
-                     WHERE cp.id_pago_recibido = pr.id) AS conceptos
+                   " . self::expresionConceptos($productos) . " AS conceptos
             FROM pagos_recibidos pr
             LEFT JOIN tipos_pagos tp ON tp.id = pr.id_tipo_pago
             LEFT JOIN acudientes a ON a.id = pr.id_acudiente
@@ -705,15 +787,93 @@ class CertificadosExpedidos
               AND COALESCE(pr.anulado, 0) = 0
               AND pr.id_estudiante = :id_estudiante
               AND DATE(pr.fecha) BETWEEN :fecha_desde AND :fecha_hasta
+            " . self::filtroProductos($productos) . "
             ORDER BY pr.fecha, pr.numero
-        ");
+        ";
+
+        $sentence = $db->prepare($sql);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_estudiante', $idEstudiante);
         $sentence->bindParam(':fecha_desde', $fechaDesde);
         $sentence->bindParam(':fecha_hasta', $fechaHasta);
+        self::ligarProductos($sentence, $productos);
         $sentence->execute();
 
         return $sentence->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * Sin filtro se certifica el valor del recibo. Con productos escogidos solo
+     * se puede certificar lo aplicado a esos productos: un recibo suele cubrir
+     * varios a la vez.
+     */
+    private static function expresionValor($productos)
+    {
+        if (count($productos) === 0) {
+            return 'pr.valor_recibido';
+        }
+
+        $marcadores = self::marcadores($productos, 'pv');
+
+        return "(SELECT COALESCE(SUM(cp.valor_aplicado), 0)
+                   FROM cuenta_pagada cp
+                   INNER JOIN cuentas_por_cobrar cc ON cc.id = cp.id_cuenta_por_cobrar
+                  WHERE cp.id_pago_recibido = pr.id
+                    AND cc.id_producto_servicio IN ($marcadores))";
+    }
+
+    private static function expresionConceptos($productos)
+    {
+        $filtro = '';
+        if (count($productos) > 0) {
+            $filtro = ' AND cc.id_producto_servicio IN (' . self::marcadores($productos, 'pc') . ') ';
+        }
+
+        return "(SELECT GROUP_CONCAT(DISTINCT ps.nombre ORDER BY ps.nombre SEPARATOR ', ')
+                   FROM cuenta_pagada cp
+                   INNER JOIN cuentas_por_cobrar cc ON cc.id = cp.id_cuenta_por_cobrar
+                   INNER JOIN productos_servicios ps ON ps.id = cc.id_producto_servicio
+                  WHERE cp.id_pago_recibido = pr.id $filtro)";
+    }
+
+    /** Deja fuera los recibos que no tocaron ninguno de los productos escogidos. */
+    private static function filtroProductos($productos)
+    {
+        if (count($productos) === 0) {
+            return '';
+        }
+
+        $marcadores = self::marcadores($productos, 'pf');
+
+        return " AND EXISTS (SELECT 1
+                               FROM cuenta_pagada cp2
+                               INNER JOIN cuentas_por_cobrar cc2 ON cc2.id = cp2.id_cuenta_por_cobrar
+                              WHERE cp2.id_pago_recibido = pr.id
+                                AND cc2.id_producto_servicio IN ($marcadores)) ";
+    }
+
+    /**
+     * Marcadores con nombre para una lista. Cada subconsulta usa su propio
+     * prefijo: repetir un mismo nombre solo funciona con prepares emulados.
+     */
+    private static function marcadores($productos, $prefijo)
+    {
+        $nombres = [];
+        for ($i = 0; $i < count($productos); $i++) {
+            $nombres[] = ':' . $prefijo . $i;
+        }
+
+        return implode(', ', $nombres);
+    }
+
+    /** Ata la lista de productos a los tres grupos de marcadores. */
+    private static function ligarProductos($sentence, $productos)
+    {
+        foreach (['pv', 'pc', 'pf'] as $prefijo) {
+            foreach ($productos as $indice => $idProducto) {
+                $sentence->bindValue(':' . $prefijo . $indice, $idProducto);
+            }
+        }
     }
 
     private static function totalPagos($pagos)
@@ -725,7 +885,8 @@ class CertificadosExpedidos
         return round($total, 2);
     }
 
-    private static function nombresEstudiantes($pagos)
+    /** Nombres distintos de estudiante presentes en los pagos. */
+    private static function estudiantesDistintos($pagos)
     {
         $nombres = [];
         foreach ($pagos as $pago) {
@@ -733,6 +894,13 @@ class CertificadosExpedidos
                 $nombres[] = $pago['estudiante_nombre'];
             }
         }
+
+        return $nombres;
+    }
+
+    private static function nombresEstudiantes($pagos)
+    {
+        $nombres = self::estudiantesDistintos($pagos);
 
         if (count($nombres) === 0) {
             return '';
@@ -747,12 +915,18 @@ class CertificadosExpedidos
 
     /**
      * Tabla de pagos en HTML. Con $conEstudiante se agrega la columna del
-     * estudiante, que solo tiene sentido en el certificado del acudiente.
+     * estudiante, que solo tiene sentido cuando el acudiente pago por varios.
+     * Con $agruparPorMes sale una fila por mes: se pierde el numero de recibo
+     * porque un mes puede tener varios.
      */
-    private static function tablaPagos($pagos, $conEstudiante)
+    private static function tablaPagos($pagos, $conEstudiante, $agruparPorMes = false)
     {
         if (count($pagos) === 0) {
             return '<p><i>No se registran pagos en el periodo indicado.</i></p>';
+        }
+
+        if ($agruparPorMes) {
+            return self::tablaPagosPorMes($pagos, $conEstudiante);
         }
 
         $html = '<table><thead><tr><th>Fecha</th><th>Recibo</th>';
@@ -770,6 +944,66 @@ class CertificadosExpedidos
             }
             $html .= '<td>' . self::escapar($pago['conceptos'] ? $pago['conceptos'] : $pago['tipo_pago']) . '</td>';
             $html .= '<td>' . self::escapar(self::formatearMoneda((float) $pago['valor_recibido'])) . '</td>';
+            $html .= '</tr>';
+        }
+
+        $html .= '</tbody></table>';
+
+        return $html;
+    }
+
+    /**
+     * Una fila por mes con el total y los conceptos distintos de ese mes.
+     * Cuando hay varios estudiantes se agrupa por mes y estudiante, para no
+     * mezclar en una misma fila lo pagado por hijos distintos.
+     */
+    private static function tablaPagosPorMes($pagos, $conEstudiante)
+    {
+        $meses = [];
+
+        foreach ($pagos as $pago) {
+            $periodo = date('Y-m', strtotime($pago['fecha']));
+            $estudiante = $conEstudiante ? (string) $pago['estudiante_nombre'] : '';
+            $llave = $periodo . '|' . $estudiante;
+
+            if (!isset($meses[$llave])) {
+                $meses[$llave] = [
+                    'periodo' => $periodo,
+                    'estudiante' => $estudiante,
+                    'total' => 0,
+                    'conceptos' => []
+                ];
+            }
+
+            $meses[$llave]['total'] += (float) $pago['valor_recibido'];
+
+            $conceptos = $pago['conceptos'] ? $pago['conceptos'] : $pago['tipo_pago'];
+            foreach (explode(', ', (string) $conceptos) as $concepto) {
+                $concepto = trim($concepto);
+                if ($concepto !== '' && !in_array($concepto, $meses[$llave]['conceptos'], true)) {
+                    $meses[$llave]['conceptos'][] = $concepto;
+                }
+            }
+        }
+
+        ksort($meses);
+
+        $html = '<table><thead><tr><th>Mes</th>';
+        if ($conEstudiante) {
+            $html .= '<th>Estudiante</th>';
+        }
+        $html .= '<th>Concepto</th><th>Valor</th></tr></thead><tbody>';
+
+        foreach ($meses as $mes) {
+            sort($mes['conceptos']);
+
+            $html .= '<tr>';
+            $html .= '<td>' . self::escapar(self::mesLargo($mes['periodo'])) . '</td>';
+            if ($conEstudiante) {
+                $html .= '<td>' . self::escapar($mes['estudiante']) . '</td>';
+            }
+            $html .= '<td>' . self::escapar(implode(', ', $mes['conceptos'])) . '</td>';
+            $html .= '<td>' . self::escapar(self::formatearMoneda($mes['total'])) . '</td>';
             $html .= '</tr>';
         }
 
@@ -879,10 +1113,12 @@ class CertificadosExpedidos
         $firma .= '<p style="text-align:center"><b>' . self::escapar($variables['{{institucion_nombre}}']) . '</b></p>';
         $firma .= '<p style="text-align:center">NIT: ' . self::escapar($variables['{{institucion_nit}}']) . '</p>';
 
-        $pie = '<p style="text-align:center;font-size:8">Certificado No. '
-            . self::escapar($variables['{{numero_certificado}}']) . '</p>';
+        // El numero va en la cabecera y los datos de contacto en el pie: el
+        // renderizador los saca de aqui y los dibuja aparte del cuerpo.
+        $meta = '<div data-numero="' . self::escapar($variables['{{numero_certificado}}']) . '"'
+            . ' data-contacto="' . self::escapar($variables['{{pie_contacto}}']) . '"></div>';
 
-        return '<h1>' . self::escapar($titulo) . '</h1>' . $cuerpo . $firma . $pie;
+        return '<h1>' . self::escapar($titulo) . '</h1>' . $meta . $cuerpo . $firma;
     }
 
     // -----------------------------------------------------------------
@@ -922,6 +1158,36 @@ class CertificadosExpedidos
         return $propio !== '' ? $propio : self::valor($configuracion, 'representante_legal_nombre');
     }
 
+    /**
+     * Linea de contacto del pie: direccion, telefono, correo y web, con lo que
+     * el jardin tenga configurado. El Instagram se deja por fuera a proposito:
+     * el certificado va a bancos y entidades.
+     */
+    private static function lineaContacto($configuracion)
+    {
+        $partes = [];
+
+        foreach (['institucion_direccion', 'institucion_telefono',
+                  'institucion_email', 'institucion_web'] as $clave) {
+            $valor = self::valor($configuracion, $clave);
+            if ($valor !== '') {
+                $partes[] = $valor;
+            }
+        }
+
+        return implode('  ·  ', $partes);
+    }
+
+    /**
+     * Ciudad de la fecha. Si el jardin no configuro una, se usa la direccion de
+     * la institucion, que normalmente ya viene como "Chia, Cundinamarca".
+     */
+    private static function ciudad($configuracion)
+    {
+        $propia = self::valor($configuracion, 'certificado_ciudad');
+        return $propia !== '' ? $propia : self::valor($configuracion, 'institucion_direccion');
+    }
+
     private static function siguienteNumero($db, $anio)
     {
         $sentence = $db->prepare("
@@ -944,12 +1210,25 @@ class CertificadosExpedidos
 
     private static function formatearMoneda($valor)
     {
-        return '$ ' . number_format((float) $valor, 0, ',', '.');
+        // Sin espacio despues del signo: en la tabla del PDF "$ 900.000" se
+        // partia en dos lineas porque el ancho se calcula por palabra.
+        return '$' . number_format((float) $valor, 0, ',', '.');
     }
 
     private static function fechaCorta($fecha)
     {
         return date('d/m/Y', strtotime($fecha));
+    }
+
+    /** "Febrero de 2026" a partir de un periodo Y-m. */
+    private static function mesLargo($periodo)
+    {
+        $meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+        $partes = explode('-', $periodo);
+        $indice = (int) $partes[1] - 1;
+
+        return ucfirst($meses[$indice]) . ' de ' . $partes[0];
     }
 
     private static function fechaLarga($fecha)

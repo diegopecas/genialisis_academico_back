@@ -50,7 +50,7 @@ class CertificadosConfiguracion
             $db = Flight::db();
             $sentence = $db->prepare("
                 SELECT cc.id, cc.clave_certificado, cc.modo, cc.regla,
-                       cc.mensaje_no_cumple, cc.activo,
+                       cc.agrupar_por_mes, cc.mensaje_no_cumple, cc.activo,
                        (SELECT COUNT(*)
                           FROM certificados_configuracion_productos ccp
                          WHERE ccp.id_certificado_config = cc.id) AS total_productos
@@ -71,6 +71,7 @@ class CertificadosConfiguracion
                     $fila = $existentes[$clave];
                     $fila['nombre'] = self::$NOMBRES[$clave];
                     $fila['regla_fija'] = ($clave === 'paz_y_salvo') ? 1 : 0;
+                    $fila['es_de_pagos'] = self::esDePagos($clave) ? 1 : 0;
                     $resultado[] = $fila;
                     continue;
                 }
@@ -81,10 +82,12 @@ class CertificadosConfiguracion
                     'nombre' => self::$NOMBRES[$clave],
                     'modo' => 'manual',
                     'regla' => 'libre',
+                    'agrupar_por_mes' => 0,
                     'mensaje_no_cumple' => null,
                     'activo' => 1,
                     'total_productos' => 0,
-                    'regla_fija' => ($clave === 'paz_y_salvo') ? 1 : 0
+                    'regla_fija' => ($clave === 'paz_y_salvo') ? 1 : 0,
+                    'es_de_pagos' => self::esDePagos($clave) ? 1 : 0
                 ];
             }
 
@@ -113,7 +116,8 @@ class CertificadosConfiguracion
 
             $db = Flight::db();
             $sentence = $db->prepare("
-                SELECT id, clave_certificado, modo, regla, mensaje_no_cumple, activo
+                SELECT id, clave_certificado, modo, regla, agrupar_por_mes,
+                       mensaje_no_cumple, activo
                 FROM certificados_configuracion
                 WHERE id_tenant = :id_tenant AND clave_certificado = :clave
             ");
@@ -129,6 +133,7 @@ class CertificadosConfiguracion
                     'clave_certificado' => $clave,
                     'modo' => 'manual',
                     'regla' => 'libre',
+                    'agrupar_por_mes' => 0,
                     'mensaje_no_cumple' => null,
                     'activo' => 1
                 ];
@@ -136,6 +141,7 @@ class CertificadosConfiguracion
 
             $configuracion['nombre'] = self::$NOMBRES[$clave];
             $configuracion['regla_fija'] = ($clave === 'paz_y_salvo') ? 1 : 0;
+            $configuracion['es_de_pagos'] = self::esDePagos($clave) ? 1 : 0;
             $configuracion['productos'] = $configuracion['id']
                 ? self::productosDe($db, $configuracion['id'])
                 : [];
@@ -167,6 +173,7 @@ class CertificadosConfiguracion
             $regla = isset($datos['regla']) ? $datos['regla'] : 'libre';
             $mensaje = isset($datos['mensaje_no_cumple']) ? $datos['mensaje_no_cumple'] : null;
             $activo = isset($datos['activo']) ? (int) $datos['activo'] : 1;
+            $agruparPorMes = isset($datos['agrupar_por_mes']) ? (int) $datos['agrupar_por_mes'] : 0;
             $productos = isset($datos['productos']) && is_array($datos['productos']) ? $datos['productos'] : [];
 
             if (!in_array($clave, self::$CLAVES, true)) {
@@ -187,6 +194,12 @@ class CertificadosConfiguracion
             if ($clave === 'paz_y_salvo') {
                 $regla = 'libre';
                 $productos = [];
+            }
+
+            // La agrupacion por mes solo tiene sentido en los certificados de
+            // pagos; en los demas no hay tabla que agrupar.
+            if (!self::esDePagos($clave)) {
+                $agruparPorMes = 0;
             }
 
             if ($regla === 'al_dia_productos' && count($productos) === 0) {
@@ -211,7 +224,7 @@ class CertificadosConfiguracion
             if ($idConfiguracion) {
                 $sentence = $db->prepare("
                     UPDATE certificados_configuracion
-                    SET modo = :modo, regla = :regla,
+                    SET modo = :modo, regla = :regla, agrupar_por_mes = :agrupar,
                         mensaje_no_cumple = :mensaje, activo = :activo
                     WHERE id = :id AND id_tenant = :id_tenant
                 ");
@@ -220,8 +233,9 @@ class CertificadosConfiguracion
                 $idConfiguracion = Uuid::generar();
                 $sentence = $db->prepare("
                     INSERT INTO certificados_configuracion
-                        (id, id_tenant, clave_certificado, modo, regla, mensaje_no_cumple, activo)
-                    VALUES (:id, :id_tenant, :clave, :modo, :regla, :mensaje, :activo)
+                        (id, id_tenant, clave_certificado, modo, regla, agrupar_por_mes,
+                         mensaje_no_cumple, activo)
+                    VALUES (:id, :id_tenant, :clave, :modo, :regla, :agrupar, :mensaje, :activo)
                 ");
                 $sentence->bindParam(':id', $idConfiguracion);
                 $sentence->bindParam(':clave', $clave);
@@ -230,6 +244,7 @@ class CertificadosConfiguracion
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':modo', $modo);
             $sentence->bindParam(':regla', $regla);
+            $sentence->bindValue(':agrupar', $agruparPorMes, PDO::PARAM_INT);
             $sentence->bindParam(':mensaje', $mensaje);
             $sentence->bindValue(':activo', $activo, PDO::PARAM_INT);
             $sentence->execute();
@@ -270,6 +285,12 @@ class CertificadosConfiguracion
             error_log('Error en CertificadosConfiguracion::replace: ' . $e->getMessage());
             Flight::json(['error' => true, 'message' => 'Error al guardar la configuración'], 500);
         }
+    }
+
+    /** Los certificados de pagos son los unicos con tabla y rango de fechas. */
+    public static function esDePagos($clave)
+    {
+        return $clave === 'pagos_estudiante' || $clave === 'pagos_acudiente';
     }
 
     /**
