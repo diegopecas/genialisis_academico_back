@@ -212,6 +212,7 @@ class CertificadosExpedidos
             $fechaDesde = isset($datos['fecha_desde']) && $datos['fecha_desde'] !== '' ? $datos['fecha_desde'] : null;
             $fechaHasta = isset($datos['fecha_hasta']) && $datos['fecha_hasta'] !== '' ? $datos['fecha_hasta'] : null;
             $origen = isset($datos['origen']) && $datos['origen'] === 'padres' ? 'padres' : 'institucional';
+            $dirigidoA = isset($datos['dirigido_a']) ? trim($datos['dirigido_a']) : '';
             // Lista de productos a certificar. Vacia = todos los conceptos.
             $productos = isset($datos['productos']) && is_array($datos['productos'])
                 ? array_values(array_unique($datos['productos'])) : [];
@@ -275,6 +276,7 @@ class CertificadosExpedidos
                 // jardin dejo configurado.
                 $productos = [];
                 $agruparPorMes = null;
+                $dirigidoA = '';
             }
 
             if ($agruparPorMes === null) {
@@ -287,7 +289,7 @@ class CertificadosExpedidos
             }
 
             $variables = self::armarVariables($db, $clave, $idEstudiante, $idAcudiente, $anioCertificado,
-                                              $fechaDesde, $fechaHasta, $productos, $agruparPorMes);
+                                              $fechaDesde, $fechaHasta, $productos, $agruparPorMes, $dirigidoA);
             if (isset($variables['__error'])) {
                 Flight::json(['error' => true, 'message' => $variables['__error']], 400);
                 return;
@@ -315,10 +317,10 @@ class CertificadosExpedidos
                 INSERT INTO certificados_expedidos
                     (id, id_tenant, anio, numero, clave_certificado, id_estudiante, id_acudiente,
                      anio_certificado, fecha_desde, fecha_hasta, agrupado_por_mes,
-                     contenido_html, origen, id_usuario)
+                     dirigido_a, contenido_html, origen, id_usuario)
                 VALUES (:id, :id_tenant, :anio, :numero, :clave, :id_estudiante, :id_acudiente,
                         :anio_certificado, :fecha_desde, :fecha_hasta, :agrupado,
-                        :contenido_html, :origen, :id_usuario)
+                        :dirigido_a, :contenido_html, :origen, :id_usuario)
             ");
             $idUsuario = isset($userData->id) ? $userData->id : null;
             $sentence->bindParam(':id', $id);
@@ -332,6 +334,7 @@ class CertificadosExpedidos
             $sentence->bindParam(':fecha_desde', $fechaDesde);
             $sentence->bindParam(':fecha_hasta', $fechaHasta);
             $sentence->bindValue(':agrupado', $agruparPorMes, PDO::PARAM_INT);
+            $sentence->bindParam(':dirigido_a', $dirigidoA);
             $sentence->bindParam(':contenido_html', $contenidoHtml);
             $sentence->bindParam(':origen', $origen);
             $sentence->bindParam(':id_usuario', $idUsuario);
@@ -544,7 +547,8 @@ class CertificadosExpedidos
      * Las claves llegan con las llaves puestas para reemplazar de una.
      */
     private static function armarVariables($db, $clave, $idEstudiante, $idAcudiente, $anioCertificado,
-                                          $fechaDesde, $fechaHasta, $productos = [], $agruparPorMes = 0)
+                                          $fechaDesde, $fechaHasta, $productos = [], $agruparPorMes = 0,
+                                          $dirigidoA = '')
     {
         $configuracion = self::configuracionGlobal($db);
         $estudiante = self::datosEstudiante($db, $idEstudiante, $anioCertificado);
@@ -585,7 +589,9 @@ class CertificadosExpedidos
             '{{tabla_pagos}}' => '',
             '{{tabla_cuentas_pendientes}}' => '',
             '{{conceptos_certificados}}' => self::nombresProductos($db, $productos),
-            '{{pie_contacto}}' => self::lineaContacto($configuracion)
+            '{{pie_contacto}}' => self::lineaContacto($configuracion),
+            // Si el jardin no indica destinatario, el certificado queda abierto.
+            '{{dirigido_a}}' => $dirigidoA !== '' ? $dirigidoA : 'A QUIEN INTERESE'
         ];
 
         if ($clave === 'pagos_acudiente') {
