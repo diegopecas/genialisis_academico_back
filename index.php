@@ -6,6 +6,11 @@ ini_set('display_startup_errors', 1);
 ini_set('max_execution_time', 300);
 error_reporting(E_ALL);
 
+// Con el servidor embebido (php -S) los errores solo llegan a la terminal si
+// pasan por error_log. display_errors los manda al navegador, no a la consola.
+ini_set('log_errors', 1);
+ini_set('error_log', 'php://stderr');
+
 date_default_timezone_set('America/Bogota');
 
 // ===================================================================
@@ -466,6 +471,24 @@ Flight::before('start', function (&$params, &$output) {
             exit;
         }
     }
+});
+
+// Los errores fatales los atrapa Flight y los pinta en la respuesta, pero no
+// pasan por error_log, asi que la terminal no muestra nada. Aqui se registran
+// antes de responder; lo que ve el cliente no cambia.
+Flight::map('error', function (Throwable $ex) {
+    error_log('[ERROR] ' . get_class($ex) . ': ' . $ex->getMessage());
+    error_log('        en ' . $ex->getFile() . ':' . $ex->getLine());
+    error_log($ex->getTraceAsString());
+
+    if (!headers_sent()) {
+        header('HTTP/1.1 500 Internal Server Error');
+        header('Content-Type: text/html; charset=utf-8');
+    }
+
+    echo '<h1>500 Internal Server Error</h1>';
+    echo '<h3>' . htmlspecialchars($ex->getMessage(), ENT_QUOTES, 'UTF-8') . '</h3>';
+    echo '<pre>' . htmlspecialchars($ex->getTraceAsString(), ENT_QUOTES, 'UTF-8') . '</pre>';
 });
 
 Flight::start();

@@ -1980,4 +1980,81 @@ class PagosRecibidos
             Flight::json(array('error' => 'Error al verificar duplicados: ' . $e->getMessage()), 500);
         }
     }
+
+
+    /**
+     * Asigna el acudiente que pago a varios pagos de un mismo estudiante.
+     *
+     * Existe porque los pagos anteriores a que el registro pidiera el acudiente
+     * quedaron sin esa marca, y el certificado de pagos por acudiente solo puede
+     * incluir los que la tienen.
+     *
+     * PUT /pagos-recibidos/asignar-acudiente
+     * Body: ids (arreglo de id de pago), id_acudiente
+     */
+    public static function asignarAcudiente()
+    {
+        JWTService::requerirAutenticacion();
+
+        $db = Flight::db();
+
+        try {
+            $datos = Flight::request()->data;
+            $ids = isset($datos['ids']) && is_array($datos['ids']) ? $datos['ids'] : [];
+            $idAcudiente = isset($datos['id_acudiente']) ? $datos['id_acudiente'] : null;
+
+            if (count($ids) === 0) {
+                Flight::json(array('error' => 'Debe seleccionar al menos un pago'), 400);
+                return;
+            }
+            if (!$idAcudiente) {
+                Flight::json(array('error' => 'Debe seleccionar el acudiente'), 400);
+                return;
+            }
+
+            // El acudiente debe existir en el tenant. Sin esto se podria colgar
+            // un pago de una persona de otro jardin.
+            $sentence = $db->prepare("SELECT id_estudiante FROM acudientes WHERE id = :id AND id_tenant = :id_tenant");
+            $sentence->bindParam(':id', $idAcudiente);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->execute();
+            $idEstudianteAcudiente = $sentence->fetchColumn();
+
+            if (!$idEstudianteAcudiente) {
+                Flight::json(array('error' => 'Acudiente no encontrado'), 404);
+                return;
+            }
+
+            $db->beginTransaction();
+
+            $actualizar = $db->prepare("
+                UPDATE pagos_recibidos
+                SET id_acudiente = :id_acudiente
+                WHERE id = :id
+                  AND id_tenant = :id_tenant
+                  AND id_estudiante = :id_estudiante
+                  AND COALESCE(anulado, 0) = 0
+            ");
+
+            $actualizados = 0;
+            foreach ($ids as $idPago) {
+                $actualizar->bindParam(':id_acudiente', $idAcudiente);
+                $actualizar->bindParam(':id', $idPago);
+                $actualizar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $actualizar->bindParam(':id_estudiante', $idEstudianteAcudiente);
+                $actualizar->execute();
+                $actualizados += $actualizar->rowCount();
+            }
+
+            $db->commit();
+
+            Flight::json(array('actualizados' => $actualizados));
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log("Error en asignarAcudiente: " . $e->getMessage());
+            Flight::json(array('error' => 'Error al asignar el acudiente: ' . $e->getMessage()), 500);
+        }
+    }
 }

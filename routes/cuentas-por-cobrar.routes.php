@@ -60,6 +60,7 @@ Flight::route('GET /pagos-recibidos/datos-registro-rapido', [PagosRecibidos::cla
 Flight::route('POST /pagos-recibidos/analizar-comprobante', [PagosRecibidos::class, 'analizarComprobante']);
 Flight::route('POST /pagos-recibidos/registrar-masivo', [PagosRecibidos::class, 'registrarMasivo']);
 Flight::route('POST /pagos-recibidos/verificar-duplicado', [PagosRecibidos::class, 'verificarDuplicado']);
+Flight::route('PUT /pagos-recibidos/asignar-acudiente', [PagosRecibidos::class, 'asignarAcudiente']);
 Flight::route('GET /pagos-recibidos/@id', [PagosRecibidos::class, 'getById']);
 Flight::route('GET /pagos-recibidos/estudiante/@id', [PagosRecibidos::class, 'getByEstudiante']);
 Flight::route('GET /pagos-recibidos/comprobante/@id_pago_recibido', [PagosRecibidos::class, 'obtenerDatosComprobante']);
