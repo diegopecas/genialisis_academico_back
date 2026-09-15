@@ -121,6 +121,9 @@ class CertificadosExpedidos
             $configuraciones = self::configuraciones($db);
             $soloAutomaticos = ($origen === 'padres');
 
+            $saldoTotal = self::saldoEstudiante($db, $idEstudiante, false, []);
+            $saldoVencido = self::saldoEstudiante($db, $idEstudiante, true, []);
+
             $resultado = [];
             foreach (CertificadosConfiguracion::$CLAVES as $clave) {
                 $configuracion = isset($configuraciones[$clave]) ? $configuraciones[$clave] : null;
@@ -134,9 +137,10 @@ class CertificadosExpedidos
                     continue;
                 }
 
-                $evaluacion = $soloAutomaticos
-                    ? self::evaluarRegla($db, $clave, $idEstudiante, $configuracion)
-                    : ['cumple' => true, 'mensaje' => null, 'saldo' => 0];
+                // Se evalua en los dos portales. En el institucional el
+                // resultado no bloquea: solo sirve para advertirle al jardin
+                // antes de expedir un paz y salvo con deuda.
+                $evaluacion = self::evaluarRegla($db, $clave, $idEstudiante, $configuracion);
 
                 $resultado[] = [
                     'clave_certificado' => $clave,
@@ -147,7 +151,9 @@ class CertificadosExpedidos
                     'es_de_pagos' => CertificadosConfiguracion::esDePagos($clave) ? 1 : 0,
                     'cumple' => $evaluacion['cumple'] ? 1 : 0,
                     'mensaje' => $evaluacion['mensaje'],
-                    'saldo_pendiente' => $evaluacion['saldo']
+                    'saldo_pendiente' => $evaluacion['saldo'],
+                    'saldo_total' => $saldoTotal,
+                    'saldo_vencido' => $saldoVencido
                 ];
             }
 
@@ -565,6 +571,7 @@ class CertificadosExpedidos
             '{{institucion_direccion}}' => self::valor($configuracion, 'institucion_direccion'),
             '{{ciudad}}' => self::ciudad($configuracion),
             '{{fecha_larga}}' => self::fechaLarga(date('Y-m-d')),
+            '{{ciudad_fecha}}' => trim(self::ciudad($configuracion) . ', ' . self::fechaLarga(date('Y-m-d')), ' ,'),
             '{{anio}}' => date('Y'),
             '{{estudiante_nombre}}' => $estudiante['nombre_completo'],
             '{{estudiante_tipo_documento}}' => $estudiante['tipo_identificacion'],
@@ -573,7 +580,7 @@ class CertificadosExpedidos
             '{{estudiante_articulo_del}}' => $esFemenino ? 'de la' : 'del',
             '{{estudiante_identificado}}' => $esFemenino ? 'identificada' : 'identificado',
             '{{grupo_nombre}}' => $estudiante['nombre_grupo'],
-            '{{grado_nombre}}' => $estudiante['nombre_grado'],
+            '{{grado_nombre}}' => $estudiante['nombre_grado'] ? $estudiante['nombre_grado'] : $estudiante['nombre_grupo'],
             '{{anio_certificado}}' => $anioCertificado ? (string) $anioCertificado : '',
             '{{fecha_ingreso_larga}}' => self::fechaIngresoLarga($estudiante['fecha_ingreso']),
             '{{firmante_nombre}}' => self::firmanteNombre($configuracion),
@@ -591,7 +598,7 @@ class CertificadosExpedidos
             '{{conceptos_certificados}}' => self::nombresProductos($db, $productos),
             '{{pie_contacto}}' => self::lineaContacto($configuracion),
             // Si el jardin no indica destinatario, el certificado queda abierto.
-            '{{dirigido_a}}' => $dirigidoA !== '' ? $dirigidoA : 'A QUIEN INTERESE'
+            '{{dirigido_a}}' => $dirigidoA !== '' ? 'Señores: ' . $dirigidoA : 'A QUIEN INTERESE'
         ];
 
         if ($clave === 'pagos_acudiente') {
@@ -1122,7 +1129,8 @@ class CertificadosExpedidos
         // El numero va en la cabecera y los datos de contacto en el pie: el
         // renderizador los saca de aqui y los dibuja aparte del cuerpo.
         $meta = '<div data-numero="' . self::escapar($variables['{{numero_certificado}}']) . '"'
-            . ' data-contacto="' . self::escapar($variables['{{pie_contacto}}']) . '"></div>';
+            . ' data-contacto="' . self::escapar($variables['{{pie_contacto}}']) . '"'
+            . ' data-fecha="' . self::escapar($variables['{{ciudad_fecha}}']) . '"></div>';
 
         return '<h1>' . self::escapar($titulo) . '</h1>' . $meta . $cuerpo . $firma;
     }
