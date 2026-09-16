@@ -147,7 +147,8 @@ class CertificadosExpedidos
                     'nombre' => CertificadosConfiguracion::$NOMBRES[$clave],
                     'modo' => $modo,
                     'regla' => $configuracion ? $configuracion['regla'] : 'libre',
-                    'agrupar_por_mes' => isset($configuracion['agrupar_por_mes']) ? (int) $configuracion['agrupar_por_mes'] : 0,
+                    'formato' => isset($configuracion['formato']) ? $configuracion['formato'] : 'recibo',
+                    'mostrar_conceptos' => isset($configuracion['mostrar_conceptos']) ? (int) $configuracion['mostrar_conceptos'] : 1,
                     'es_de_pagos' => CertificadosConfiguracion::esDePagos($clave) ? 1 : 0,
                     'cumple' => $evaluacion['cumple'] ? 1 : 0,
                     'mensaje' => $evaluacion['mensaje'],
@@ -222,9 +223,10 @@ class CertificadosExpedidos
             // Lista de productos a certificar. Vacia = todos los conceptos.
             $productos = isset($datos['productos']) && is_array($datos['productos'])
                 ? array_values(array_unique($datos['productos'])) : [];
-            // La agrupacion llega de la pantalla; si no viene, manda el
+            // Formato y detalle llegan de la pantalla; si no vienen, manda el
             // parametro del jardin.
-            $agruparPorMes = isset($datos['agrupar_por_mes']) ? (int) $datos['agrupar_por_mes'] : null;
+            $formato = isset($datos['formato']) && $datos['formato'] !== '' ? $datos['formato'] : null;
+            $mostrarConceptos = isset($datos['mostrar_conceptos']) ? (int) $datos['mostrar_conceptos'] : null;
 
             if (!in_array($clave, CertificadosConfiguracion::$CLAVES, true)) {
                 Flight::json(['error' => true, 'message' => 'Certificado no válido'], 400);
@@ -281,21 +283,32 @@ class CertificadosExpedidos
                 // El acudiente no escoge conceptos ni formato: manda lo que el
                 // jardin dejo configurado.
                 $productos = [];
-                $agruparPorMes = null;
+                $formato = null;
+                $mostrarConceptos = null;
                 $dirigidoA = '';
             }
 
-            if ($agruparPorMes === null) {
-                $agruparPorMes = isset($configuracion['agrupar_por_mes']) ? (int) $configuracion['agrupar_por_mes'] : 0;
+            if ($formato === null) {
+                $formato = isset($configuracion['formato']) ? $configuracion['formato'] : 'recibo';
+            }
+            if ($mostrarConceptos === null) {
+                $mostrarConceptos = isset($configuracion['mostrar_conceptos'])
+                    ? (int) $configuracion['mostrar_conceptos'] : 1;
+            }
+            if (!in_array($formato, CertificadosConfiguracion::$FORMATOS, true)) {
+                Flight::json(['error' => true, 'message' => 'Formato no válido'], 400);
+                return;
             }
 
             if (!CertificadosConfiguracion::esDePagos($clave)) {
-                $agruparPorMes = 0;
+                $formato = 'recibo';
+                $mostrarConceptos = 1;
                 $productos = [];
             }
 
             $variables = self::armarVariables($db, $clave, $idEstudiante, $idAcudiente, $anioCertificado,
-                                              $fechaDesde, $fechaHasta, $productos, $agruparPorMes, $dirigidoA);
+                                              $fechaDesde, $fechaHasta, $productos, $formato,
+                                              $mostrarConceptos, $dirigidoA);
             if (isset($variables['__error'])) {
                 Flight::json(['error' => true, 'message' => $variables['__error']], 400);
                 return;
@@ -316,16 +329,16 @@ class CertificadosExpedidos
             $numero = self::siguienteNumero($db, $anio);
             $variables['{{numero_certificado}}'] = self::formatearNumero($anio, $numero);
 
-            $contenidoHtml = self::resolverPlantilla($plantilla, $variables);
+            $contenidoHtml = self::resolverPlantilla($plantilla, $variables, $formato);
 
             $id = Uuid::generar();
             $sentence = $db->prepare("
                 INSERT INTO certificados_expedidos
                     (id, id_tenant, anio, numero, clave_certificado, id_estudiante, id_acudiente,
-                     anio_certificado, fecha_desde, fecha_hasta, agrupado_por_mes,
+                     anio_certificado, fecha_desde, fecha_hasta, formato, mostrar_conceptos,
                      dirigido_a, contenido_html, origen, id_usuario)
                 VALUES (:id, :id_tenant, :anio, :numero, :clave, :id_estudiante, :id_acudiente,
-                        :anio_certificado, :fecha_desde, :fecha_hasta, :agrupado,
+                        :anio_certificado, :fecha_desde, :fecha_hasta, :formato, :conceptos,
                         :dirigido_a, :contenido_html, :origen, :id_usuario)
             ");
             $idUsuario = isset($userData->id) ? $userData->id : null;
@@ -339,7 +352,8 @@ class CertificadosExpedidos
             $sentence->bindValue(':anio_certificado', $anioCertificado, $anioCertificado === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
             $sentence->bindParam(':fecha_desde', $fechaDesde);
             $sentence->bindParam(':fecha_hasta', $fechaHasta);
-            $sentence->bindValue(':agrupado', $agruparPorMes, PDO::PARAM_INT);
+            $sentence->bindParam(':formato', $formato);
+            $sentence->bindValue(':conceptos', $mostrarConceptos, PDO::PARAM_INT);
             $sentence->bindParam(':dirigido_a', $dirigidoA);
             $sentence->bindParam(':contenido_html', $contenidoHtml);
             $sentence->bindParam(':origen', $origen);
@@ -470,7 +484,7 @@ class CertificadosExpedidos
                 GROUP BY cp.id_cuenta_por_cobrar
             ) ap ON ap.id_cuenta_por_cobrar = c.id
             WHERE c.id_tenant = ?
-              AND c.id_persona = ?
+              AND c.id_persona = (SELECT e.id_persona FROM estudiantes e WHERE e.id = ?)
               AND COALESCE(c.anulado, 0) = 0
               AND (c.valor - COALESCE(ap.aplicado, 0)) > 0
               $filtroVencidas
@@ -528,7 +542,7 @@ class CertificadosExpedidos
     private static function configuraciones($db)
     {
         $sentence = $db->prepare("
-            SELECT id, clave_certificado, modo, regla, agrupar_por_mes,
+            SELECT id, clave_certificado, modo, regla, formato, mostrar_conceptos,
                    mensaje_no_cumple, activo
             FROM certificados_configuracion
             WHERE id_tenant = :id_tenant
@@ -553,8 +567,8 @@ class CertificadosExpedidos
      * Las claves llegan con las llaves puestas para reemplazar de una.
      */
     private static function armarVariables($db, $clave, $idEstudiante, $idAcudiente, $anioCertificado,
-                                          $fechaDesde, $fechaHasta, $productos = [], $agruparPorMes = 0,
-                                          $dirigidoA = '')
+                                          $fechaDesde, $fechaHasta, $productos = [], $formato = 'recibo',
+                                          $mostrarConceptos = 1, $dirigidoA = '')
     {
         $configuracion = self::configuracionGlobal($db);
         $estudiante = self::datosEstudiante($db, $idEstudiante, $anioCertificado);
@@ -569,6 +583,7 @@ class CertificadosExpedidos
             '{{institucion_nombre}}' => self::valor($configuracion, 'institucion_nombre'),
             '{{institucion_nit}}' => self::valor($configuracion, 'institucion_nit'),
             '{{institucion_direccion}}' => self::valor($configuracion, 'institucion_direccion'),
+            '{{resolucion}}' => self::valor($configuracion, 'institucion_resolucion'),
             '{{ciudad}}' => self::ciudad($configuracion),
             '{{fecha_larga}}' => self::fechaLarga(date('Y-m-d')),
             '{{ciudad_fecha}}' => trim(self::ciudad($configuracion) . ', ' . self::fechaLarga(date('Y-m-d')), ' ,'),
@@ -615,7 +630,8 @@ class CertificadosExpedidos
             // La columna del estudiante solo aporta si el acudiente pago por mas
             // de uno; si no, repite el mismo nombre en cada fila y estrecha el
             // concepto.
-            $variables['{{tabla_pagos}}'] = self::tablaPagos($pagos, count(self::estudiantesDistintos($pagos)) > 1, $agruparPorMes);
+            $variables['{{tabla_pagos}}'] = self::tablaPagos($pagos, count(self::estudiantesDistintos($pagos)) > 1,
+                                                             $formato, $mostrarConceptos);
             $total = self::totalPagos($pagos);
             $variables['{{total_pagado}}'] = self::formatearMoneda($total);
             $variables['{{total_pagado_letras}}'] = self::numeroALetras($total);
@@ -623,7 +639,7 @@ class CertificadosExpedidos
 
         if ($clave === 'pagos_estudiante') {
             $pagos = self::pagosDeEstudiante($db, $idEstudiante, $fechaDesde, $fechaHasta, $productos);
-            $variables['{{tabla_pagos}}'] = self::tablaPagos($pagos, false, $agruparPorMes);
+            $variables['{{tabla_pagos}}'] = self::tablaPagos($pagos, false, $formato, $mostrarConceptos);
             $total = self::totalPagos($pagos);
             $variables['{{total_pagado}}'] = self::formatearMoneda($total);
             $variables['{{total_pagado_letras}}'] = self::numeroALetras($total);
@@ -757,7 +773,8 @@ class CertificadosExpedidos
                    tp.nombre AS tipo_pago,
                    TRIM(CONCAT_WS(' ', pe.primer_nombre, pe.segundo_nombre,
                                   pe.primer_apellido, pe.segundo_apellido)) AS estudiante_nombre,
-                   " . self::expresionConceptos($productos) . " AS conceptos
+                   " . self::expresionConceptos($productos) . " AS conceptos,
+                   " . self::expresionDetalle($productos) . " AS detalle_conceptos
             FROM pagos_recibidos pr
             INNER JOIN acudientes ap ON ap.id = pr.id_acudiente
             LEFT JOIN tipos_pagos tp ON tp.id = pr.id_tipo_pago
@@ -791,7 +808,8 @@ class CertificadosExpedidos
                    tp.nombre AS tipo_pago,
                    TRIM(CONCAT_WS(' ', pa.primer_nombre, pa.segundo_nombre,
                                   pa.primer_apellido, pa.segundo_apellido)) AS acudiente_nombre,
-                   " . self::expresionConceptos($productos) . " AS conceptos
+                   " . self::expresionConceptos($productos) . " AS conceptos,
+                   " . self::expresionDetalle($productos) . " AS detalle_conceptos
             FROM pagos_recibidos pr
             LEFT JOIN tipos_pagos tp ON tp.id = pr.id_tipo_pago
             LEFT JOIN acudientes a ON a.id = pr.id_acudiente
@@ -849,6 +867,28 @@ class CertificadosExpedidos
                   WHERE cp.id_pago_recibido = pr.id $filtro)";
     }
 
+    /**
+     * Cuanto de cada recibo se aplico a cada producto, como "nombre~valor"
+     * separados por ||. Es lo unico que permite repartir un recibo que cubre
+     * varios conceptos.
+     */
+    private static function expresionDetalle($productos)
+    {
+        $filtro = '';
+        if (count($productos) > 0) {
+            $filtro = ' AND cc.id_producto_servicio IN (' . self::marcadores($productos, 'pd') . ') ';
+        }
+
+        // Una linea por abono, sin preagrupar: una subconsulta derivada no puede
+        // referenciar pr.id de la consulta externa. Si un recibo abona dos
+        // cuentas del mismo producto salen dos lineas iguales, y el PHP las suma.
+        return "(SELECT GROUP_CONCAT(CONCAT(ps.nombre, '~', cp.valor_aplicado) ORDER BY ps.nombre SEPARATOR '||')
+                   FROM cuenta_pagada cp
+                   INNER JOIN cuentas_por_cobrar cc ON cc.id = cp.id_cuenta_por_cobrar
+                   INNER JOIN productos_servicios ps ON ps.id = cc.id_producto_servicio
+                  WHERE cp.id_pago_recibido = pr.id $filtro)";
+    }
+
     /** Deja fuera los recibos que no tocaron ninguno de los productos escogidos. */
     private static function filtroProductos($productos)
     {
@@ -882,7 +922,7 @@ class CertificadosExpedidos
     /** Ata la lista de productos a los tres grupos de marcadores. */
     private static function ligarProductos($sentence, $productos)
     {
-        foreach (['pv', 'pc', 'pf'] as $prefijo) {
+        foreach (['pv', 'pc', 'pf', 'pd'] as $prefijo) {
             foreach ($productos as $indice => $idProducto) {
                 $sentence->bindValue(':' . $prefijo . $indice, $idProducto);
             }
@@ -927,26 +967,42 @@ class CertificadosExpedidos
     }
 
     /**
-     * Tabla de pagos en HTML. Con $conEstudiante se agrega la columna del
-     * estudiante, que solo tiene sentido cuando el acudiente pago por varios.
-     * Con $agruparPorMes sale una fila por mes: se pierde el numero de recibo
-     * porque un mes puede tener varios.
+     * Tabla de pagos en HTML, segun el formato pedido:
+     *   recibo   -> un renglon por recibo
+     *   mes      -> una fila por mes, con el total
+     *   concepto -> una fila por concepto, con lo pagado por cada uno
+     *   total    -> sin tabla; el valor total ya va en el texto
+     *
+     * $conEstudiante agrega la columna del estudiante, que solo tiene sentido
+     * cuando el acudiente pago por varios. $mostrarConceptos prende la columna
+     * de conceptos, que no aplica a los formatos concepto ni total.
      */
-    private static function tablaPagos($pagos, $conEstudiante, $agruparPorMes = false)
+    private static function tablaPagos($pagos, $conEstudiante, $formato = 'recibo', $mostrarConceptos = 1)
     {
+        if ($formato === 'total') {
+            return '';
+        }
+
         if (count($pagos) === 0) {
             return '<p><i>No se registran pagos en el periodo indicado.</i></p>';
         }
 
-        if ($agruparPorMes) {
-            return self::tablaPagosPorMes($pagos, $conEstudiante);
+        if ($formato === 'mes') {
+            return self::tablaPagosPorMes($pagos, $conEstudiante, $mostrarConceptos);
+        }
+
+        if ($formato === 'concepto') {
+            return self::tablaPagosPorConcepto($pagos, $conEstudiante);
         }
 
         $html = '<table><thead><tr><th>Fecha</th><th>Recibo</th>';
         if ($conEstudiante) {
             $html .= '<th>Estudiante</th>';
         }
-        $html .= '<th>Concepto</th><th>Valor</th></tr></thead><tbody>';
+        if ($mostrarConceptos) {
+            $html .= '<th>Concepto</th>';
+        }
+        $html .= '<th>Valor</th></tr></thead><tbody>';
 
         foreach ($pagos as $pago) {
             $html .= '<tr>';
@@ -955,7 +1011,9 @@ class CertificadosExpedidos
             if ($conEstudiante) {
                 $html .= '<td>' . self::escapar($pago['estudiante_nombre']) . '</td>';
             }
-            $html .= '<td>' . self::escapar($pago['conceptos'] ? $pago['conceptos'] : $pago['tipo_pago']) . '</td>';
+            if ($mostrarConceptos) {
+                $html .= '<td>' . self::escapar($pago['conceptos'] ? $pago['conceptos'] : $pago['tipo_pago']) . '</td>';
+            }
             $html .= '<td>' . self::escapar(self::formatearMoneda((float) $pago['valor_recibido'])) . '</td>';
             $html .= '</tr>';
         }
@@ -970,7 +1028,7 @@ class CertificadosExpedidos
      * Cuando hay varios estudiantes se agrupa por mes y estudiante, para no
      * mezclar en una misma fila lo pagado por hijos distintos.
      */
-    private static function tablaPagosPorMes($pagos, $conEstudiante)
+    private static function tablaPagosPorMes($pagos, $conEstudiante, $mostrarConceptos)
     {
         $meses = [];
 
@@ -1005,7 +1063,10 @@ class CertificadosExpedidos
         if ($conEstudiante) {
             $html .= '<th>Estudiante</th>';
         }
-        $html .= '<th>Concepto</th><th>Valor</th></tr></thead><tbody>';
+        if ($mostrarConceptos) {
+            $html .= '<th>Concepto</th>';
+        }
+        $html .= '<th>Valor</th></tr></thead><tbody>';
 
         foreach ($meses as $mes) {
             sort($mes['conceptos']);
@@ -1015,8 +1076,78 @@ class CertificadosExpedidos
             if ($conEstudiante) {
                 $html .= '<td>' . self::escapar($mes['estudiante']) . '</td>';
             }
-            $html .= '<td>' . self::escapar(implode(', ', $mes['conceptos'])) . '</td>';
+            if ($mostrarConceptos) {
+                $html .= '<td>' . self::escapar(implode(', ', $mes['conceptos'])) . '</td>';
+            }
             $html .= '<td>' . self::escapar(self::formatearMoneda($mes['total'])) . '</td>';
+            $html .= '</tr>';
+        }
+
+        $html .= '</tbody></table>';
+
+        return $html;
+    }
+
+    /**
+     * Una fila por concepto con el total del periodo.
+     *
+     * Un recibo que cubre varios conceptos no dice cuanto fue a cada uno, asi
+     * que el valor sale de lo aplicado en cuenta_pagada, que si lo sabe. Por eso
+     * esta tabla no se arma con los pagos sino con las cuentas que abonaron.
+     */
+    private static function tablaPagosPorConcepto($pagos, $conEstudiante)
+    {
+        $conceptos = [];
+
+        foreach ($pagos as $pago) {
+            $detalle = isset($pago['detalle_conceptos']) ? $pago['detalle_conceptos'] : null;
+
+            // Sin detalle aplicado, el recibo se atribuye completo a lo que
+            // diga su lista de conceptos.
+            if (!$detalle) {
+                $nombre = $pago['conceptos'] ? $pago['conceptos'] : $pago['tipo_pago'];
+                $estudiante = $conEstudiante ? (string) $pago['estudiante_nombre'] : '';
+                $llave = $nombre . '|' . $estudiante;
+
+                if (!isset($conceptos[$llave])) {
+                    $conceptos[$llave] = ['nombre' => $nombre, 'estudiante' => $estudiante, 'total' => 0];
+                }
+                $conceptos[$llave]['total'] += (float) $pago['valor_recibido'];
+                continue;
+            }
+
+            foreach (explode('||', $detalle) as $linea) {
+                $partes = explode('~', $linea);
+                if (count($partes) < 2) {
+                    continue;
+                }
+
+                $nombre = $partes[0];
+                $estudiante = $conEstudiante ? (string) $pago['estudiante_nombre'] : '';
+                $llave = $nombre . '|' . $estudiante;
+
+                if (!isset($conceptos[$llave])) {
+                    $conceptos[$llave] = ['nombre' => $nombre, 'estudiante' => $estudiante, 'total' => 0];
+                }
+                $conceptos[$llave]['total'] += (float) $partes[1];
+            }
+        }
+
+        ksort($conceptos);
+
+        $html = '<table><thead><tr><th>Concepto</th>';
+        if ($conEstudiante) {
+            $html .= '<th>Estudiante</th>';
+        }
+        $html .= '<th>Valor</th></tr></thead><tbody>';
+
+        foreach ($conceptos as $concepto) {
+            $html .= '<tr>';
+            $html .= '<td>' . self::escapar($concepto['nombre']) . '</td>';
+            if ($conEstudiante) {
+                $html .= '<td>' . self::escapar($concepto['estudiante']) . '</td>';
+            }
+            $html .= '<td>' . self::escapar(self::formatearMoneda($concepto['total'])) . '</td>';
             $html .= '</tr>';
         }
 
@@ -1040,7 +1171,7 @@ class CertificadosExpedidos
                 GROUP BY cp.id_cuenta_por_cobrar
             ) ap ON ap.id_cuenta_por_cobrar = c.id
             WHERE c.id_tenant = :id_tenant
-              AND c.id_persona = :id_estudiante
+              AND c.id_persona = (SELECT e.id_persona FROM estudiantes e WHERE e.id = :id_estudiante)
               AND COALESCE(c.anulado, 0) = 0
               AND (c.valor - COALESCE(ap.aplicado, 0)) > 0
             ORDER BY c.fecha
@@ -1097,7 +1228,81 @@ class CertificadosExpedidos
      * Reemplaza las variables en el cuerpo de la plantilla. Las que no tengan
      * valor se dejan vacias, para que el documento no salga con llaves sueltas.
      */
-    private static function resolverPlantilla($plantilla, $variables)
+    /**
+     * Deja el cuerpo pidiendo la ciudad y la fecha de expedicion.
+     *
+     * Si la plantilla ya las trae, no toca nada. Si no, las engancha al final
+     * de la frase de cierre; y si esa frase tampoco esta, agrega un parrafo
+     * propio, para que ningun certificado salga sin fecha.
+     */
+    private static function agregarFechaExpedicion($cuerpo)
+    {
+        if (strpos($cuerpo, '{{fecha_larga}}') !== false || strpos($cuerpo, '{{ciudad_fecha}}') !== false) {
+            return $cuerpo;
+        }
+
+        $cierre = ', en {{ciudad}}, a los {{fecha_larga}}.';
+        $suelto = '<p>Se expide en {{ciudad}}, a los {{fecha_larga}}.</p>';
+
+        // Las tres redacciones sembradas terminan igual, sin importar si hablan
+        // de certificado, constancia o paz y salvo.
+        $frase = 'para los fines que estime convenientes';
+
+        $posicion = strpos($cuerpo, $frase);
+        if ($posicion !== false) {
+            $corte = $posicion + strlen($frase);
+            // Se descarta el punto que venia, porque la frase ahora sigue.
+            $resto = substr($cuerpo, $corte);
+            if (substr($resto, 0, 1) === '.') {
+                $resto = substr($resto, 1);
+            }
+
+            return substr($cuerpo, 0, $corte) . $cierre . $resto;
+        }
+
+        return $cuerpo . $suelto;
+    }
+
+    /**
+     * El NIT sale del encabezado del cuerpo y en su lugar queda la resolucion,
+     * debajo del nombre de la institucion. Se hace aqui y no con un UPDATE a
+     * las plantillas para que aplique aunque el jardin las haya tocado.
+     */
+    private static function ajustarEncabezadoInstitucion($cuerpo, $variables)
+    {
+        $marcador = 'NIT: {{institucion_nit}}';
+        $posicion = strpos($cuerpo, $marcador);
+
+        if ($posicion === false) {
+            return $cuerpo;
+        }
+
+        $resolucion = isset($variables['{{resolucion}}']) ? $variables['{{resolucion}}'] : '';
+
+        return substr($cuerpo, 0, $posicion)
+            . ($resolucion !== '' ? '{{resolucion}}' : '')
+            . substr($cuerpo, $posicion + strlen($marcador));
+    }
+
+    /**
+     * Quita la frase que anuncia el detalle cuando el certificado sale sin
+     * tabla, y cierra la oracion con punto.
+     */
+    private static function quitarAnuncioDetalle($cuerpo)
+    {
+        $frases = [', segun el siguiente detalle:', ', según el siguiente detalle:',
+                   ' segun el siguiente detalle:', ' según el siguiente detalle:'];
+
+        foreach ($frases as $frase) {
+            if (strpos($cuerpo, $frase) !== false) {
+                return str_replace($frase, '.', $cuerpo);
+            }
+        }
+
+        return $cuerpo;
+    }
+
+    private static function resolverPlantilla($plantilla, $variables, $formato = 'recibo')
     {
         $titulo = isset($plantilla['titulo']) ? $plantilla['titulo'] : '';
         $cuerpo = isset($plantilla['cuerpo']) ? $plantilla['cuerpo'] : '';
@@ -1109,13 +1314,24 @@ class CertificadosExpedidos
             }
         }
 
+        // Si la plantilla no pide la fecha de expedicion, se agrega sola al
+        // cierre. Antes dependia de un UPDATE sobre las plantillas y bastaba
+        // una diferencia de redaccion para que el certificado saliera sin ella.
+        $cuerpo = self::agregarFechaExpedicion($cuerpo);
+        $cuerpo = self::ajustarEncabezadoInstitucion($cuerpo, $variables);
+
+        // Sin tabla no hay detalle que anunciar.
+        if ($formato === 'total') {
+            $cuerpo = self::quitarAnuncioDetalle($cuerpo);
+        }
+
         $titulo = strtr($titulo, $reemplazables);
         $cuerpo = strtr($cuerpo, $reemplazables);
 
         // Variables que la plantilla use y el certificado no alimente.
         $cuerpo = preg_replace('/\{\{[a-z0-9_]+\}\}/i', '', $cuerpo);
 
-        $firma = '<p style="text-align:center">Cordialmente,</p>'
+        $firma = '<p>Cordialmente,</p>'
             . '<p style="text-align:center">{{firma_linea}}</p>'
             . '<p style="text-align:center"><b>' . self::escapar($variables['{{firmante_nombre}}']) . '</b></p>';
 
@@ -1129,8 +1345,7 @@ class CertificadosExpedidos
         // El numero va en la cabecera y los datos de contacto en el pie: el
         // renderizador los saca de aqui y los dibuja aparte del cuerpo.
         $meta = '<div data-numero="' . self::escapar($variables['{{numero_certificado}}']) . '"'
-            . ' data-contacto="' . self::escapar($variables['{{pie_contacto}}']) . '"'
-            . ' data-fecha="' . self::escapar($variables['{{ciudad_fecha}}']) . '"></div>';
+            . ' data-contacto="' . self::escapar($variables['{{pie_contacto}}']) . '"></div>';
 
         return '<h1>' . self::escapar($titulo) . '</h1>' . $meta . $cuerpo . $firma;
     }

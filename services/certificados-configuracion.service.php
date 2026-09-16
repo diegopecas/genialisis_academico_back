@@ -34,6 +34,9 @@ class CertificadosConfiguracion
     private static $MODOS = ['automatico', 'manual'];
     private static $REGLAS = ['libre', 'al_dia', 'al_dia_productos'];
 
+    /** Formatos de la tabla de pagos. Cada uno es una rama del generador. */
+    public static $FORMATOS = ['recibo', 'mes', 'concepto', 'total'];
+
     /**
      * Listado completo. Si a un tenant le falta alguna clave (por ejemplo
      * porque se agrego un certificado nuevo despues de su instalacion), se
@@ -50,7 +53,7 @@ class CertificadosConfiguracion
             $db = Flight::db();
             $sentence = $db->prepare("
                 SELECT cc.id, cc.clave_certificado, cc.modo, cc.regla,
-                       cc.agrupar_por_mes, cc.mensaje_no_cumple, cc.activo,
+                       cc.formato, cc.mostrar_conceptos, cc.mensaje_no_cumple, cc.activo,
                        (SELECT COUNT(*)
                           FROM certificados_configuracion_productos ccp
                          WHERE ccp.id_certificado_config = cc.id) AS total_productos
@@ -82,7 +85,8 @@ class CertificadosConfiguracion
                     'nombre' => self::$NOMBRES[$clave],
                     'modo' => 'manual',
                     'regla' => 'libre',
-                    'agrupar_por_mes' => 0,
+                    'formato' => 'recibo',
+                    'mostrar_conceptos' => 1,
                     'mensaje_no_cumple' => null,
                     'activo' => 1,
                     'total_productos' => 0,
@@ -116,7 +120,7 @@ class CertificadosConfiguracion
 
             $db = Flight::db();
             $sentence = $db->prepare("
-                SELECT id, clave_certificado, modo, regla, agrupar_por_mes,
+                SELECT id, clave_certificado, modo, regla, formato, mostrar_conceptos,
                        mensaje_no_cumple, activo
                 FROM certificados_configuracion
                 WHERE id_tenant = :id_tenant AND clave_certificado = :clave
@@ -133,7 +137,8 @@ class CertificadosConfiguracion
                     'clave_certificado' => $clave,
                     'modo' => 'manual',
                     'regla' => 'libre',
-                    'agrupar_por_mes' => 0,
+                    'formato' => 'recibo',
+                    'mostrar_conceptos' => 1,
                     'mensaje_no_cumple' => null,
                     'activo' => 1
                 ];
@@ -173,7 +178,8 @@ class CertificadosConfiguracion
             $regla = isset($datos['regla']) ? $datos['regla'] : 'libre';
             $mensaje = isset($datos['mensaje_no_cumple']) ? $datos['mensaje_no_cumple'] : null;
             $activo = isset($datos['activo']) ? (int) $datos['activo'] : 1;
-            $agruparPorMes = isset($datos['agrupar_por_mes']) ? (int) $datos['agrupar_por_mes'] : 0;
+            $formato = isset($datos['formato']) ? $datos['formato'] : 'recibo';
+            $mostrarConceptos = isset($datos['mostrar_conceptos']) ? (int) $datos['mostrar_conceptos'] : 1;
             $productos = isset($datos['productos']) && is_array($datos['productos']) ? $datos['productos'] : [];
 
             if (!in_array($clave, self::$CLAVES, true)) {
@@ -188,6 +194,10 @@ class CertificadosConfiguracion
                 Flight::json(['error' => true, 'message' => 'Regla no válida'], 400);
                 return;
             }
+            if (!in_array($formato, self::$FORMATOS, true)) {
+                Flight::json(['error' => true, 'message' => 'Formato no válido'], 400);
+                return;
+            }
 
             // El paz y salvo no admite regla configurable: se normaliza para que
             // la fila no quede diciendo algo que el evaluador no respeta.
@@ -196,10 +206,11 @@ class CertificadosConfiguracion
                 $productos = [];
             }
 
-            // La agrupacion por mes solo tiene sentido en los certificados de
-            // pagos; en los demas no hay tabla que agrupar.
+            // El formato solo tiene sentido en los certificados de pagos; en
+            // los demas no hay tabla que armar.
             if (!self::esDePagos($clave)) {
-                $agruparPorMes = 0;
+                $formato = 'recibo';
+                $mostrarConceptos = 1;
             }
 
             if ($regla === 'al_dia_productos' && count($productos) === 0) {
@@ -224,7 +235,8 @@ class CertificadosConfiguracion
             if ($idConfiguracion) {
                 $sentence = $db->prepare("
                     UPDATE certificados_configuracion
-                    SET modo = :modo, regla = :regla, agrupar_por_mes = :agrupar,
+                    SET modo = :modo, regla = :regla, formato = :formato,
+                        mostrar_conceptos = :conceptos,
                         mensaje_no_cumple = :mensaje, activo = :activo
                     WHERE id = :id AND id_tenant = :id_tenant
                 ");
@@ -233,9 +245,10 @@ class CertificadosConfiguracion
                 $idConfiguracion = Uuid::generar();
                 $sentence = $db->prepare("
                     INSERT INTO certificados_configuracion
-                        (id, id_tenant, clave_certificado, modo, regla, agrupar_por_mes,
-                         mensaje_no_cumple, activo)
-                    VALUES (:id, :id_tenant, :clave, :modo, :regla, :agrupar, :mensaje, :activo)
+                        (id, id_tenant, clave_certificado, modo, regla, formato,
+                         mostrar_conceptos, mensaje_no_cumple, activo)
+                    VALUES (:id, :id_tenant, :clave, :modo, :regla, :formato, :conceptos,
+                            :mensaje, :activo)
                 ");
                 $sentence->bindParam(':id', $idConfiguracion);
                 $sentence->bindParam(':clave', $clave);
@@ -244,7 +257,8 @@ class CertificadosConfiguracion
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':modo', $modo);
             $sentence->bindParam(':regla', $regla);
-            $sentence->bindValue(':agrupar', $agruparPorMes, PDO::PARAM_INT);
+            $sentence->bindParam(':formato', $formato);
+            $sentence->bindValue(':conceptos', $mostrarConceptos, PDO::PARAM_INT);
             $sentence->bindParam(':mensaje', $mensaje);
             $sentence->bindValue(':activo', $activo, PDO::PARAM_INT);
             $sentence->execute();
