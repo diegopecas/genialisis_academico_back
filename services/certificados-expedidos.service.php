@@ -124,6 +124,11 @@ class CertificadosExpedidos
             $saldoTotal = self::saldoEstudiante($db, $idEstudiante, false, []);
             $saldoVencido = self::saldoEstudiante($db, $idEstudiante, true, []);
 
+            // Los conceptos que el estudiante realmente tiene pagados. Van en la
+            // misma respuesta para no hacer una segunda llamada, y sirven para
+            // los dos certificados de pagos.
+            $productos = self::productosDelEstudiante($db, $idEstudiante);
+
             $resultado = [];
             foreach (CertificadosConfiguracion::$CLAVES as $clave) {
                 $configuracion = isset($configuraciones[$clave]) ? $configuraciones[$clave] : null;
@@ -158,11 +163,42 @@ class CertificadosExpedidos
                 ];
             }
 
-            Flight::json($resultado);
+            Flight::json(['certificados' => $resultado, 'productos' => $productos]);
         } catch (Exception $e) {
             error_log('Error en CertificadosExpedidos::getDisponibles: ' . $e->getMessage());
             Flight::json(['error' => true, 'message' => 'Error al obtener los certificados disponibles'], 500);
         }
+    }
+
+    /**
+     * Productos que aparecen en los pagos del estudiante, con su clasificacion.
+     * Se ofrecen solo estos para filtrar: mostrar el catalogo completo obliga a
+     * buscar entre conceptos que ese estudiante nunca pago.
+     */
+    private static function productosDelEstudiante($db, $idEstudiante)
+    {
+        $sentence = $db->prepare("
+            SELECT DISTINCT ps.id, ps.nombre, ps.id_periodicidad_cobro,
+                   ps.id_clasificacion_productos_servicios,
+                   cl.nombre AS nombre_clasificacion,
+                   pc.nombre AS nombre_periodicidad
+            FROM cuenta_pagada cp
+            INNER JOIN pagos_recibidos pr ON pr.id = cp.id_pago_recibido
+            INNER JOIN cuentas_por_cobrar cc ON cc.id = cp.id_cuenta_por_cobrar
+            INNER JOIN productos_servicios ps ON ps.id = cc.id_producto_servicio
+            LEFT JOIN clasificacion_productos_servicios cl
+                   ON cl.id = ps.id_clasificacion_productos_servicios
+            LEFT JOIN periodicidad_cobro pc ON pc.id = ps.id_periodicidad_cobro
+            WHERE pr.id_tenant = :id_tenant
+              AND COALESCE(pr.anulado, 0) = 0
+              AND pr.id_estudiante = :id_estudiante
+            ORDER BY cl.nombre, ps.nombre
+        ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindParam(':id_estudiante', $idEstudiante);
+        $sentence->execute();
+
+        return $sentence->fetchAll(PDO::FETCH_ASSOC);
     }
 
     /**
