@@ -414,6 +414,13 @@ Flight::before('start', function (&$params, &$output) {
         return;
     }
 
+    // Autoregistro de acudientes: la pagina publica del portal de padres no
+    // tiene sesion. Cada endpoint valida que el enlace exista, este activo y
+    // no haya vencido, y que el intento pertenezca a ese enlace.
+    if (strpos($ruta, '/autoregistro-publico/') === 0) {
+        return;
+    }
+
     // Resto: token valido y que el tenant del token coincida con el del request.
     $userData = JWTService::requerirTenant(TenantContext::codigo());
 

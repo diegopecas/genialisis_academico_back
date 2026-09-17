@@ -20,7 +20,8 @@ class AuditService
     // Prefijos de rutas consideradas públicas (editable según index.php).
     private static $prefijosPublicos = [
         '/webhooks/', '/auth/pre-login', '/auth/webauthn',
-        '/test-publico/', '/google-calendar/callback'
+        '/test-publico/', '/google-calendar/callback',
+        '/autoregistro-publico/'
     ];
 
     // Límite del body almacenado en bytes. Evita guardar uploads base64 enormes.

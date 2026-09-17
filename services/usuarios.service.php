@@ -32,7 +32,8 @@ class Usuarios
         return null;
     }
 
-    private static function insertarEnMaster($usuario)
+    // Publico para que el autoregistro de acudientes lo reutilice.
+    public static function insertarEnMaster($usuario)
     {
         try {
             $tenant = self::getTenantActual();
@@ -171,7 +172,8 @@ class Usuarios
         }
     }
 
-    private static function asignarRolDefaultAcudiente($db, $idUsuario)
+    // Publico para que el autoregistro de acudientes lo reutilice.
+    public static function asignarRolDefaultAcudiente($db, $idUsuario)
     {
         try {
             $stmtRol = $db->prepare("
