@@ -12,6 +12,7 @@ class InformesConfiguracion
         $sentence = $db->prepare("
             SELECT c.id, c.id_parametro_evaluacion, c.muestra_ausencias, c.titulo_informe,
                    c.encabezado, c.pie_pagina, c.firma_uno, c.firma_dos, c.firma_acudiente,
+                   c.estilo_marca, c.simbolo_marca, c.color_principal, c.mostrar_convencion,
                    p.nombre AS nombre_parametro_evaluacion
             FROM informes_configuracion c
             LEFT JOIN parametros_calificaciones p ON c.id_parametro_evaluacion = p.id
@@ -29,6 +30,7 @@ class InformesConfiguracion
         $sentence = $db->prepare("
             SELECT c.id, c.id_parametro_evaluacion, c.muestra_ausencias, c.titulo_informe,
                    c.encabezado, c.pie_pagina, c.firma_uno, c.firma_dos, c.firma_acudiente,
+                   c.estilo_marca, c.simbolo_marca, c.color_principal, c.mostrar_convencion,
                    p.nombre AS nombre_parametro_evaluacion
             FROM informes_configuracion c
             LEFT JOIN parametros_calificaciones p ON c.id_parametro_evaluacion = p.id
@@ -52,13 +54,19 @@ class InformesConfiguracion
         $firma_uno = Flight::request()->data['firma_uno'] ?? null;
         $firma_dos = Flight::request()->data['firma_dos'] ?? null;
         $firma_acudiente = Flight::request()->data['firma_acudiente'] ?? 0;
+        $estilo_marca = Flight::request()->data['estilo_marca'] ?? 'columnas';
+        $simbolo_marca = Flight::request()->data['simbolo_marca'] ?? 'x';
+        $color_principal = Flight::request()->data['color_principal'] ?? null;
+        $mostrar_convencion = Flight::request()->data['mostrar_convencion'] ?? 1;
 
         $sentence = $db->prepare("INSERT INTO informes_configuracion(
                 id, id_tenant, id_parametro_evaluacion, muestra_ausencias, titulo_informe,
-                encabezado, pie_pagina, firma_uno, firma_dos, firma_acudiente
+                encabezado, pie_pagina, firma_uno, firma_dos, firma_acudiente,
+                estilo_marca, simbolo_marca, color_principal, mostrar_convencion
             ) VALUES (
                 :id, :id_tenant, :id_parametro_evaluacion, :muestra_ausencias, :titulo_informe,
-                :encabezado, :pie_pagina, :firma_uno, :firma_dos, :firma_acudiente
+                :encabezado, :pie_pagina, :firma_uno, :firma_dos, :firma_acudiente,
+                :estilo_marca, :simbolo_marca, :color_principal, :mostrar_convencion
             )");
 
         $idNew = Uuid::generar();
@@ -72,6 +80,10 @@ class InformesConfiguracion
         $sentence->bindParam(':firma_uno', $firma_uno);
         $sentence->bindParam(':firma_dos', $firma_dos);
         $sentence->bindValue(':firma_acudiente', $firma_acudiente, PDO::PARAM_INT);
+        $sentence->bindParam(':estilo_marca', $estilo_marca);
+        $sentence->bindParam(':simbolo_marca', $simbolo_marca);
+        $sentence->bindValue(':color_principal', $color_principal);
+        $sentence->bindValue(':mostrar_convencion', $mostrar_convencion, PDO::PARAM_INT);
         $sentence->execute();
 
         Flight::json(array('id' => $idNew));
@@ -90,6 +102,10 @@ class InformesConfiguracion
         $firma_uno = Flight::request()->data['firma_uno'] ?? null;
         $firma_dos = Flight::request()->data['firma_dos'] ?? null;
         $firma_acudiente = Flight::request()->data['firma_acudiente'] ?? 0;
+        $estilo_marca = Flight::request()->data['estilo_marca'] ?? 'columnas';
+        $simbolo_marca = Flight::request()->data['simbolo_marca'] ?? 'x';
+        $color_principal = Flight::request()->data['color_principal'] ?? null;
+        $mostrar_convencion = Flight::request()->data['mostrar_convencion'] ?? 1;
 
         $sentence = $db->prepare("UPDATE informes_configuracion SET
                 id_parametro_evaluacion = :id_parametro_evaluacion,
@@ -99,7 +115,11 @@ class InformesConfiguracion
                 pie_pagina = :pie_pagina,
                 firma_uno = :firma_uno,
                 firma_dos = :firma_dos,
-                firma_acudiente = :firma_acudiente
+                firma_acudiente = :firma_acudiente,
+                estilo_marca = :estilo_marca,
+                simbolo_marca = :simbolo_marca,
+                color_principal = :color_principal,
+                mostrar_convencion = :mostrar_convencion
             WHERE id = :id AND id_tenant = :id_tenant");
 
         $sentence->bindValue(':id_parametro_evaluacion', $id_parametro_evaluacion);
@@ -110,6 +130,10 @@ class InformesConfiguracion
         $sentence->bindParam(':firma_uno', $firma_uno);
         $sentence->bindParam(':firma_dos', $firma_dos);
         $sentence->bindValue(':firma_acudiente', $firma_acudiente, PDO::PARAM_INT);
+        $sentence->bindParam(':estilo_marca', $estilo_marca);
+        $sentence->bindParam(':simbolo_marca', $simbolo_marca);
+        $sentence->bindValue(':color_principal', $color_principal);
+        $sentence->bindValue(':mostrar_convencion', $mostrar_convencion, PDO::PARAM_INT);
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
