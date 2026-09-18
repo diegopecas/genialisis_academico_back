@@ -22,6 +22,7 @@ Flight::route('GET /utiles-diarios-propuesta/@id_estudiante/@fecha', [RegistroUt
 Flight::route('POST /utiles-diarios-registro/dia-grupo', [RegistroUtilesDiarios::class, 'getDiaGrupo']);
 Flight::route('POST /utiles-diarios-registro/guardar-lote', [RegistroUtilesDiarios::class, 'guardarLote']);
 Flight::route('POST /utiles-diarios-registro/reporte', [RegistroUtilesDiarios::class, 'getReporte']);
+Flight::route('POST /utiles-diarios-registro/matriz', [RegistroUtilesDiarios::class, 'getMatriz']);
 Flight::route('POST /utiles-diarios-registro', [RegistroUtilesDiarios::class, 'new']);
 Flight::route('PUT /utiles-diarios-registro', [RegistroUtilesDiarios::class, 'replace']);
 Flight::route('DELETE /utiles-diarios-registro', [RegistroUtilesDiarios::class, 'delete']);

@@ -388,18 +388,32 @@ class InformesEstudiantes
         $db = Flight::db();
         $idTenant = TenantContext::id();
 
-        // Datos de la sección
-        $st = $db->prepare("SELECT id, nombre, se_califica, tipo_contenido, evalua_a
-                            FROM informes_secciones
-                            WHERE id = :id_seccion AND id_tenant = :id_tenant");
-        $st->bindParam(':id_seccion', $id_seccion);
-        $st->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
-        $st->execute();
-        $seccion = $st->fetch();
+        // 'cierre' no es una seccion configurada: es el texto general del
+        // informe, que vive en el maestro. Se atiende aqui para poder
+        // escribirlo para todo el grupo desde la misma vista.
+        $esCierre = ($id_seccion === 'cierre');
 
-        if (!$seccion) {
-            Flight::json(array('error' => 'No se encontró la sección'), 404);
-            return;
+        if ($esCierre) {
+            $seccion = array(
+                'id'             => 'cierre',
+                'nombre'         => 'Observaciones generales',
+                'se_califica'    => 0,
+                'tipo_contenido' => 'texto',
+                'evalua_a'       => 'estudiante'
+            );
+        } else {
+            $st = $db->prepare("SELECT id, nombre, se_califica, tipo_contenido, evalua_a
+                                FROM informes_secciones
+                                WHERE id = :id_seccion AND id_tenant = :id_tenant");
+            $st->bindParam(':id_seccion', $id_seccion);
+            $st->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $st->execute();
+            $seccion = $st->fetch();
+
+            if (!$seccion) {
+                Flight::json(array('error' => 'No se encontró la sección'), 404);
+                return;
+            }
         }
 
         // Estudiantes del grupo con su informe del corte
@@ -407,7 +421,8 @@ class InformesEstudiantes
             SELECT e.id AS id_estudiante,
                    TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_completo,
                    i.id AS id_informe,
-                   COALESCE(i.estado, 'sin_generar') AS estado
+                   COALESCE(i.estado, 'sin_generar') AS estado,
+                   i.texto_cierre
             FROM estudiantes_x_grupos eg
             INNER JOIN estudiantes e ON eg.id_estudiante = e.id
             INNER JOIN personas p ON e.id_persona = p.id
@@ -450,6 +465,11 @@ class InformesEstudiantes
             $estudiantes[$k]['texto'] = null;
 
             if (!$est['id_informe']) {
+                continue;
+            }
+
+            if ($esCierre) {
+                $estudiantes[$k]['texto'] = $est['texto_cierre'];
                 continue;
             }
 
@@ -523,6 +543,12 @@ class InformesEstudiantes
             $insTexto = $db->prepare("INSERT INTO informes_estudiantes_textos(id, id_tenant, id_informe, id_seccion, texto)
                                       VALUES (:id, :id_tenant, :id_informe, :id_seccion, :texto)");
 
+            // El texto de cierre vive en el maestro, no en la tabla de textos
+            $upCierre = $db->prepare("UPDATE informes_estudiantes SET texto_cierre = :texto_cierre
+                                      WHERE id = :id AND id_tenant = :id_tenant");
+
+            $esCierre = ($id_seccion === 'cierre');
+
             $guardados = 0;
             $omitidos = 0;
 
@@ -552,7 +578,12 @@ class InformesEstudiantes
                     $upDetalle->execute();
                 }
 
-                if (array_key_exists('texto', $est)) {
+                if ($esCierre && array_key_exists('texto', $est)) {
+                    $upCierre->bindValue(':texto_cierre', $est['texto']);
+                    $upCierre->bindValue(':id', $id_informe);
+                    $upCierre->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                    $upCierre->execute();
+                } elseif (array_key_exists('texto', $est)) {
                     $delTexto->bindValue(':id_informe', $id_informe);
                     $delTexto->bindValue(':id_seccion', $id_seccion);
                     $delTexto->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);

@@ -829,6 +829,167 @@ class RegistroUtilesDiarios
      *
      * Todos los filtros son opcionales y se van sumando.
      */
+    /**
+     * Matriz del mes: una fila por estudiante y una columna por dia.
+     *
+     * El reporte en lista obliga a leer renglon por renglon para saber que paso
+     * con un nino en el mes. Aqui cada celda es un dia con sus utiles y su
+     * estado, que es como lo revisa el jardin.
+     *
+     * Devuelve los dias del mes, los estudiantes y, por cada uno, los utiles
+     * agrupados por fecha. El front solo pinta.
+     *
+     * POST /utiles-diarios-registro/matriz
+     * Body: anio, mes, id_grupo (opcional)
+     */
+    public static function getMatriz()
+    {
+        JWTService::requerirAutenticacion();
+
+        try {
+            $db = Flight::db();
+            $datos = Flight::request()->data;
+
+            $anio = isset($datos['anio']) ? (int) $datos['anio'] : (int) date('Y');
+            $mes = isset($datos['mes']) ? (int) $datos['mes'] : (int) date('n');
+            $idGrupo = isset($datos['id_grupo']) && $datos['id_grupo'] !== '' ? $datos['id_grupo'] : null;
+
+            if ($mes < 1 || $mes > 12) {
+                Flight::json(['error' => true, 'message' => 'Mes no válido'], 400);
+                return;
+            }
+
+            $primerDia = sprintf('%04d-%02d-01', $anio, $mes);
+            $ultimoDia = date('Y-m-t', strtotime($primerDia));
+
+            // Dias del mes con su nombre, para el encabezado y para atenuar
+            // los fines de semana.
+            $nombresDia = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
+            $dias = [];
+            $total = (int) date('t', strtotime($primerDia));
+
+            for ($dia = 1; $dia <= $total; $dia++) {
+                $fecha = sprintf('%04d-%02d-%02d', $anio, $mes, $dia);
+                $diaSemana = (int) date('w', strtotime($fecha));
+
+                $dias[] = [
+                    'fecha' => $fecha,
+                    'dia' => $dia,
+                    'nombre_dia' => $nombresDia[$diaSemana],
+                    'fin_de_semana' => ($diaSemana === 0 || $diaSemana === 6) ? 1 : 0,
+                ];
+            }
+
+            $registros = self::registrosDelMes($db, $primerDia, $ultimoDia, $idGrupo);
+
+            // Los estudiantes salen de los grupos activos, no de los registros:
+            // uno sin registros en el mes tambien debe aparecer, en blanco.
+            $estudiantes = self::estudiantesDeLaMatriz($db, $idGrupo, $anio);
+
+            $porEstudiante = [];
+            foreach ($registros as $registro) {
+                $idEstudiante = $registro['id_estudiante'];
+                $fecha = $registro['fecha'];
+
+                if (!isset($porEstudiante[$idEstudiante])) {
+                    $porEstudiante[$idEstudiante] = [];
+                }
+                if (!isset($porEstudiante[$idEstudiante][$fecha])) {
+                    $porEstudiante[$idEstudiante][$fecha] = [];
+                }
+
+                $porEstudiante[$idEstudiante][$fecha][] = [
+                    'id' => $registro['id'],
+                    'util' => $registro['util'],
+                    'icono' => $registro['icono'],
+                    'trajo' => $registro['trajo'] === null ? null : (int) $registro['trajo'],
+                    'regreso' => $registro['regreso'] === null ? null : (int) $registro['regreso'],
+                    'observacion' => $registro['observacion'],
+                ];
+            }
+
+            foreach ($estudiantes as &$estudiante) {
+                $estudiante['dias'] = isset($porEstudiante[$estudiante['id']])
+                    ? $porEstudiante[$estudiante['id']]
+                    : new stdClass();
+            }
+
+            Flight::json([
+                'anio' => $anio,
+                'mes' => $mes,
+                'dias' => $dias,
+                'estudiantes' => $estudiantes,
+            ]);
+        } catch (Exception $e) {
+            error_log('Error en RegistroUtilesDiarios::getMatriz: ' . $e->getMessage());
+            Flight::json(['error' => true, 'message' => 'Error al obtener la matriz'], 500);
+        }
+    }
+
+    /** Registros del mes, ordenados para que los utiles salgan siempre igual. */
+    private static function registrosDelMes($db, $primerDia, $ultimoDia, $idGrupo)
+    {
+        $sql = "SELECT i.id, i.fecha, i.id_estudiante,
+                       COALESCE(u.nombre, i.nombre_libre) AS util,
+                       u.icono, i.trajo, i.regreso, i.observacion
+                FROM utiles_diarios_registro i
+                LEFT JOIN utiles_diarios u ON u.id = i.id_util_diario
+                WHERE i.id_tenant = :id_tenant
+                  AND i.fecha BETWEEN :fecha_inicial AND :fecha_final";
+
+        if ($idGrupo) {
+            $sql .= " AND EXISTS (SELECT 1 FROM estudiantes_x_grupos exg
+                                   WHERE exg.id_estudiante = i.id_estudiante
+                                     AND exg.id_grupo = :id_grupo
+                                     AND exg.activo = 1)";
+        }
+
+        $sql .= " ORDER BY i.fecha, COALESCE(u.orden, 999), util";
+
+        $sentence = $db->prepare($sql);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':fecha_inicial', $primerDia);
+        $sentence->bindValue(':fecha_final', $ultimoDia);
+        if ($idGrupo) {
+            $sentence->bindValue(':id_grupo', $idGrupo);
+        }
+        $sentence->execute();
+
+        return $sentence->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /** Estudiantes activos del grupo, o de todo el jardin si no se filtra. */
+    private static function estudiantesDeLaMatriz($db, $idGrupo, $anio)
+    {
+        $sql = "SELECT DISTINCT e.id,
+                       TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre,
+                                      p.primer_apellido, p.segundo_apellido)) AS nombre,
+                       exg.id_grupo, g.nombre AS grupo
+                FROM estudiantes e
+                INNER JOIN personas p ON p.id = e.id_persona
+                INNER JOIN estudiantes_x_grupos exg ON exg.id_estudiante = e.id
+                                                   AND exg.id_tenant = e.id_tenant
+                                                   AND exg.activo = 1
+                LEFT JOIN grupos g ON g.id = exg.id_grupo
+                WHERE e.id_tenant = :id_tenant
+                  AND COALESCE(e.activo, 1) = 1";
+
+        if ($idGrupo) {
+            $sql .= " AND exg.id_grupo = :id_grupo";
+        }
+
+        $sql .= " ORDER BY nombre";
+
+        $sentence = $db->prepare($sql);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        if ($idGrupo) {
+            $sentence->bindValue(':id_grupo', $idGrupo);
+        }
+        $sentence->execute();
+
+        return $sentence->fetchAll(PDO::FETCH_ASSOC);
+    }
+
     public static function getReporte()
     {
         $userData = JWTService::requerirAutenticacion();
