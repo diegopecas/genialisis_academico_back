@@ -38,7 +38,8 @@ class CertificadosExpedidos
             $sentence = $db->prepare("
                 SELECT ce.id, ce.anio, ce.numero, ce.clave_certificado,
                        ce.id_estudiante, ce.id_acudiente, ce.anio_certificado,
-                       ce.fecha_desde, ce.fecha_hasta, ce.origen, ce.fecha_expedicion,
+                       ce.fecha_desde, ce.fecha_hasta, ce.origen, ce.compartido,
+                       ce.fecha_expedicion,
                        TRIM(CONCAT_WS(' ', pa.primer_nombre, pa.segundo_nombre,
                                       pa.primer_apellido, pa.segundo_apellido)) AS acudiente_nombre
                 FROM certificados_expedidos ce
@@ -372,10 +373,10 @@ class CertificadosExpedidos
                 INSERT INTO certificados_expedidos
                     (id, id_tenant, anio, numero, clave_certificado, id_estudiante, id_acudiente,
                      anio_certificado, fecha_desde, fecha_hasta, formato, mostrar_conceptos,
-                     dirigido_a, contenido_html, origen, id_usuario)
+                     dirigido_a, contenido_html, origen, compartido, fecha_compartido, id_usuario)
                 VALUES (:id, :id_tenant, :anio, :numero, :clave, :id_estudiante, :id_acudiente,
                         :anio_certificado, :fecha_desde, :fecha_hasta, :formato, :conceptos,
-                        :dirigido_a, :contenido_html, :origen, :id_usuario)
+                        :dirigido_a, :contenido_html, :origen, :compartido, :fecha_compartido, :id_usuario)
             ");
             $idUsuario = isset($userData->id) ? $userData->id : null;
             $sentence->bindParam(':id', $id);
@@ -393,6 +394,11 @@ class CertificadosExpedidos
             $sentence->bindParam(':dirigido_a', $dirigidoA);
             $sentence->bindParam(':contenido_html', $contenidoHtml);
             $sentence->bindParam(':origen', $origen);
+            // Lo que el acudiente genera ya es suyo; lo del jardin se comparte aparte.
+            $compartido = ($origen === 'padres') ? 1 : 0;
+            $fechaCompartido = $compartido ? date('Y-m-d H:i:s') : null;
+            $sentence->bindValue(':compartido', $compartido, PDO::PARAM_INT);
+            $sentence->bindParam(':fecha_compartido', $fechaCompartido);
             $sentence->bindParam(':id_usuario', $idUsuario);
             $sentence->execute();
 
@@ -430,6 +436,281 @@ class CertificadosExpedidos
             }
             error_log('Error en CertificadosExpedidos::new: ' . $e->getMessage());
             Flight::json(['error' => true, 'message' => 'Error al expedir el certificado'], 500);
+        }
+    }
+
+    /**
+     * Marca un certificado ya expedido como disponible para el acudiente en el
+     * portal de padres. Sirve para los certificados en modo manual: el jardin
+     * igual se los va a hacer llegar, y asi tambien quedan a la mano.
+     *
+     * PUT /certificados-expedidos/compartir
+     * Body: id, compartido (1 o 0)
+     */
+    public static function compartir()
+    {
+        $userData = JWTService::requerirAutenticacion();
+
+        try {
+            $datos = Flight::request()->data;
+            $id = isset($datos['id']) ? $datos['id'] : null;
+            $compartido = isset($datos['compartido']) ? (int) $datos['compartido'] : 1;
+
+            if (!$id) {
+                Flight::json(['error' => true, 'message' => 'Debe indicar el certificado'], 400);
+                return;
+            }
+
+            $db = Flight::db();
+            $fecha = $compartido ? date('Y-m-d H:i:s') : null;
+
+            $sentence = $db->prepare("
+                UPDATE certificados_expedidos
+                SET compartido = :compartido, fecha_compartido = :fecha
+                WHERE id = :id AND id_tenant = :id_tenant
+            ");
+            $sentence->bindValue(':compartido', $compartido, PDO::PARAM_INT);
+            $sentence->bindParam(':fecha', $fecha);
+            $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->execute();
+
+            if ($sentence->rowCount() === 0) {
+                Flight::json(['error' => true, 'message' => 'Certificado no encontrado'], 404);
+                return;
+            }
+
+            // Solo al compartir: dejar de compartir no se avisa.
+            if ($compartido === 1) {
+                $idUsuario = isset($userData->id) ? $userData->id : null;
+                self::notificarCompartido($db, $id, $idUsuario);
+            }
+
+            Flight::json(['id' => $id, 'compartido' => $compartido]);
+        } catch (Exception $e) {
+            error_log('Error en CertificadosExpedidos::compartir: ' . $e->getMessage());
+            Flight::json(['error' => true, 'message' => 'Error al compartir el certificado'], 500);
+        }
+    }
+
+    /**
+     * Avisa por el portal de padres que hay un certificado nuevo disponible.
+     *
+     * El texto sale de la plantilla `certificado_compartido` (tipo mensaje) y,
+     * si el tenant no la tiene, de un texto por defecto: el aviso no se pierde
+     * por falta de parametrizacion.
+     *
+     * No se envia WhatsApp ni correo, igual que los avisos automaticos de
+     * solicitudes: son de bajo valor para el jardin y de alto volumen.
+     */
+    private static function notificarCompartido($db, $idCertificado, $idUsuarioEnvio)
+    {
+        try {
+            $sentence = $db->prepare("
+                SELECT ce.numero, ce.anio, ce.clave_certificado, ce.id_estudiante,
+                       TRIM(CONCAT_WS(' ', pe.primer_nombre, pe.segundo_nombre,
+                                      pe.primer_apellido, pe.segundo_apellido)) AS estudiante_nombre
+                FROM certificados_expedidos ce
+                INNER JOIN estudiantes e ON e.id = ce.id_estudiante
+                INNER JOIN personas pe ON pe.id = e.id_persona
+                WHERE ce.id = :id AND ce.id_tenant = :id_tenant
+            ");
+            $sentence->bindParam(':id', $idCertificado);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->execute();
+
+            $certificado = $sentence->fetch(PDO::FETCH_ASSOC);
+
+            if (!$certificado) {
+                return;
+            }
+
+            // Acudientes del estudiante que ven el portal y tienen usuario.
+            $sentence = $db->prepare("
+                SELECT a.id_persona, u.id AS id_usuario
+                FROM acudientes a
+                LEFT JOIN usuarios u ON u.id_persona = a.id_persona
+                                    AND u.id_tenant = a.id_tenant
+                                    AND u.acceso_portal_padres = 1
+                                    AND u.activo = 1
+                WHERE a.id_tenant = :id_tenant
+                  AND a.id_estudiante = :id_estudiante
+                  AND a.ve_en_portal_padres = 1
+                  AND COALESCE(a.activo, 1) = 1
+            ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindParam(':id_estudiante', $certificado['id_estudiante']);
+            $sentence->execute();
+
+            $destinatarios = $sentence->fetchAll(PDO::FETCH_ASSOC);
+
+            if (count($destinatarios) === 0 || !$idUsuarioEnvio) {
+                return;
+            }
+
+            $configuracion = self::configuracionGlobal($db);
+            $variables = [
+                '{nombre_estudiante}' => $certificado['estudiante_nombre'],
+                '{nombre_certificado}' => isset(CertificadosConfiguracion::$NOMBRES[$certificado['clave_certificado']])
+                    ? CertificadosConfiguracion::$NOMBRES[$certificado['clave_certificado']]
+                    : 'certificado',
+                '{numero_certificado}' => self::formatearNumero((int) $certificado['anio'], (int) $certificado['numero']),
+                '{nombre_colegio}' => self::valor($configuracion, 'institucion_nombre'),
+            ];
+
+            $texto = self::textoNotificacion($db, $variables);
+
+            $idNotificacion = Uuid::generar();
+            $categoria = self::categoriaGeneral($db);
+
+            $insertar = $db->prepare("
+                INSERT INTO notificaciones
+                    (id, id_tenant, titulo, cuerpo, id_categoria, id_respuesta_tipo, id_plantilla,
+                     criterio_texto, incluir_whatsapp, whatsapp_numero, enviar_correo, id_usuario_envio)
+                VALUES (:id, :id_tenant, :titulo, :cuerpo, :id_categoria, NULL, NULL,
+                        :criterio_texto, 0, NULL, 0, :id_usuario_envio)
+            ");
+            $insertar->bindParam(':id', $idNotificacion);
+            $insertar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $insertar->bindParam(':titulo', $texto['titulo']);
+            $insertar->bindParam(':cuerpo', $texto['cuerpo']);
+            $insertar->bindValue(':id_categoria', $categoria);
+            $insertar->bindValue(':criterio_texto', 'Certificados');
+            $insertar->bindParam(':id_usuario_envio', $idUsuarioEnvio);
+            $insertar->execute();
+
+            $insertarDestinatario = $db->prepare("
+                INSERT INTO notificaciones_destinatarios
+                    (id, id_tenant, id_notificacion, id_estudiante, id_persona, id_usuario)
+                VALUES (:id, :id_tenant, :id_notificacion, :id_estudiante, :id_persona, :id_usuario)
+            ");
+
+            $usuarios = [];
+
+            foreach ($destinatarios as $destinatario) {
+                $idFila = Uuid::generar();
+                $insertarDestinatario->bindParam(':id', $idFila);
+                $insertarDestinatario->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $insertarDestinatario->bindParam(':id_notificacion', $idNotificacion);
+                $insertarDestinatario->bindParam(':id_estudiante', $certificado['id_estudiante']);
+                $insertarDestinatario->bindValue(':id_persona', $destinatario['id_persona']);
+                $insertarDestinatario->bindValue(':id_usuario', $destinatario['id_usuario']);
+                $insertarDestinatario->execute();
+
+                if (!empty($destinatario['id_usuario'])) {
+                    $usuarios[] = $destinatario['id_usuario'];
+                }
+            }
+
+            if (count($usuarios) > 0 && class_exists('PushNotificationService')) {
+                $push = new PushNotificationService($db);
+                $push->notificarAUsuarios(
+                    $usuarios,
+                    $texto['titulo'],
+                    $texto['cuerpo'],
+                    ['id_notificacion' => $idNotificacion, 'tipo' => 'notificacion'],
+                    JWTService::PORTAL_PADRES
+                );
+            }
+        } catch (Exception $e) {
+            // El aviso es un extra: si falla, el certificado igual quedo compartido.
+            error_log('[Certificados] No se pudo notificar el certificado ' . $idCertificado
+                . ': ' . $e->getMessage());
+        }
+    }
+
+    /** Texto del aviso, de la plantilla del tenant o del texto por defecto. */
+    private static function textoNotificacion($db, $variables)
+    {
+        $titulo = 'Nuevo certificado disponible';
+        $cuerpo = 'El ' . $variables['{nombre_colegio}'] . ' puso a tu disposición el '
+            . $variables['{nombre_certificado}'] . ' de ' . $variables['{nombre_estudiante}']
+            . ' (No. ' . $variables['{numero_certificado}'] . '). Puedes descargarlo desde la ficha '
+            . 'del estudiante, en la pestaña Certificados.';
+
+        $sentence = $db->prepare("
+            SELECT p.contenido
+            FROM plantillas p
+            INNER JOIN tipos_plantillas tp ON tp.id = p.id_tipo_plantilla
+            WHERE p.id_tenant = :id_tenant
+              AND tp.codigo = 'mensaje'
+              AND p.clave = 'certificado_compartido'
+            LIMIT 1
+        ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+
+        $contenido = $sentence->fetchColumn();
+        $plantilla = $contenido ? json_decode($contenido, true) : null;
+
+        if (is_array($plantilla)) {
+            if (!empty($plantilla['titulo'])) {
+                $titulo = $plantilla['titulo'];
+            }
+            if (!empty($plantilla['cuerpo'])) {
+                $cuerpo = $plantilla['cuerpo'];
+            }
+        }
+
+        return [
+            'titulo' => strtr($titulo, $variables),
+            'cuerpo' => strtr($cuerpo, $variables),
+        ];
+    }
+
+    /** Categoria del aviso. Sin ella la notificacion igual se crea. */
+    private static function categoriaGeneral($db)
+    {
+        $sentence = $db->prepare("
+            SELECT id FROM notificaciones_categorias
+            WHERE id_tenant = :id_tenant AND codigo = 'GENERAL' AND activo = 1
+            LIMIT 1
+        ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+
+        $id = $sentence->fetchColumn();
+
+        return $id ? $id : null;
+    }
+
+    /**
+     * Certificados que el acudiente puede ver: los que genero el mismo y los
+     * que el jardin le compartio.
+     *
+     * GET /certificados-expedidos/compartidos/:idEstudiante
+     */
+    public static function getCompartidos($idEstudiante)
+    {
+        JWTService::requerirAutenticacion();
+
+        try {
+            $db = Flight::db();
+            $sentence = $db->prepare("
+                SELECT ce.id, ce.anio, ce.numero, ce.clave_certificado,
+                       ce.anio_certificado, ce.fecha_desde, ce.fecha_hasta,
+                       ce.origen, ce.fecha_expedicion, ce.fecha_compartido
+                FROM certificados_expedidos ce
+                WHERE ce.id_tenant = :id_tenant
+                  AND ce.id_estudiante = :id_estudiante
+                  AND ce.compartido = 1
+                ORDER BY ce.fecha_expedicion DESC
+            ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindParam(':id_estudiante', $idEstudiante);
+            $sentence->execute();
+
+            $filas = $sentence->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($filas as &$fila) {
+                $fila['nombre_certificado'] = isset(CertificadosConfiguracion::$NOMBRES[$fila['clave_certificado']])
+                    ? CertificadosConfiguracion::$NOMBRES[$fila['clave_certificado']]
+                    : $fila['clave_certificado'];
+            }
+
+            Flight::json($filas);
+        } catch (Exception $e) {
+            error_log('Error en CertificadosExpedidos::getCompartidos: ' . $e->getMessage());
+            Flight::json(['error' => true, 'message' => 'Error al obtener los certificados'], 500);
         }
     }
 
