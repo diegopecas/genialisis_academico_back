@@ -17,10 +17,15 @@ class InformesEstudiantes
                    COALESCE(i.estado, 'sin_generar') AS estado,
                    i.fecha_generacion,
                    i.fecha_confirmacion,
+                   -- Las secciones informativas no llevan marca: contarlas
+                   -- dejaba el avance imposible de completar
                    (SELECT COUNT(*) FROM informes_estudiantes_detalle d
-                     WHERE d.id_informe = i.id) AS filas_total,
+                     INNER JOIN informes_secciones s ON d.id_seccion = s.id
+                     WHERE d.id_informe = i.id AND s.se_califica = 1) AS filas_total,
                    (SELECT COUNT(*) FROM informes_estudiantes_detalle d
-                     WHERE d.id_informe = i.id AND d.id_valor_parametro IS NOT NULL) AS filas_calificadas
+                     INNER JOIN informes_secciones s ON d.id_seccion = s.id
+                     WHERE d.id_informe = i.id AND s.se_califica = 1
+                       AND d.id_valor_parametro IS NOT NULL) AS filas_calificadas
             FROM estudiantes_x_grupos eg
             INNER JOIN estudiantes e ON eg.id_estudiante = e.id
             INNER JOIN personas p ON e.id_persona = p.id
