@@ -71,6 +71,14 @@ class EstudiantesXCursosExtra
         Flight::json($response);
     }
 
+    /**
+     * Inscribe un estudiante al curso.
+     *
+     * Valida contra la configuracion del curso antes de insertar. Las tres
+     * validaciones son opcionales por diseno: fecha_limite_inscripcion,
+     * edad_minima_meses y edad_maxima_meses solo bloquean si estan diligenciadas.
+     * El cupo solo bloquea cuando el curso no permite sobrecupo.
+     */
     public static function new()
     {
         $db = Flight::db();
@@ -78,6 +86,12 @@ class EstudiantesXCursosExtra
         $id_curso_extra = Flight::request()->data['id_curso_extra'];
         $fecha_inscripcion = Flight::request()->data['fecha_inscripcion'];
         $anio = Flight::request()->data['anio'];
+
+        $error = self::validarInscripcion($db, $id_estudiante, $id_curso_extra, $fecha_inscripcion);
+        if ($error !== null) {
+            Flight::json(array('error' => $error), 400);
+            return;
+        }
 
         $idNew = Uuid::generar();
         $sentence = $db->prepare("INSERT INTO estudiantes_x_cursos_extra(id, id_tenant, id_estudiante, id_curso_extra, fecha_inscripcion, anio, activo) 
@@ -91,6 +105,90 @@ class EstudiantesXCursosExtra
         $sentence->execute();
         $id = $idNew;
         Flight::json(array('id' => $id));
+    }
+
+    /**
+     * Devuelve el mensaje de error si la inscripcion no procede, o null si esta bien.
+     *
+     * Se valida tambien en el back y no solo en la pantalla porque la inscripcion
+     * masiva dispara una peticion por estudiante y el cupo puede agotarse entre una
+     * y otra.
+     */
+    private static function validarInscripcion($db, $id_estudiante, $id_curso_extra, $fecha_inscripcion)
+    {
+        $stmtCurso = $db->prepare("
+            SELECT nombre, cupo_maximo, permite_sobrecupo, fecha_limite_inscripcion,
+            edad_minima_meses, edad_maxima_meses
+            FROM cursos_extra
+            WHERE id = :id_curso_extra AND id_tenant = :id_tenant
+        ");
+        $stmtCurso->bindParam(':id_curso_extra', $id_curso_extra);
+        $stmtCurso->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmtCurso->execute();
+        $curso = $stmtCurso->fetch(PDO::FETCH_ASSOC);
+
+        if (!$curso) {
+            return 'El curso extracurricular no existe.';
+        }
+
+        // Fecha limite de inscripcion: nula no valida.
+        if (!empty($curso['fecha_limite_inscripcion']) && !empty($fecha_inscripcion)) {
+            if ($fecha_inscripcion > $curso['fecha_limite_inscripcion']) {
+                return 'Las inscripciones al curso cerraron el ' . $curso['fecha_limite_inscripcion'] . '.';
+            }
+        }
+
+        // Rango de edad: cada extremo es opcional y se mide a la fecha de inscripcion.
+        if (!empty($curso['edad_minima_meses']) || !empty($curso['edad_maxima_meses'])) {
+            $stmtEdad = $db->prepare("
+                SELECT TIMESTAMPDIFF(MONTH, p.fecha_nacimiento, :fecha_inscripcion) AS edad_meses,
+                CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.primer_apellido, '')) AS nombre
+                FROM estudiantes e
+                INNER JOIN personas p ON e.id_persona = p.id
+                WHERE e.id = :id_estudiante AND e.id_tenant = :id_tenant
+            ");
+            $stmtEdad->bindParam(':fecha_inscripcion', $fecha_inscripcion);
+            $stmtEdad->bindParam(':id_estudiante', $id_estudiante);
+            $stmtEdad->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtEdad->execute();
+            $estudiante = $stmtEdad->fetch(PDO::FETCH_ASSOC);
+
+            // Sin fecha de nacimiento no se puede calcular la edad: se deja pasar
+            // en lugar de bloquear por un dato que falta en la ficha del estudiante.
+            if ($estudiante && $estudiante['edad_meses'] !== null) {
+                $edad = (int) $estudiante['edad_meses'];
+                $nombre = trim($estudiante['nombre']);
+
+                if (!empty($curso['edad_minima_meses']) && $edad < (int) $curso['edad_minima_meses']) {
+                    return $nombre . ' tiene ' . $edad . ' meses y el curso es desde ' .
+                           $curso['edad_minima_meses'] . ' meses.';
+                }
+                if (!empty($curso['edad_maxima_meses']) && $edad > (int) $curso['edad_maxima_meses']) {
+                    return $nombre . ' tiene ' . $edad . ' meses y el curso es hasta ' .
+                           $curso['edad_maxima_meses'] . ' meses.';
+                }
+            }
+        }
+
+        // Cupo: solo bloquea si el curso no permite sobrecupo.
+        if (!empty($curso['cupo_maximo']) && empty($curso['permite_sobrecupo'])) {
+            $stmtCupo = $db->prepare("
+                SELECT COUNT(*) AS inscritos
+                FROM estudiantes_x_cursos_extra
+                WHERE id_curso_extra = :id_curso_extra AND activo = 1 AND id_tenant = :id_tenant
+            ");
+            $stmtCupo->bindParam(':id_curso_extra', $id_curso_extra);
+            $stmtCupo->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtCupo->execute();
+            $fila = $stmtCupo->fetch(PDO::FETCH_ASSOC);
+
+            if ($fila && (int) $fila['inscritos'] >= (int) $curso['cupo_maximo']) {
+                return 'El curso ' . $curso['nombre'] . ' ya alcanzó su cupo máximo de ' .
+                       $curso['cupo_maximo'] . ' y no permite sobrecupo.';
+            }
+        }
+
+        return null;
     }
 
     public static function replace()
