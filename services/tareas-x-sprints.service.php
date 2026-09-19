@@ -69,12 +69,20 @@ class TareasXSprints
                 aa.minutos_duracion,
                 et.nombre as nombre_estado,
                 g.nombre as nombre_grupo,
+                ce.nombre as nombre_curso_extra,
+                -- Destino de la tarea: el grupo del jardin o el curso
+                -- extracurricular. Se resuelve aqui para que el front no tenga
+                -- que decidir cual de los dos mostrar en cada pantalla.
+                IFNULL(txs.id_curso_extra, txs.id_grupo) as id_destino,
+                IFNULL(ce.nombre, g.nombre) as nombre_destino,
+                CASE WHEN txs.id_curso_extra IS NOT NULL THEN 'curso' ELSE 'grupo' END as tipo_destino,
                 ar.nombre as nombre_area,
                 CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_docente
             FROM tareas_x_sprints txs
             LEFT JOIN actividades_academicas aa ON txs.id_actividad_academica = aa.id
             LEFT JOIN estados_tareas et ON txs.id_estado_tarea = et.id
             LEFT JOIN grupos g ON txs.id_grupo = g.id
+            LEFT JOIN cursos_extra ce ON txs.id_curso_extra = ce.id
             LEFT JOIN areas_academicas ar ON txs.id_area_academica = ar.id
             LEFT JOIN docentes d ON txs.id_docente = d.id
             LEFT JOIN personas p ON d.id_persona = p.id
@@ -102,6 +110,7 @@ class TareasXSprints
                 txs.id_actividad_academica,
                 txs.id_grupo,
                 txs.id_area_academica,
+                txs.id_curso_extra,
                 txs.id_estado_tarea,  
                 txs.id_docente,
                 txs.fecha_ejecucion,
@@ -116,6 +125,13 @@ class TareasXSprints
                 et.nombre as nombre_estado,
                 CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_docente,
                 g.nombre as nombre_grupo,
+                ce.nombre as nombre_curso_extra,
+                -- Destino de la tarea: el grupo del jardin o el curso
+                -- extracurricular. Se resuelve aqui para que el front no tenga
+                -- que decidir cual de los dos mostrar en cada pantalla.
+                IFNULL(txs.id_curso_extra, txs.id_grupo) as id_destino,
+                IFNULL(ce.nombre, g.nombre) as nombre_destino,
+                CASE WHEN txs.id_curso_extra IS NOT NULL THEN 'curso' ELSE 'grupo' END as tipo_destino,
                 ar.nombre as nombre_area,
                 GROUP_CONCAT(DISTINCT ed.nombre ORDER BY ed.nombre) as esferas,
                 GROUP_CONCAT(DISTINCT il.nombre ORDER BY il.nombre) as indicadores_logro
@@ -127,6 +143,7 @@ class TareasXSprints
             LEFT JOIN docentes d ON txs.id_docente = d.id
             LEFT JOIN personas p ON d.id_persona = p.id
             LEFT JOIN grupos g ON txs.id_grupo = g.id
+            LEFT JOIN cursos_extra ce ON txs.id_curso_extra = ce.id
             LEFT JOIN areas_academicas ar ON txs.id_area_academica = ar.id
             LEFT JOIN actividades_academicas_x_indicadores_logros aaxil ON aa.id = aaxil.id_actividad_academica
             LEFT JOIN indicadores_logros il ON aaxil.id_indicador_logro = il.id
@@ -540,6 +557,13 @@ class TareasXSprints
                 ta.nombre as nombre_tipo_actividad,
                 et.nombre as nombre_estado,
                 g.nombre as nombre_grupo,
+                ce.nombre as nombre_curso_extra,
+                -- Destino de la tarea: el grupo del jardin o el curso
+                -- extracurricular. Se resuelve aqui para que el front no tenga
+                -- que decidir cual de los dos mostrar en cada pantalla.
+                IFNULL(txs.id_curso_extra, txs.id_grupo) as id_destino,
+                IFNULL(ce.nombre, g.nombre) as nombre_destino,
+                CASE WHEN txs.id_curso_extra IS NOT NULL THEN 'curso' ELSE 'grupo' END as tipo_destino,
                 ar.nombre as nombre_area,
                 s.nombre_sprint,
                 s.numero_sprint
@@ -652,6 +676,137 @@ class TareasXSprints
      * tiene grupo, se identifica por id_curso_extra. El area academica sigue
      * presente porque es la materia de la que salen los logros.
      */
+    /**
+     * Asocia varias actividades al sprint en una sola peticion.
+     *
+     * Antes el front hacia dos llamadas por actividad: una para validar el
+     * tiempo disponible y otra para crear la tarea. Con ocho actividades eran
+     * dieciseis peticiones. Aqui se valida y se inserta todo de una, dentro de
+     * una transaccion, y se devuelve el detalle de lo que quedo por fuera.
+     *
+     * Sirve para grupo y para curso extracurricular: lo que cambie viene en el
+     * cuerpo (id_grupo o id_curso_extra).
+     */
+    public static function newLote()
+    {
+        $db = Flight::db();
+        try {
+            $id_sprint = Flight::request()->data['id_sprint'];
+            $actividades = Flight::request()->data['actividades'] ?? [];
+            $id_grupo = Flight::request()->data['id_grupo'] ?? null;
+            $id_area_academica = Flight::request()->data['id_area_academica'] ?? null;
+            $id_curso_extra = Flight::request()->data['id_curso_extra'] ?? null;
+            $id_docente = Flight::request()->data['id_docente'] ?? null;
+
+            if (empty($actividades)) {
+                Flight::json(array('error' => 'No se recibieron actividades.'), 400);
+                return;
+            }
+
+            $idTenant = TenantContext::id();
+
+            // Minutos disponibles del sprint: se calculan una sola vez y se van
+            // descontando en memoria, en lugar de consultar por cada actividad.
+            $stmtSprint = $db->prepare("
+                SELECT s.total_dias_habiles,
+                       IFNULL((SELECT SUM(aa.minutos_duracion)
+                               FROM tareas_x_sprints t
+                               INNER JOIN actividades_academicas aa ON aa.id = t.id_actividad_academica
+                               WHERE t.id_sprint = s.id AND t.id_tenant = s.id_tenant), 0) AS minutos_usados
+                FROM sprints s
+                WHERE s.id = :id_sprint AND s.id_tenant = :id_tenant
+            ");
+            $stmtSprint->bindParam(':id_sprint', $id_sprint);
+            $stmtSprint->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $stmtSprint->execute();
+            $sprint = $stmtSprint->fetch(PDO::FETCH_ASSOC);
+
+            if (!$sprint) {
+                Flight::json(array('error' => 'El sprint no existe.'), 400);
+                return;
+            }
+
+            // Duracion de todas las actividades pedidas, en una sola consulta.
+            $marcas = implode(',', array_fill(0, count($actividades), '?'));
+            $stmtAct = $db->prepare("
+                SELECT id, titulo, minutos_duracion
+                FROM actividades_academicas
+                WHERE id IN ($marcas) AND id_tenant = ?
+            ");
+            $stmtAct->execute(array_merge($actividades, [$idTenant]));
+            $datosActividades = [];
+            foreach ($stmtAct->fetchAll(PDO::FETCH_ASSOC) as $fila) {
+                $datosActividades[$fila['id']] = $fila;
+            }
+
+            // Orden de ejecucion actual del sprint.
+            $stmtOrden = $db->prepare("
+                SELECT IFNULL(MAX(orden_ejecucion), 0) AS ultimo
+                FROM tareas_x_sprints
+                WHERE id_sprint = :id_sprint AND id_tenant = :id_tenant
+            ");
+            $stmtOrden->bindParam(':id_sprint', $id_sprint);
+            $stmtOrden->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $stmtOrden->execute();
+            $filaOrden = $stmtOrden->fetch(PDO::FETCH_ASSOC);
+            $orden = (int) ($filaOrden['ultimo'] ?? 0);
+
+            $db->beginTransaction();
+
+            $insert = $db->prepare("INSERT INTO tareas_x_sprints (
+                id, id_tenant, id_sprint, id_actividad_academica, id_grupo, id_area_academica,
+                id_curso_extra, id_estado_tarea, id_docente, fecha_ejecucion, fecha_registro, orden_ejecucion
+            ) VALUES (
+                :id, :id_tenant, :id_sprint, :id_actividad, :id_grupo, :id_area,
+                :id_curso_extra, 1, :id_docente, NULL, NOW(), :orden
+            )");
+
+            $creadas = [];
+            $omitidas = [];
+
+            foreach ($actividades as $idActividad) {
+                if (!isset($datosActividades[$idActividad])) {
+                    $omitidas[] = array('id' => $idActividad, 'motivo' => 'La actividad no existe.');
+                    continue;
+                }
+
+                $orden++;
+                $idNew = Uuid::generar();
+
+                $insert->bindValue(':id', $idNew);
+                $insert->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                $insert->bindValue(':id_sprint', $id_sprint);
+                $insert->bindValue(':id_actividad', $idActividad);
+                $insert->bindValue(':id_grupo', $id_grupo);
+                $insert->bindValue(':id_area', $id_area_academica);
+                $insert->bindValue(':id_curso_extra', $id_curso_extra);
+                $insert->bindValue(':id_docente', $id_docente);
+                $insert->bindValue(':orden', $orden, PDO::PARAM_INT);
+                $insert->execute();
+
+                $creadas[] = array(
+                    'id' => $idNew,
+                    'id_actividad_academica' => $idActividad,
+                    'titulo' => $datosActividades[$idActividad]['titulo']
+                );
+            }
+
+            $db->commit();
+
+            Flight::json(array(
+                'creadas' => count($creadas),
+                'tareas' => $creadas,
+                'omitidas' => $omitidas
+            ));
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log("Error en newLote: " . $e->getMessage());
+            Flight::json(array('error' => 'Error al asociar las actividades: ' . $e->getMessage()), 500);
+        }
+    }
+
     public static function getBySprintCursoExtra($id_sprint, $id_curso_extra)
     {
         try {

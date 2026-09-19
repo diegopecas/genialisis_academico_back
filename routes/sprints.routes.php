@@ -46,6 +46,8 @@ Flight::route('GET /tareas-x-sprints/sprint-grupo-area/@id_sprint/@id_grupo/@id_
 // Clases de un curso extracurricular dentro del sprint.
 Flight::route('GET /tareas-x-sprints/sprint-curso-extra/@id_sprint/@id_curso_extra', [TareasXSprints::class, 'getBySprintCursoExtra']);
 Flight::route('POST /tareas-x-sprints/generar-curso-extra', [TareasXSprints::class, 'generarDesdeCursoExtra']);
+// Asocia varias actividades al sprint en una sola peticion.
+Flight::route('POST /tareas-x-sprints/lote', [TareasXSprints::class, 'newLote']);
 Flight::route('PUT /tareas-x-sprints/actualizar-orden', [TareasXSprints::class, 'actualizarOrden']);
 Flight::route('PUT /tareas-x-sprints/actualizar-orden-duracion', [TareasXSprints::class, 'actualizarOrdenYDuracion']);
 Flight::route('PUT /tareas-x-sprints/observacion', [TareasXSprints::class, 'actualizarObservacion']);

@@ -1,26 +1,76 @@
 <?php
-// ASISTENCIA ESTUDIANTES
-Flight::route('GET /asistencia-estudiantes', [AsistenciaEstudiantes::class, 'getAll']);
-Flight::route('GET /asistencia-estudiantes/@id_estudiante', [AsistenciaEstudiantes::class, 'getByIdEstudiante']);
-Flight::route('GET /asistencia-estudiantes-ingresos', [AsistenciaEstudiantes::class, 'getIngresosHoy']); // niños que han ingresado
-Flight::route('GET /asistencia-estudiantes-salidas', [AsistenciaEstudiantes::class, 'getSalidasHoy']); // niños que han salido
-Flight::route('GET /asistencia-estudiantes-no-ingresos', [AsistenciaEstudiantes::class, 'getNoIngresosHoy']); // niños que no han ingresado
-Flight::route('GET /asistencia-estudiantes-no-salidas', [AsistenciaEstudiantes::class, 'getNoSalidasHoy']); // niños que no han salido
-Flight::route('POST /asistencia-estudiantes', [AsistenciaEstudiantes::class, 'new']); // registrar ingreso
-Flight::route('PUT /asistencia-estudiantes', [AsistenciaEstudiantes::class, 'replace']); // registrar salida
-Flight::route('DELETE /asistencia-estudiantes', [AsistenciaEstudiantes::class, 'delete']); // borrar registro
-Flight::route('POST /asistencia-estudiantes/verificar-x-dia', [AsistenciaEstudiantes::class, 'verificarAsistenciaEstudiante']); // verificar la asistencia en un dia
-Flight::route('POST /asistencia-estudiantes/mensual', [AsistenciaEstudiantes::class, 'getAsistenciaMensual']); // obtener asistencia mensual de un estudiante
-Flight::route('GET /asistencia-estudiantes/resumen-grupo/@id_grupo', [AsistenciaEstudiantes::class, 'getResumenAsistenciaPorGrupo']);
-Flight::route('POST /asistencia-estudiantes/reporte-por-fecha', [AsistenciaEstudiantes::class, 'getReporteAsistenciaPorFecha']); // Reporte de asistencia por fecha específica
-Flight::route('GET /asistencia-estudiantes-reporte-indicadores', [AsistenciaEstudiantes::class, 'getReporteIndicadoresAsistencia']); // Reporte de indicadores de asistencia por estudiante
-Flight::route('GET /asistencia-estudiantes-fecha/@fecha', [AsistenciaEstudiantes::class, 'getEstudiantesPorFecha']); // estudiantes que asistieron en una fecha
-Flight::route('GET /asistencia-estudiantes/personas-entrega/@id_estudiante', [AsistenciaEstudiantes::class, 'getPersonasEntregaRecoge']); // quien puede traer o recoger al nino, con la ultima eleccion
 
-// Seguimiento de asistencia
-Flight::route('GET /seguimiento-asistencia-estudiantes', [AsistenciaEstudiantes::class, 'getSeguimientoAsistencia']);
+// SPRINTS
+Flight::route('GET /sprints', [Sprints::class, 'getAll']);
+Flight::route('GET /sprints/cobertura-curricular', [Sprints::class, 'getAnalisisCoberturaCurricular']);
+Flight::route('GET /sprints/actual-y-anteriores', [Sprints::class, 'getActualYAnteriores']);
+Flight::route('GET /sprints/@id', [Sprints::class, 'getById']);
+Flight::route('POST /sprints', [Sprints::class, 'new']);
+Flight::route('PUT /sprints', [Sprints::class, 'replace']);
+Flight::route('DELETE /sprints', [Sprints::class, 'delete']);
+Flight::route('GET /sprints-actual', [Sprints::class, 'getActual']);
+Flight::route('GET /sprints-anio/@anio', [Sprints::class, 'getByAnio']);
+Flight::route('GET /sprints-corte/@id_corte_academico', [Sprints::class, 'getByCorteAcademico']);
+Flight::route('GET /sprints-evaluaciones', [Sprints::class, 'getEvaluaciones']);
+Flight::route('GET /sprints-estadisticas', [Sprints::class, 'getObtenerTodoConEstadisticas']);
+Flight::route('PUT /sprints/finalizar/@id_sprint', [Sprints::class, 'finalizarSprint']);
+// VALIDACIONES DE SPRINTS
+Flight::route('GET /sprints/verificar-solapamiento', [Sprints::class, 'verificarSolapamiento']);
+Flight::route('GET /sprints/verificar-numero-unico', [Sprints::class, 'verificarNumeroUnico']);
+Flight::route('GET /sprints/verificar-sprint-evaluacion', [Sprints::class, 'verificarSprintEvaluacion']);
+Flight::route('GET /sprints/por-anio/@anio', [Sprints::class, 'getSprintsPorAnio']);
+Flight::route('PUT /sprints/desactivar-actuales', [Sprints::class, 'desactivarSprintsActuales']);
+// ANÁLISIS DE TIEMPO
+Flight::route('GET /sprints/analisis-tiempo/@id_sprint', [Sprints::class, 'getAnalisisTiempoSprint']);
+Flight::route('GET /sprints/validar-actividad/@id_sprint/@id_actividad', [Sprints::class, 'validarActividadEnSprint']);
 
-// Historial de recordatorios de asistencia
-Flight::route('GET /historial-recordatorios-asistencia', [HistorialRecordatoriosAsistencia::class, 'getAll']);
-Flight::route('GET /historial-recordatorios-asistencia/estudiante/@id', [HistorialRecordatoriosAsistencia::class, 'getByEstudiante']);
-Flight::route('POST /historial-recordatorios-asistencia', [HistorialRecordatoriosAsistencia::class, 'new']);
+// TAREAS X SPRINTS
+Flight::route('GET /tareas-x-sprints', [TareasXSprints::class, 'getAll']);
+Flight::route('GET /tareas-x-sprints/reporte-ejecucion', [TareasXSprints::class, 'getReporteEjecucionTareas']);
+Flight::route('GET /tareas-x-sprints/estudiante/@id_estudiante', [TareasXSprints::class, 'getActividadesEstudiante']);
+Flight::route('GET /tareas-x-sprints/@id', [TareasXSprints::class, 'getById']);
+Flight::route('GET /tareas-x-sprints/sprint/@id_sprint', [TareasXSprints::class, 'getBySprintId']);
+Flight::route('GET /tareas-x-sprints/actividad/@id_actividad', [TareasXSprints::class, 'getByActividadId']);
+Flight::route('POST /tareas-x-sprints', [TareasXSprints::class, 'new']);
+Flight::route('PUT /tareas-x-sprints', [TareasXSprints::class, 'replace']);
+Flight::route('PUT /tareas-x-sprints-inicio', [TareasXSprints::class, 'iniciar']);
+Flight::route('DELETE /tareas-x-sprints', [TareasXSprints::class, 'delete']);
+Flight::route('GET /tareas-x-sprints/estadisticas/@id_sprint', [TareasXSprints::class, 'getEstadisticasSprint']);
+Flight::route('GET /tareas-x-sprints/sprint-detallado/@id_sprint', [TareasXSprints::class, 'getBySprintIdDetallado']);
+Flight::route('GET /tareas-x-sprints/resumen-grupo/@id_grupo', [TareasXSprints::class, 'getResumenClasesPorGrupo']);
+Flight::route('GET /tareas-x-sprints/resumen-todos-grupos', [TareasXSprints::class, 'getResumenClasesTodosGrupos']);
+Flight::route('PUT /tareas-x-sprints/cambiar-estado', [TareasXSprints::class, 'cambiarEstado']);
+Flight::route('GET /tareas-x-sprints/importar/@id_sprint', [TareasXSprints::class, 'getTareasParaImportar']);
+Flight::route('POST /tareas-x-sprints/importar-masivo', [TareasXSprints::class, 'importarMasivo']);
+Flight::route('GET /tareas-x-sprints/sprint-grupo-area/@id_sprint/@id_grupo/@id_area', [TareasXSprints::class, 'getBySprintGrupoArea']);
+// Clases de un curso extracurricular dentro del sprint.
+Flight::route('GET /tareas-x-sprints/sprint-curso-extra/@id_sprint/@id_curso_extra', [TareasXSprints::class, 'getBySprintCursoExtra']);
+Flight::route('POST /tareas-x-sprints/generar-curso-extra', [TareasXSprints::class, 'generarDesdeCursoExtra']);
+// Asocia varias actividades al sprint en una sola peticion.
+Flight::route('POST /tareas-x-sprints/lote', [TareasXSprints::class, 'newLote']);
+Flight::route('PUT /tareas-x-sprints/actualizar-orden', [TareasXSprints::class, 'actualizarOrden']);
+Flight::route('PUT /tareas-x-sprints/actualizar-orden-duracion', [TareasXSprints::class, 'actualizarOrdenYDuracion']);
+Flight::route('PUT /tareas-x-sprints/observacion', [TareasXSprints::class, 'actualizarObservacion']);
+Flight::route('PUT /tareas-x-sprints/sincronizar', [TareasXSprints::class, 'sincronizar']);
+
+// TAREAS X SPRINTS X ESTUDIANTE
+Flight::route('GET /tareas-x-sprints-x-estudiante/tarea/@id_tarea_x_sprint', [TareasXSprintsXEstudiante::class, 'getByTareaSprint']);
+Flight::route('POST /tareas-x-sprints-x-estudiante', [TareasXSprintsXEstudiante::class, 'crear']);
+Flight::route('PUT /tareas-x-sprints-x-estudiante/observacion', [TareasXSprintsXEstudiante::class, 'actualizarObservacion']);
+
+// DIAS X SPRINT
+Flight::route('GET /dias-x-sprint', [DiasXSprint::class, 'getAll']);
+Flight::route('GET /dias-x-sprint/@id', [DiasXSprint::class, 'getById']);
+Flight::route('GET /dias-x-sprint/sprint/@id_sprint', [DiasXSprint::class, 'getBySprintId']);
+Flight::route('POST /dias-x-sprint', [DiasXSprint::class, 'new']);
+Flight::route('PUT /dias-x-sprint', [DiasXSprint::class, 'replace']);
+Flight::route('DELETE /dias-x-sprint', [DiasXSprint::class, 'delete']);
+Flight::route('GET /dias-x-sprint/calcular-habiles/@fecha_inicial/@fecha_final', [DiasXSprint::class, 'calcularDiasHabiles']);
+Flight::route('DELETE /dias-x-sprint/sprint/@id_sprint', [DiasXSprint::class, 'eliminarPorSprint']);
+
+// Rutas para Estados de Tareas
+Flight::route('GET /estados-tareas', array('EstadosTareas', 'getAll'));
+Flight::route('GET /estados-tareas/@id', array('EstadosTareas', 'getById'));
+Flight::route('POST /estados-tareas', array('EstadosTareas', 'new'));
+Flight::route('PUT /estados-tareas', array('EstadosTareas', 'replace'));
+Flight::route('DELETE /estados-tareas', array('EstadosTareas', 'delete'));
