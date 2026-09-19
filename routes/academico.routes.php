@@ -12,6 +12,9 @@ Flight::route('GET /actividades-academicas/indicadores-logros-actividad/@id', [A
 
 Flight::route('GET /actividades-academicas-grupo/@id_grupo', [ActividadesAcademicas::class, 'getByIdGrupo']);
 Flight::route('GET /actividades-academicas-grupo/@id_grupo/@id_area_academica', [ActividadesAcademicas::class, 'getByIdGrupoArea']);
+// Clases y actividades de un curso extracurricular.
+Flight::route('GET /actividades-academicas-curso-extra/@id_curso_extra', [ActividadesAcademicas::class, 'getByIdCursoExtra']);
+Flight::route('GET /actividades-academicas-area-disponibles/@id_area_academica', [ActividadesAcademicas::class, 'getDisponiblesPorArea']);
 Flight::route('GET /actividades-academicas-categoria/@id_categoria_actividad', [ActividadesAcademicas::class, 'getByIdCategoriaActividad']);
 Flight::route('GET /actividades-academicas-objetivo/@id_objetivo_academico', [ActividadesAcademicas::class, 'getByIdObjetivoAcademico']);
 Flight::route('GET /actividades-academicas-area/@id_area_academica', [ActividadesAcademicas::class, 'getByIdAreaAcademica']);
@@ -117,6 +120,10 @@ Flight::route('GET /estudiantes-x-grupos-filtros', [EstudiantesXGrupos::class, '
 // ÁREAS ACADÉMICAS
 Flight::route('GET /areas-academicas', [AreasAcademicas::class, 'getAll']);
 Flight::route('GET /areas-academicas/list', [AreasAcademicas::class, 'getAllList']);
+// /extracurriculares y /regulares van antes de /@id: Flight resuelve por orden
+// de declaracion y si quedan despues entran como si fueran un id.
+Flight::route('GET /areas-academicas/extracurriculares', [AreasAcademicas::class, 'getExtracurriculares']);
+Flight::route('GET /areas-academicas/regulares', [AreasAcademicas::class, 'getRegulares']);
 Flight::route('GET /areas-academicas/@id', [AreasAcademicas::class, 'getById']);
 Flight::route('POST /areas-academicas', [AreasAcademicas::class, 'new']);
 Flight::route('PUT /areas-academicas', [AreasAcademicas::class, 'replace']);

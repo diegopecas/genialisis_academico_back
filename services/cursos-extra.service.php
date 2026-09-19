@@ -8,11 +8,12 @@ class CursosExtra
         $sentence = $db->prepare("SELECT ce.id, ce.nombre, ce.descripcion, ce.icono, ce.color, ce.cupo_maximo, 
         ce.permite_sobrecupo, ce.cupo_minimo, ce.fecha_inicio, ce.fecha_fin, ce.fecha_limite_inscripcion,
         ce.edad_minima_meses, ce.edad_maxima_meses, ce.anio, ce.activo, ce.fecha_registro,
-        ce.id_tipo_curso_extracurricular, ce.id_lugar_curso_extra,
-        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar
+        ce.id_tipo_curso_extracurricular, ce.id_lugar_curso_extra, ce.id_area_academica,
+        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar, aa.nombre AS nombre_area_academica
         FROM cursos_extra ce
         LEFT JOIN tipos_cursos_extracurriculares tce ON ce.id_tipo_curso_extracurricular = tce.id
         LEFT JOIN lugares_cursos_extra lce ON ce.id_lugar_curso_extra = lce.id
+        LEFT JOIN areas_academicas aa ON ce.id_area_academica = aa.id
         WHERE ce.id_tenant = :id_tenant
         ORDER BY ce.nombre ASC");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -27,11 +28,12 @@ class CursosExtra
         $sentence = $db->prepare("SELECT ce.id, ce.nombre, ce.descripcion, ce.icono, ce.color, ce.cupo_maximo, 
         ce.permite_sobrecupo, ce.cupo_minimo, ce.fecha_inicio, ce.fecha_fin, ce.fecha_limite_inscripcion,
         ce.edad_minima_meses, ce.edad_maxima_meses, ce.anio, ce.activo, ce.fecha_registro,
-        ce.id_tipo_curso_extracurricular, ce.id_lugar_curso_extra,
-        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar
+        ce.id_tipo_curso_extracurricular, ce.id_lugar_curso_extra, ce.id_area_academica,
+        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar, aa.nombre AS nombre_area_academica
         FROM cursos_extra ce
         LEFT JOIN tipos_cursos_extracurriculares tce ON ce.id_tipo_curso_extracurricular = tce.id
         LEFT JOIN lugares_cursos_extra lce ON ce.id_lugar_curso_extra = lce.id
+        LEFT JOIN areas_academicas aa ON ce.id_area_academica = aa.id
         WHERE ce.activo = 1
         AND ce.id_tenant = :id_tenant
         ORDER BY ce.nombre ASC");
@@ -47,11 +49,12 @@ class CursosExtra
         $sentence = $db->prepare("SELECT ce.id, ce.nombre, ce.descripcion, ce.icono, ce.color, ce.cupo_maximo, 
         ce.permite_sobrecupo, ce.cupo_minimo, ce.fecha_inicio, ce.fecha_fin, ce.fecha_limite_inscripcion,
         ce.edad_minima_meses, ce.edad_maxima_meses, ce.anio, ce.activo, ce.fecha_registro,
-        ce.id_tipo_curso_extracurricular, ce.id_lugar_curso_extra,
-        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar
+        ce.id_tipo_curso_extracurricular, ce.id_lugar_curso_extra, ce.id_area_academica,
+        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar, aa.nombre AS nombre_area_academica
         FROM cursos_extra ce
         LEFT JOIN tipos_cursos_extracurriculares tce ON ce.id_tipo_curso_extracurricular = tce.id
         LEFT JOIN lugares_cursos_extra lce ON ce.id_lugar_curso_extra = lce.id
+        LEFT JOIN areas_academicas aa ON ce.id_area_academica = aa.id
         WHERE ce.id = :id AND ce.id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -66,11 +69,12 @@ class CursosExtra
         $sentence = $db->prepare("SELECT ce.id, ce.nombre, ce.descripcion, ce.icono, ce.color, ce.cupo_maximo, 
         ce.permite_sobrecupo, ce.cupo_minimo, ce.fecha_inicio, ce.fecha_fin, ce.fecha_limite_inscripcion,
         ce.edad_minima_meses, ce.edad_maxima_meses, ce.anio, ce.activo, ce.fecha_registro,
-        ce.id_tipo_curso_extracurricular, ce.id_lugar_curso_extra,
-        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar
+        ce.id_tipo_curso_extracurricular, ce.id_lugar_curso_extra, ce.id_area_academica,
+        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar, aa.nombre AS nombre_area_academica
         FROM cursos_extra ce
         LEFT JOIN tipos_cursos_extracurriculares tce ON ce.id_tipo_curso_extracurricular = tce.id
         LEFT JOIN lugares_cursos_extra lce ON ce.id_lugar_curso_extra = lce.id
+        LEFT JOIN areas_academicas aa ON ce.id_area_academica = aa.id
         WHERE ce.anio = :anio AND ce.id_tenant = :id_tenant
         ORDER BY ce.nombre ASC");
         $sentence->bindParam(':anio', $anio);
@@ -94,6 +98,9 @@ class CursosExtra
         // Campos opcionales: se leen con isset porque los formularios viejos no los envian.
         $id_tipo = isset(Flight::request()->data['id_tipo_curso_extracurricular']) ? Flight::request()->data['id_tipo_curso_extracurricular'] : null;
         $id_lugar = isset(Flight::request()->data['id_lugar_curso_extra']) ? Flight::request()->data['id_lugar_curso_extra'] : null;
+        // Area academica marcada como extracurricular: de ahi salen los logros y
+        // las actividades del curso. Nula si el curso no se califica.
+        $id_area = isset(Flight::request()->data['id_area_academica']) ? Flight::request()->data['id_area_academica'] : null;
         $permite_sobrecupo = isset(Flight::request()->data['permite_sobrecupo']) ? Flight::request()->data['permite_sobrecupo'] : 0;
         $cupo_minimo = isset(Flight::request()->data['cupo_minimo']) ? Flight::request()->data['cupo_minimo'] : null;
         $fecha_limite = isset(Flight::request()->data['fecha_limite_inscripcion']) ? Flight::request()->data['fecha_limite_inscripcion'] : null;
@@ -102,9 +109,9 @@ class CursosExtra
 
         $idNew = Uuid::generar();
         $sentence = $db->prepare("INSERT INTO cursos_extra(id, id_tenant, nombre, descripcion, icono, color, cupo_maximo, fecha_inicio, fecha_fin, anio, activo, fecha_registro,
-        id_tipo_curso_extracurricular, id_lugar_curso_extra, permite_sobrecupo, cupo_minimo, fecha_limite_inscripcion, edad_minima_meses, edad_maxima_meses) 
+        id_tipo_curso_extracurricular, id_lugar_curso_extra, id_area_academica, permite_sobrecupo, cupo_minimo, fecha_limite_inscripcion, edad_minima_meses, edad_maxima_meses) 
         VALUES (:id, :id_tenant, :nombre, :descripcion, :icono, :color, :cupo_maximo, :fecha_inicio, :fecha_fin, :anio, 1, NOW(),
-        :id_tipo, :id_lugar, :permite_sobrecupo, :cupo_minimo, :fecha_limite, :edad_minima, :edad_maxima)");
+        :id_tipo, :id_lugar, :id_area, :permite_sobrecupo, :cupo_minimo, :fecha_limite, :edad_minima, :edad_maxima)");
         $sentence->bindValue(':id', $idNew);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
@@ -117,6 +124,7 @@ class CursosExtra
         $sentence->bindParam(':anio', $anio, PDO::PARAM_INT);
         $sentence->bindValue(':id_tipo', $id_tipo);
         $sentence->bindValue(':id_lugar', $id_lugar);
+        $sentence->bindValue(':id_area', $id_area);
         $sentence->bindValue(':permite_sobrecupo', $permite_sobrecupo, PDO::PARAM_INT);
         $sentence->bindValue(':cupo_minimo', $cupo_minimo);
         $sentence->bindValue(':fecha_limite', $fecha_limite);
@@ -143,6 +151,9 @@ class CursosExtra
         // Campos opcionales: se leen con isset porque los formularios viejos no los envian.
         $id_tipo = isset(Flight::request()->data['id_tipo_curso_extracurricular']) ? Flight::request()->data['id_tipo_curso_extracurricular'] : null;
         $id_lugar = isset(Flight::request()->data['id_lugar_curso_extra']) ? Flight::request()->data['id_lugar_curso_extra'] : null;
+        // Area academica marcada como extracurricular: de ahi salen los logros y
+        // las actividades del curso. Nula si el curso no se califica.
+        $id_area = isset(Flight::request()->data['id_area_academica']) ? Flight::request()->data['id_area_academica'] : null;
         $permite_sobrecupo = isset(Flight::request()->data['permite_sobrecupo']) ? Flight::request()->data['permite_sobrecupo'] : 0;
         $cupo_minimo = isset(Flight::request()->data['cupo_minimo']) ? Flight::request()->data['cupo_minimo'] : null;
         $fecha_limite = isset(Flight::request()->data['fecha_limite_inscripcion']) ? Flight::request()->data['fecha_limite_inscripcion'] : null;
@@ -152,13 +163,14 @@ class CursosExtra
         $sentence = $db->prepare("UPDATE cursos_extra SET nombre = :nombre, descripcion = :descripcion, icono = :icono, color = :color, 
         cupo_maximo = :cupo_maximo, fecha_inicio = :fecha_inicio, fecha_fin = :fecha_fin, 
         anio = :anio, activo = :activo,
-        id_tipo_curso_extracurricular = :id_tipo, id_lugar_curso_extra = :id_lugar,
+        id_tipo_curso_extracurricular = :id_tipo, id_lugar_curso_extra = :id_lugar, id_area_academica = :id_area,
         permite_sobrecupo = :permite_sobrecupo, cupo_minimo = :cupo_minimo,
         fecha_limite_inscripcion = :fecha_limite, edad_minima_meses = :edad_minima, edad_maxima_meses = :edad_maxima
         WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindValue(':id_tipo', $id_tipo);
         $sentence->bindValue(':id_lugar', $id_lugar);
+        $sentence->bindValue(':id_area', $id_area);
         $sentence->bindValue(':permite_sobrecupo', $permite_sobrecupo, PDO::PARAM_INT);
         $sentence->bindValue(':cupo_minimo', $cupo_minimo);
         $sentence->bindValue(':fecha_limite', $fecha_limite);

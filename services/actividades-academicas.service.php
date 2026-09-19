@@ -140,6 +140,107 @@ class ActividadesAcademicas
         Flight::json($response);
     }
 
+    /**
+     * Clases de un curso extracurricular en el sprint actual.
+     *
+     * Hermano de getByIdGrupoArea: la tarea no tiene grupo, se identifica por
+     * id_curso_extra. El area academica sigue presente porque es la materia de
+     * la que salen los logros del curso.
+     */
+    public static function getByIdCursoExtra($id_curso_extra)
+    {
+        $db = Flight::db();
+
+        $sprintQuery = $db->prepare("SELECT id FROM sprints WHERE actual = 1 AND id_tenant = :id_tenant LIMIT 1");
+        $sprintQuery->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sprintQuery->execute();
+        $sprintActual = $sprintQuery->fetch();
+
+        if (!$sprintActual) {
+            Flight::json(array('error' => 'No hay sprint actual configurado'), 404);
+            return;
+        }
+
+        $id_sprint_actual = $sprintActual['id'];
+
+        $sentence = $db->prepare("SELECT 
+                                s.numero_sprint, 
+                                ce.id id_curso_extra,
+                                ce.nombre nombre_curso_extra,
+                                ar.id id_area_academica, 
+                                ar.nombre nombre_area, 
+                                aa.id id_actividad_academica,
+                                aa.titulo, 
+                                aa.descripcion, 
+                                aa.materiales, 
+                                aa.nivel_uno, 
+                                aa.nivel_dos,
+                                aa.minutos_duracion,
+                                txs.id id_tarea_x_sprint, 
+                                txs.id_estado_tarea, 
+                                et.nombre nombre_estado, 
+                                txs.id_docente, 
+                                txs.fecha_ejecucion,
+                                s.id id_sprint, 
+                                s.es_evaluacion,
+                                txs.id_docente_inicia, 
+                                txs.fecha_ejecucion_inicia,
+                                txs.orden_ejecucion,
+                                GROUP_CONCAT(DISTINCT il.nombre ORDER BY il.nombre SEPARATOR ', ') as indicador_logro_nombre,
+                                COUNT(DISTINCT il.id) as cantidad_indicadores
+                        FROM tareas_x_sprints txs 
+                        INNER JOIN actividades_academicas aa ON aa.id = txs.id_actividad_academica
+                        INNER JOIN cursos_extra ce ON ce.id = txs.id_curso_extra
+                        LEFT JOIN areas_academicas ar ON ar.id = txs.id_area_academica
+                        INNER JOIN sprints s ON txs.id_sprint = s.id 
+                        INNER JOIN estados_tareas et ON et.id = txs.id_estado_tarea
+                        LEFT JOIN actividades_academicas_x_indicadores_logros aaxil ON aa.id = aaxil.id_actividad_academica 
+                        LEFT JOIN indicadores_logros il ON il.id = aaxil.id_indicador_logro 
+                        WHERE txs.id_curso_extra = :id_curso_extra
+                        AND txs.id_tenant = :id_tenant
+                        AND s.id = :id_sprint_actual
+                        GROUP BY txs.id
+                        ORDER BY txs.orden_ejecucion ASC, txs.id ASC");
+
+        $sentence->bindParam(':id_curso_extra', $id_curso_extra);
+        $sentence->bindParam(':id_sprint_actual', $id_sprint_actual);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $response = $sentence->fetchAll();
+
+        Flight::json($response);
+    }
+
+    /**
+     * Actividades academicas disponibles para un area, con o sin indicadores.
+     *
+     * Se usa al programar las clases de un curso extracurricular: alli el area
+     * puede no tener indicadores cargados todavia, y la consulta por area de la
+     * malla regular los exige con INNER JOIN.
+     */
+    public static function getDisponiblesPorArea($id_area_academica)
+    {
+        $db = Flight::db();
+        $sentence = $db->prepare("SELECT DISTINCT
+            aa.id, aa.titulo, aa.descripcion,
+            aa.minutos_duracion, aa.materiales,
+            aa.id_tipo_actividad_academica,
+            ta.nombre as nombre_tipo_actividad
+        FROM actividades_academicas aa
+        LEFT JOIN tipos_actividades_academicas ta ON aa.id_tipo_actividad_academica = ta.id
+        LEFT JOIN actividades_academicas_x_indicadores_logros aaxil ON aa.id = aaxil.id_actividad_academica
+        LEFT JOIN indicadores_logros il ON aaxil.id_indicador_logro = il.id
+        LEFT JOIN logros l ON il.id_logro = l.id
+        WHERE (l.id_area_academica = :id_area_academica OR l.id IS NULL)
+        AND aa.id_tenant = :id_tenant
+        ORDER BY aa.titulo");
+        $sentence->bindParam(':id_area_academica', $id_area_academica);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $response = $sentence->fetchAll();
+        Flight::json($response);
+    }
+
     public static function getByIdCategoriaActividad($id_categoria_actividad)
     {
         $db = Flight::db();

@@ -9,6 +9,8 @@ Flight::route('PUT /calificaciones', [Calificaciones::class, 'replace']);
 Flight::route('DELETE /calificaciones', [Calificaciones::class, 'delete']);
 Flight::route('GET /calificaciones-tarea-sprint/@id', [Calificaciones::class, 'getByTareaSprint']);
 Flight::route('GET /calificaciones-vista-tarea/@id_grupo/@id_tarea_sprint', [Calificaciones::class, 'getVistaTarea']);
+// Misma vista, pero los estudiantes salen de la inscripcion al curso extracurricular.
+Flight::route('GET /calificaciones-vista-tarea-curso-extra/@id_curso_extra/@id_tarea_sprint', [Calificaciones::class, 'getVistaTareaCursoExtra']);
 Flight::route('GET /calificaciones-tareas-sprint-estudiante/@id_estudiante/@id_sprint', [Calificaciones::class, 'consultarCalificacionesTareasSprintEstudiante']);
 Flight::route('GET /calificaciones-tareas-sprint-estudiantes/@id_sprint', [Calificaciones::class, 'consultarCalificacionesTareasSprintEstudiantes']);
 Flight::route('GET /calificaciones-tareas-sprint-estudiantes/calificaciones/@id_sprint', [Calificaciones::class, 'obtenerCalificacionesPorSprintEstudiantes']);

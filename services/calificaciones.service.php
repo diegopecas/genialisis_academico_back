@@ -49,6 +49,134 @@ class Calificaciones
      *
      * Hace 2 consultas en total (estudiantes + calificaciones).
      */
+    /**
+     * Anida a cada estudiante sus calificaciones de la tarea.
+     *
+     * Se extrajo de getVistaTarea para que la vista por grupo y la vista por
+     * curso extracurricular compartan exactamente la misma logica: lo unico
+     * que cambia entre las dos es de donde salen los estudiantes.
+     *
+     * Se devuelve UNA sola calificacion por estudiante y parametro: la mas
+     * reciente. La tabla puede tener duplicados de cuando el front insertaba en
+     * vez de actualizar, y si se devolvieran todos, la pantalla mostraria
+     * cualquiera de ellos segun como los entregue el motor. Con el NOT EXISTS
+     * se descarta toda fila que tenga otra mas nueva para la misma combinacion.
+     */
+    private static function anidarCalificaciones($db, $estudiantes, $id_tarea_sprint)
+    {
+        $sqlCalificaciones = "SELECT 
+            c.id,
+            c.id_estudiante,
+            c.id_parametro_calificacion,
+            c.id_valor_parametro_calificacion
+        FROM calificaciones c
+        WHERE c.id_tarea_x_sprint = :id_tarea_sprint AND c.id_tenant = :id_tenant
+          AND NOT EXISTS (
+                SELECT 1 FROM calificaciones c2
+                WHERE c2.id_tarea_x_sprint = c.id_tarea_x_sprint
+                  AND c2.id_estudiante = c.id_estudiante
+                  AND c2.id_parametro_calificacion = c.id_parametro_calificacion
+                  AND c2.id_tenant = c.id_tenant
+                  AND (c2.fecha_registro > c.fecha_registro
+                       OR (c2.fecha_registro = c.fecha_registro AND c2.id > c.id))
+          )
+        ORDER BY c.fecha_registro ASC, c.id ASC";
+
+        $stmt = $db->prepare($sqlCalificaciones);
+        $stmt->bindParam(':id_tarea_sprint', $id_tarea_sprint);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+        $calificaciones = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Agrupar calificaciones por id_estudiante
+        $calificacionesPorEstudiante = [];
+        foreach ($calificaciones as $cal) {
+            $idEst = $cal['id_estudiante'];
+            if (!isset($calificacionesPorEstudiante[$idEst])) {
+                $calificacionesPorEstudiante[$idEst] = [];
+            }
+            // Se ordena por fecha ascendente a proposito: el front recorre y
+            // se queda con la coincidencia que encuentre, asi que si hubiera
+            // duplicados la ultima en llegar es la que termina mostrandose
+            $calificacionesPorEstudiante[$idEst][] = [
+                'id' => $cal['id'],
+                'id_parametro_calificacion' => $cal['id_parametro_calificacion'],
+                'id_valor_parametro_calificacion' => $cal['id_valor_parametro_calificacion']
+            ];
+        }
+
+        foreach ($estudiantes as &$est) {
+            $idEst = $est['id_estudiante'];
+            $est['calificaciones'] = isset($calificacionesPorEstudiante[$idEst])
+                ? $calificacionesPorEstudiante[$idEst]
+                : [];
+            $est['presente'] = (int) $est['presente'];
+        }
+        unset($est);
+
+        return $estudiantes;
+    }
+
+    /**
+     * Vista de calificacion de una clase de curso extracurricular.
+     *
+     * Hermano de getVistaTarea: devuelve exactamente la misma estructura, pero
+     * los estudiantes salen de la inscripcion al curso y no del grupo. Va
+     * aparte y no como parametro opcional de getVistaTarea para no cambiarle la
+     * firma al metodo que ya usa la pantalla de calificacion regular.
+     */
+    public static function getVistaTareaCursoExtra($id_curso_extra, $id_tarea_sprint)
+    {
+        try {
+            $db = Flight::db();
+            $db->exec("SET time_zone = '-05:00'");
+
+            // 1. Estudiantes inscritos y activos en el curso + asistencia hoy + observacion de la tarea
+            $sqlEstudiantes = "SELECT 
+                e.id as id_estudiante,
+                p.primer_nombre,
+                p.segundo_nombre,
+                p.primer_apellido,
+                p.segundo_apellido,
+                CASE 
+                    WHEN ae.id IS NOT NULL THEN 1
+                    ELSE 0
+                END as presente,
+                txse.id as id_tarea_estudiante,
+                txse.observacion
+            FROM estudiantes_x_cursos_extra exce
+            INNER JOIN estudiantes e ON exce.id_estudiante = e.id
+            INNER JOIN personas p ON e.id_persona = p.id
+            LEFT JOIN asistencia_estudiantes ae 
+                ON ae.id_estudiante = e.id 
+                AND DATE(ae.fecha_ingreso) = CURDATE() 
+                AND ae.fecha_salida IS NULL
+            LEFT JOIN tareas_x_sprints_x_estudiante txse
+                ON txse.id_estudiante = e.id
+                AND txse.id_tarea_x_sprint = :id_tarea_sprint
+            WHERE exce.id_curso_extra = :id_curso_extra
+              AND exce.activo = 1
+              AND e.activo = 1
+              AND exce.id_tenant = :id_tenant
+            ORDER BY p.primer_nombre, p.primer_apellido";
+
+            $stmt = $db->prepare($sqlEstudiantes);
+            $stmt->bindParam(':id_curso_extra', $id_curso_extra);
+            $stmt->bindParam(':id_tarea_sprint', $id_tarea_sprint);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmt->execute();
+            $estudiantes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            // 2. Calificaciones de la tarea, anidadas a cada estudiante
+            $estudiantes = self::anidarCalificaciones($db, $estudiantes, $id_tarea_sprint);
+
+            Flight::json($estudiantes);
+        } catch (Exception $e) {
+            error_log('Error en getVistaTareaCursoExtra(): ' . $e->getMessage());
+            Flight::json(['error' => 'Error al obtener vista de tarea del curso extracurricular'], 500);
+        }
+    }
+
     public static function getVistaTarea($id_grupo, $id_tarea_sprint)
     {
         try {
@@ -91,64 +219,8 @@ class Calificaciones
             $stmt->execute();
             $estudiantes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-            // 2. Calificaciones de la tarea
-            //
-            // Se devuelve UNA sola calificación por estudiante y parámetro: la
-            // más reciente. La tabla puede tener duplicados de cuando el front
-            // insertaba en vez de actualizar, y si se devolvieran todos, la
-            // pantalla mostraría cualquiera de ellos según cómo los entregue
-            // el motor. Con el NOT EXISTS se descarta toda fila que tenga otra
-            // más nueva para la misma combinación.
-            $sqlCalificaciones = "SELECT 
-                c.id,
-                c.id_estudiante,
-                c.id_parametro_calificacion,
-                c.id_valor_parametro_calificacion
-            FROM calificaciones c
-            WHERE c.id_tarea_x_sprint = :id_tarea_sprint AND c.id_tenant = :id_tenant
-              AND NOT EXISTS (
-                    SELECT 1 FROM calificaciones c2
-                    WHERE c2.id_tarea_x_sprint = c.id_tarea_x_sprint
-                      AND c2.id_estudiante = c.id_estudiante
-                      AND c2.id_parametro_calificacion = c.id_parametro_calificacion
-                      AND c2.id_tenant = c.id_tenant
-                      AND (c2.fecha_registro > c.fecha_registro
-                           OR (c2.fecha_registro = c.fecha_registro AND c2.id > c.id))
-              )
-            ORDER BY c.fecha_registro ASC, c.id ASC";
-
-            $stmt = $db->prepare($sqlCalificaciones);
-            $stmt->bindParam(':id_tarea_sprint', $id_tarea_sprint);
-            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $stmt->execute();
-            $calificaciones = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-            // Agrupar calificaciones por id_estudiante
-            $calificacionesPorEstudiante = [];
-            foreach ($calificaciones as $cal) {
-                $idEst = $cal['id_estudiante'];
-                if (!isset($calificacionesPorEstudiante[$idEst])) {
-                    $calificacionesPorEstudiante[$idEst] = [];
-                }
-                // Se ordena por fecha ascendente a propósito: el front recorre y
-                // se queda con la coincidencia que encuentre, así que si hubiera
-                // duplicados la última en llegar es la que termina mostrándose
-                $calificacionesPorEstudiante[$idEst][] = [
-                    'id' => $cal['id'],
-                    'id_parametro_calificacion' => $cal['id_parametro_calificacion'],
-                    'id_valor_parametro_calificacion' => $cal['id_valor_parametro_calificacion']
-                ];
-            }
-
-            // Anidar calificaciones a cada estudiante
-            foreach ($estudiantes as &$est) {
-                $idEst = $est['id_estudiante'];
-                $est['calificaciones'] = isset($calificacionesPorEstudiante[$idEst])
-                    ? $calificacionesPorEstudiante[$idEst]
-                    : [];
-                $est['presente'] = (int) $est['presente'];
-            }
-            unset($est);
+            // 2. Calificaciones de la tarea, anidadas a cada estudiante
+            $estudiantes = self::anidarCalificaciones($db, $estudiantes, $id_tarea_sprint);
 
             Flight::json($estudiantes);
         } catch (Exception $e) {

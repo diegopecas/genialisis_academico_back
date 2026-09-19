@@ -5,7 +5,7 @@ class AreasAcademicas
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("select id, nombre, icono, color from areas_academicas where id_tenant = :id_tenant order by nombre");
+        $sentence = $db->prepare("select id, nombre, icono, color, es_extracurricular from areas_academicas where id_tenant = :id_tenant order by nombre");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
@@ -15,7 +15,7 @@ class AreasAcademicas
     public static function getAllList()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("select id, nombre, icono from areas_academicas where id_tenant = :id_tenant order by nombre");
+        $sentence = $db->prepare("select id, nombre, icono, es_extracurricular from areas_academicas where id_tenant = :id_tenant order by nombre");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
@@ -25,7 +25,7 @@ class AreasAcademicas
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("select id, nombre, icono, color from areas_academicas where id = :id and id_tenant = :id_tenant");
+        $sentence = $db->prepare("select id, nombre, icono, color, es_extracurricular from areas_academicas where id = :id and id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
@@ -39,14 +39,17 @@ class AreasAcademicas
         $nombre = Flight::request()->data['nombre'];
         $icono = Flight::request()->data['icono'];
         $color = Flight::request()->data['color'] ?? '#FFFFFF';
+        // Opcional: los formularios viejos no lo envian y el area queda regular.
+        $es_extracurricular = Flight::request()->data['es_extracurricular'] ?? 0;
         
-        $sentence = $db->prepare("insert into areas_academicas(id, id_tenant, nombre, icono, color) values (:id, :id_tenant, :nombre, :icono, :color)");
+        $sentence = $db->prepare("insert into areas_academicas(id, id_tenant, nombre, icono, color, es_extracurricular) values (:id, :id_tenant, :nombre, :icono, :color, :es_extracurricular)");
         $idNew = Uuid::generar();
         $sentence->bindValue(':id', $idNew);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':icono', $icono);
         $sentence->bindParam(':color', $color);
+        $sentence->bindValue(':es_extracurricular', $es_extracurricular, PDO::PARAM_INT);
         $sentence->execute();
         $id = $idNew;
         Flight::json(array('id' => $id));
@@ -59,11 +62,14 @@ class AreasAcademicas
         $nombre = Flight::request()->data['nombre'];
         $icono = Flight::request()->data['icono'];
         $color = Flight::request()->data['color'] ?? '#FFFFFF';
+        // Opcional: los formularios viejos no lo envian y el area queda regular.
+        $es_extracurricular = Flight::request()->data['es_extracurricular'] ?? 0;
         
-        $sentence = $db->prepare("update areas_academicas set nombre = :nombre, icono = :icono, color = :color where id = :id and id_tenant = :id_tenant");
+        $sentence = $db->prepare("update areas_academicas set nombre = :nombre, icono = :icono, color = :color, es_extracurricular = :es_extracurricular where id = :id and id_tenant = :id_tenant");
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':icono', $icono);
         $sentence->bindParam(':color', $color);
+        $sentence->bindValue(':es_extracurricular', $es_extracurricular, PDO::PARAM_INT);
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
@@ -81,6 +87,36 @@ class AreasAcademicas
         self::getById($id);
     }
     
+    /**
+     * Areas marcadas como extracurriculares.
+     * Alimenta el selector de area del curso extracurricular; las areas
+     * regulares no se ofrecen ahi.
+     */
+    public static function getExtracurriculares()
+    {
+        $db = Flight::db();
+        $sentence = $db->prepare("select id, nombre, icono, color from areas_academicas where id_tenant = :id_tenant and es_extracurricular = 1 order by nombre");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $response = $sentence->fetchAll();
+        Flight::json($response);
+    }
+
+    /**
+     * Areas regulares (no extracurriculares).
+     * Se usa donde antes se listaban todas: asignacion de areas a grupos y
+     * selectores de la malla academica normal.
+     */
+    public static function getRegulares()
+    {
+        $db = Flight::db();
+        $sentence = $db->prepare("select id, nombre, icono, color from areas_academicas where id_tenant = :id_tenant and es_extracurricular = 0 order by nombre");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $response = $sentence->fetchAll();
+        Flight::json($response);
+    }
+
     public static function getByGrupo($id)
     {
         $db = Flight::db();
@@ -105,7 +141,8 @@ class AreasAcademicas
         $sentence = $db->prepare("
             SELECT id, nombre, icono, color
             FROM areas_academicas 
-            WHERE id NOT IN (
+            WHERE es_extracurricular = 0
+            AND id NOT IN (
                 SELECT id_area_academica 
                 FROM area_academica_x_grupo 
                 WHERE id_grupo = :id_grupo

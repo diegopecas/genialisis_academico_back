@@ -174,6 +174,9 @@ class TareasXSprints
             $id_actividad_academica = Flight::request()->data['id_actividad_academica'];
             $id_grupo = Flight::request()->data['id_grupo'] ?? null;
             $id_area_academica = Flight::request()->data['id_area_academica'] ?? null;
+            // Clases de curso extracurricular: el curso hace las veces de grupo
+            // (es el conjunto de ninos) y el area academica sigue siendo la materia.
+            $id_curso_extra = Flight::request()->data['id_curso_extra'] ?? null;
             $id_estado_tarea = Flight::request()->data['id_estado_tarea'] ?? 1;
             $id_docente = Flight::request()->data['id_docente'] ?? null;
             $fecha_ejecucion = Flight::request()->data['fecha_ejecucion'] ?? null;
@@ -185,11 +188,11 @@ class TareasXSprints
             $idNew = Uuid::generar();
             $sentence = $db->prepare("INSERT INTO tareas_x_sprints (
                 id, id_tenant,
-                id_sprint, id_actividad_academica, id_grupo, id_area_academica,
+                id_sprint, id_actividad_academica, id_grupo, id_area_academica, id_curso_extra,
                 id_estado_tarea, id_docente, fecha_ejecucion, fecha_registro, orden_ejecucion
             ) VALUES (
                 :id, :id_tenant,
-                :id_sprint, :id_actividad_academica, :id_grupo, :id_area_academica,
+                :id_sprint, :id_actividad_academica, :id_grupo, :id_area_academica, :id_curso_extra,
                 :id_estado_tarea, :id_docente, :fecha_ejecucion, :fecha_registro, :orden_ejecucion
             )");
 
@@ -199,6 +202,7 @@ class TareasXSprints
             $sentence->bindParam(':id_actividad_academica', $id_actividad_academica);
             $sentence->bindParam(':id_grupo', $id_grupo);
             $sentence->bindParam(':id_area_academica', $id_area_academica);
+            $sentence->bindValue(':id_curso_extra', $id_curso_extra);
             $sentence->bindParam(':id_estado_tarea', $id_estado_tarea);
             $sentence->bindParam(':id_docente', $id_docente);
             $sentence->bindParam(':fecha_ejecucion', $fecha_ejecucion);
@@ -223,7 +227,9 @@ class TareasXSprints
         $id_docente = Flight::request()->data['id_docente'];
 
         // Obtener grupo de la tarea para calcular estudiantes
-        $stmtTarea = $db->prepare("SELECT id_grupo FROM tareas_x_sprints WHERE id = :id AND id_tenant = :id_tenant");
+        // Se trae tambien id_curso_extra: una clase de curso extracurricular no
+        // tiene grupo, sus estudiantes salen de la inscripcion al curso.
+        $stmtTarea = $db->prepare("SELECT id_grupo, id_curso_extra FROM tareas_x_sprints WHERE id = :id AND id_tenant = :id_tenant");
         $stmtTarea->bindParam(':id', $id);
         $stmtTarea->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmtTarea->execute();
@@ -233,17 +239,31 @@ class TareasXSprints
         $totalCalificados = 0;
 
         if ($tarea) {
-            // Contar estudiantes activos en el grupo
-            $stmtGrupo = $db->prepare("
-                SELECT COUNT(*) as total 
-                FROM estudiantes_x_grupos exg
-                INNER JOIN estudiantes e ON exg.id_estudiante = e.id
-                WHERE exg.id_grupo = :id_grupo 
-                AND exg.activo = 1 
-                AND e.activo = 1
-                AND exg.id_tenant = :id_tenant
-            ");
-            $stmtGrupo->bindParam(':id_grupo', $tarea['id_grupo']);
+            if (!empty($tarea['id_curso_extra'])) {
+                // Contar estudiantes inscritos y activos en el curso extracurricular
+                $stmtGrupo = $db->prepare("
+                    SELECT COUNT(*) as total
+                    FROM estudiantes_x_cursos_extra exce
+                    INNER JOIN estudiantes e ON exce.id_estudiante = e.id
+                    WHERE exce.id_curso_extra = :id_curso_extra
+                    AND exce.activo = 1
+                    AND e.activo = 1
+                    AND exce.id_tenant = :id_tenant
+                ");
+                $stmtGrupo->bindParam(':id_curso_extra', $tarea['id_curso_extra']);
+            } else {
+                // Contar estudiantes activos en el grupo
+                $stmtGrupo = $db->prepare("
+                    SELECT COUNT(*) as total 
+                    FROM estudiantes_x_grupos exg
+                    INNER JOIN estudiantes e ON exg.id_estudiante = e.id
+                    WHERE exg.id_grupo = :id_grupo 
+                    AND exg.activo = 1 
+                    AND e.activo = 1
+                    AND exg.id_tenant = :id_tenant
+                ");
+                $stmtGrupo->bindParam(':id_grupo', $tarea['id_grupo']);
+            }
             $stmtGrupo->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtGrupo->execute();
             $resGrupo = $stmtGrupo->fetch(PDO::FETCH_ASSOC);
@@ -625,6 +645,186 @@ class TareasXSprints
     /**
      * Obtener tareas de un sprint filtradas por grupo y área, ordenadas por orden_ejecucion
      */
+    /**
+     * Clases de un curso extracurricular dentro de un sprint.
+     *
+     * Hermano de getBySprintGrupoArea: una tarea de curso extracurricular no
+     * tiene grupo, se identifica por id_curso_extra. El area academica sigue
+     * presente porque es la materia de la que salen los logros.
+     */
+    public static function getBySprintCursoExtra($id_sprint, $id_curso_extra)
+    {
+        try {
+            $db = Flight::db();
+            $sentence = $db->prepare("
+                SELECT 
+                    txs.id,
+                    txs.id_sprint,
+                    txs.id_actividad_academica,
+                    txs.id_grupo,
+                    txs.id_area_academica,
+                    txs.id_curso_extra,
+                    txs.id_estado_tarea,
+                    txs.orden_ejecucion,
+                    txs.observaciones,
+                    txs.id_docente,
+                    txs.fecha_ejecucion,
+                    txs.fecha_registro,
+                    txs.total_estudiantes_grupo,
+                    txs.total_estudiantes_calificados,
+                    aa.titulo as titulo_actividad,
+                    aa.descripcion as descripcion_actividad,
+                    aa.minutos_duracion,
+                    aa.nivel_uno,
+                    aa.nivel_dos,
+                    et.nombre as nombre_estado,
+                    ce.nombre as nombre_curso_extra,
+                    ar.nombre as nombre_area,
+                    CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) as nombre_docente
+                FROM tareas_x_sprints txs
+                INNER JOIN actividades_academicas aa ON txs.id_actividad_academica = aa.id
+                INNER JOIN estados_tareas et ON txs.id_estado_tarea = et.id
+                LEFT JOIN cursos_extra ce ON txs.id_curso_extra = ce.id
+                LEFT JOIN areas_academicas ar ON txs.id_area_academica = ar.id
+                LEFT JOIN docentes d ON txs.id_docente = d.id
+                LEFT JOIN personas p ON d.id_persona = p.id
+                WHERE txs.id_sprint = :id_sprint
+                AND txs.id_curso_extra = :id_curso_extra
+                AND txs.id_tenant = :id_tenant
+                ORDER BY txs.orden_ejecucion ASC, txs.id ASC
+            ");
+
+            $sentence->bindParam(':id_sprint', $id_sprint);
+            $sentence->bindParam(':id_curso_extra', $id_curso_extra);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->execute();
+            $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
+            Flight::json($response);
+        } catch (Exception $e) {
+            error_log("Error en getBySprintCursoExtra: " . $e->getMessage());
+            Flight::json(['error' => 'Error al obtener las clases del curso extracurricular'], 500);
+        }
+    }
+
+    /**
+     * Crea las clases de un curso extracurricular dentro de un sprint.
+     *
+     * Recibe la actividad academica y una lista de fechas, y crea una tarea por
+     * fecha. Las fechas las arma el front a partir de los horarios del curso y
+     * del rango del sprint; aqui solo se insertan, para que el usuario pueda
+     * quitar las que no quiere antes de grabar.
+     *
+     * El docente, si no viene, se toma del titular del curso.
+     */
+    public static function generarDesdeCursoExtra()
+    {
+        $db = Flight::db();
+        try {
+            $id_sprint = Flight::request()->data['id_sprint'];
+            $id_curso_extra = Flight::request()->data['id_curso_extra'];
+            $id_actividad_academica = Flight::request()->data['id_actividad_academica'];
+            $fechas = Flight::request()->data['fechas'] ?? [];
+            $id_docente = Flight::request()->data['id_docente'] ?? null;
+
+            if (empty($fechas)) {
+                Flight::json(array('error' => 'No se recibieron fechas para generar las clases.'), 400);
+                return;
+            }
+
+            $idTenant = TenantContext::id();
+
+            // Area academica del curso: es la materia de la que salen los logros.
+            $stmtCurso = $db->prepare("
+                SELECT id_area_academica, nombre
+                FROM cursos_extra
+                WHERE id = :id_curso_extra AND id_tenant = :id_tenant
+            ");
+            $stmtCurso->bindParam(':id_curso_extra', $id_curso_extra);
+            $stmtCurso->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $stmtCurso->execute();
+            $curso = $stmtCurso->fetch(PDO::FETCH_ASSOC);
+
+            if (!$curso) {
+                Flight::json(array('error' => 'El curso extracurricular no existe.'), 400);
+                return;
+            }
+
+            // Sin docente explicito se usa el titular del curso.
+            if (empty($id_docente)) {
+                $stmtDocente = $db->prepare("
+                    SELECT id_docente
+                    FROM docentes_x_cursos_extra
+                    WHERE id_curso_extra = :id_curso_extra AND id_tenant = :id_tenant
+                    ORDER BY es_titular DESC
+                    LIMIT 1
+                ");
+                $stmtDocente->bindParam(':id_curso_extra', $id_curso_extra);
+                $stmtDocente->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                $stmtDocente->execute();
+                $docente = $stmtDocente->fetch(PDO::FETCH_ASSOC);
+                $id_docente = $docente ? $docente['id_docente'] : null;
+            }
+
+            // Orden de ejecucion: continua despues de las clases que ya tenga el curso.
+            $stmtOrden = $db->prepare("
+                SELECT IFNULL(MAX(orden_ejecucion), 0) as ultimo
+                FROM tareas_x_sprints
+                WHERE id_sprint = :id_sprint AND id_curso_extra = :id_curso_extra AND id_tenant = :id_tenant
+            ");
+            $stmtOrden->bindParam(':id_sprint', $id_sprint);
+            $stmtOrden->bindParam(':id_curso_extra', $id_curso_extra);
+            $stmtOrden->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $stmtOrden->execute();
+            $filaOrden = $stmtOrden->fetch(PDO::FETCH_ASSOC);
+            $orden = (int) ($filaOrden['ultimo'] ?? 0);
+
+            $db->beginTransaction();
+
+            $insert = $db->prepare("INSERT INTO tareas_x_sprints (
+                id, id_tenant,
+                id_sprint, id_actividad_academica, id_grupo, id_area_academica, id_curso_extra,
+                id_estado_tarea, id_docente, fecha_ejecucion, fecha_registro, orden_ejecucion
+            ) VALUES (
+                :id, :id_tenant,
+                :id_sprint, :id_actividad_academica, NULL, :id_area_academica, :id_curso_extra,
+                1, :id_docente, :fecha_ejecucion, NOW(), :orden_ejecucion
+            )");
+
+            $creadas = [];
+
+            foreach ($fechas as $fecha) {
+                $orden++;
+                $idNew = Uuid::generar();
+
+                $insert->bindValue(':id', $idNew);
+                $insert->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                $insert->bindValue(':id_sprint', $id_sprint);
+                $insert->bindValue(':id_actividad_academica', $id_actividad_academica);
+                $insert->bindValue(':id_area_academica', $curso['id_area_academica']);
+                $insert->bindValue(':id_curso_extra', $id_curso_extra);
+                $insert->bindValue(':id_docente', $id_docente);
+                $insert->bindValue(':fecha_ejecucion', $fecha);
+                $insert->bindValue(':orden_ejecucion', $orden, PDO::PARAM_INT);
+                $insert->execute();
+
+                $creadas[] = array('id' => $idNew, 'fecha_ejecucion' => $fecha);
+            }
+
+            $db->commit();
+
+            Flight::json(array(
+                'clases_creadas' => count($creadas),
+                'clases' => $creadas
+            ));
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log("Error en generarDesdeCursoExtra: " . $e->getMessage());
+            Flight::json(array('error' => 'Error al generar las clases: ' . $e->getMessage()), 500);
+        }
+    }
+
     public static function getBySprintGrupoArea($id_sprint, $id_grupo, $id_area)
     {
         try {
