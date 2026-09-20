@@ -421,6 +421,13 @@ Flight::before('start', function (&$params, &$output) {
         return;
     }
 
+    // Portal publico de inscripcion a cursos extracurriculares: la pagina no
+    // tiene sesion. Cada endpoint valida que el portal este encendido para el
+    // tenant y, en el registro, que el curso y el convenio existan.
+    if (strpos($ruta, '/inscripcion-publica/') === 0) {
+        return;
+    }
+
     // Resto: token valido y que el tenant del token coincida con el del request.
     $userData = JWTService::requerirTenant(TenantContext::codigo());
 
