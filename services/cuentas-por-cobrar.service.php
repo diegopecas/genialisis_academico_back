@@ -1388,6 +1388,25 @@ class CuentasPorCobrar
                 SELECT e.id_persona FROM estudiantes e WHERE e.id = :id_estudiante AND e.id_tenant = :id_tenant
             ");
 
+            // Por cual convenio entro cada inscripcion y si ese convenio dice que
+            // paga la institucion. Sale de la inscripcion y no de lo que mande la
+            // pantalla, para que la cuenta quede a nombre de quien corresponde
+            // aunque el front envie otra cosa.
+            $stmtConvenio = $db->prepare("
+                SELECT exce.id_institucion_cliente,
+                       cxic.paga_institucion,
+                       ic.id_persona AS id_persona_institucion
+                FROM estudiantes_x_cursos_extra exce
+                LEFT JOIN cursos_extra_x_instituciones_cliente cxic
+                       ON cxic.id_curso_extra = exce.id_curso_extra
+                      AND cxic.id_institucion_cliente = exce.id_institucion_cliente
+                      AND cxic.id_tenant = exce.id_tenant
+                LEFT JOIN instituciones_cliente ic
+                       ON ic.id = exce.id_institucion_cliente
+                      AND ic.id_tenant = exce.id_tenant
+                WHERE exce.id = :id_inscripcion AND exce.id_tenant = :id_tenant
+            ");
+
             $cuentasCreadas = 0;
             $totalMatricula = 0;
             $totalPension = 0;
@@ -1422,9 +1441,32 @@ class CuentasPorCobrar
 
                 if (!$idPersonaEst) continue;
 
+                // Si la inscripcion entro por un convenio que paga la institucion,
+                // la cuenta se emite a nombre de la institucion y no del nino. La
+                // trazabilidad al estudiante se conserva en
+                // cuentas_cobrar_x_curso_extra, que amarra la cuenta con la
+                // inscripcion.
+                $stmtConvenio->bindParam(':id_inscripcion', $idInscripcion);
+                $stmtConvenio->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmtConvenio->execute();
+                $convenio = $stmtConvenio->fetch(PDO::FETCH_ASSOC);
+
+                $idPersonaDestino = $idPersonaEst;
+                if ($convenio && !empty($convenio['paga_institucion']) && !empty($convenio['id_persona_institucion'])) {
+                    $idPersonaDestino = $convenio['id_persona_institucion'];
+                }
+
+                // Cada inscripcion puede traer sus propios valores: con tarifas
+                // distintas por convenio, un mismo lote puede mezclar ninos
+                // particulares y de colegio. Si no vienen, se usan los globales,
+                // que es como funcionaba antes.
+                $valoresInscripcion = (isset($inscripcion['valores']) && !empty($inscripcion['valores']))
+                    ? $inscripcion['valores']
+                    : $valores;
+
                 $duplicados = [];
-                foreach ($valores as $valor) {
-                    $stmtVerificar->bindParam(':id_persona', $idPersonaEst);
+                foreach ($valoresInscripcion as $valor) {
+                    $stmtVerificar->bindParam(':id_persona', $idPersonaDestino);
                     $stmtVerificar->bindParam(':id_producto_servicio', $valor['id_producto_servicio']);
                     $stmtVerificar->bindParam(':fecha', $valor['fecha']);
                     $stmtVerificar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -1444,14 +1486,14 @@ class CuentasPorCobrar
                     continue;
                 }
 
-                foreach ($valores as $valor) {
+                foreach ($valoresInscripcion as $valor) {
                     $detalle = $valor['detalle'] ?? "Curso Extra #{$id_curso_extra}";
 
                     $idCxc2 = Uuid::generar();
                     $stmtInsertCuenta->bindValue(':id', $idCxc2);
                     $stmtInsertCuenta->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $stmtInsertCuenta->bindParam(':id_producto_servicio', $valor['id_producto_servicio']);
-                    $stmtInsertCuenta->bindParam(':id_persona', $idPersonaEst);
+                    $stmtInsertCuenta->bindParam(':id_persona', $idPersonaDestino);
                     $stmtInsertCuenta->bindParam(':fecha', $valor['fecha']);
                     $stmtInsertCuenta->bindParam(':valor', $valor['valor']);
                     $stmtInsertCuenta->bindParam(':detalle', $detalle);

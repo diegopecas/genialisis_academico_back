@@ -13,10 +13,18 @@ class ActividadesAcademicasXIndicadoresLogros
                                     l.nombre as nombre_logro,
                                     gr.nombre as nombre_grado,
                                     ar.nombre as nombre_area,
+                                    -- Grupos del jardin por el grado del logro, y
+                                    -- cursos extracurriculares por el area, que es
+                                    -- como se relacionan ellos con la malla.
                                     (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', g.id, 'nombre', g.nombre))
                                      FROM grados_x_grupo gxg
                                      INNER JOIN grupos g ON gxg.id_grupo = g.id
-                                     WHERE gxg.id_grado = l.id_grado) AS grupos_json
+                                     WHERE gxg.id_grado = l.id_grado) AS grupos_json,
+                                    (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', ce.id, 'nombre', ce.nombre))
+                                     FROM cursos_extra ce
+                                     WHERE ce.id_area_academica = l.id_area_academica
+                                       AND ce.activo = 1
+                                       AND ce.id_tenant = l.id_tenant) AS cursos_json
                                   FROM actividades_academicas_x_indicadores_logros aaxil
                                   INNER JOIN actividades_academicas aa ON aaxil.id_actividad_academica = aa.id
                                   INNER JOIN indicadores_logros il ON aaxil.id_indicador_logro = il.id
@@ -54,10 +62,18 @@ class ActividadesAcademicasXIndicadoresLogros
                                     gr.nombre as nombre_grado,
                                     ar.nombre as nombre_area,
                                     ca.nombre as nombre_corte,
+                                    -- Grupos del jardin por el grado del logro, y
+                                    -- cursos extracurriculares por el area, que es
+                                    -- como se relacionan ellos con la malla.
                                     (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', g.id, 'nombre', g.nombre))
                                      FROM grados_x_grupo gxg
                                      INNER JOIN grupos g ON gxg.id_grupo = g.id
-                                     WHERE gxg.id_grado = l.id_grado) AS grupos_json
+                                     WHERE gxg.id_grado = l.id_grado) AS grupos_json,
+                                    (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', ce.id, 'nombre', ce.nombre))
+                                     FROM cursos_extra ce
+                                     WHERE ce.id_area_academica = l.id_area_academica
+                                       AND ce.activo = 1
+                                       AND ce.id_tenant = l.id_tenant) AS cursos_json
                                   FROM actividades_academicas_x_indicadores_logros aaxil
                                   INNER JOIN indicadores_logros il ON aaxil.id_indicador_logro = il.id
                                   LEFT JOIN logros l ON il.id_logro = l.id

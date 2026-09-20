@@ -27,7 +27,13 @@ class IndicadoresLogros
             (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', g.id, 'nombre', g.nombre))
              FROM grados_x_grupo gxg
              INNER JOIN grupos g ON gxg.id_grupo = g.id
-             WHERE gxg.id_grado = l.id_grado) AS grupos_json
+             WHERE gxg.id_grado = l.id_grado) AS grupos_json,
+            -- Cursos extracurriculares del area: sus logros no tienen grado,
+            -- asi que por grupos siempre saldrian vacios.
+            (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', ce.id, 'nombre', ce.nombre))
+             FROM cursos_extra ce
+             WHERE ce.id_area_academica = l.id_area_academica
+               AND ce.activo = 1 AND ce.id_tenant = l.id_tenant) AS cursos_json
         FROM indicadores_logros il
         LEFT JOIN logros l
             ON il.id_logro = l.id
@@ -81,7 +87,13 @@ class IndicadoresLogros
             (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', g.id, 'nombre', g.nombre))
              FROM grados_x_grupo gxg
              INNER JOIN grupos g ON gxg.id_grupo = g.id
-             WHERE gxg.id_grado = l.id_grado) AS grupos_json
+             WHERE gxg.id_grado = l.id_grado) AS grupos_json,
+            -- Cursos extracurriculares del area: sus logros no tienen grado,
+            -- asi que por grupos siempre saldrian vacios.
+            (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', ce.id, 'nombre', ce.nombre))
+             FROM cursos_extra ce
+             WHERE ce.id_area_academica = l.id_area_academica
+               AND ce.activo = 1 AND ce.id_tenant = l.id_tenant) AS cursos_json
         FROM indicadores_logros il
         LEFT JOIN logros l
             ON il.id_logro = l.id

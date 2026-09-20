@@ -177,6 +177,16 @@ Flight::route('PUT /docentes-x-cursos-extra', [DocentesXCursosExtra::class, 'rep
 Flight::route('DELETE /docentes-x-cursos-extra', [DocentesXCursosExtra::class, 'delete']);
 
 // PROVEEDORES X CURSOS EXTRA
+// CONVENIOS DE CURSOS EXTRA CON INSTITUCIONES CLIENTE
+Flight::route('GET /cursos-extra-x-instituciones-cliente', [CursosExtraXInstitucionesCliente::class, 'getAll']);
+Flight::route('GET /cursos-extra-x-instituciones-cliente/@id', [CursosExtraXInstitucionesCliente::class, 'getById']);
+Flight::route('GET /cursos-extra-x-instituciones-cliente/curso/@id_curso_extra', [CursosExtraXInstitucionesCliente::class, 'getByCurso']);
+Flight::route('GET /cursos-extra-x-instituciones-cliente/institucion/@id_institucion_cliente', [CursosExtraXInstitucionesCliente::class, 'getByInstitucion']);
+Flight::route('GET /cursos-extra-x-instituciones-cliente/disponibles/@id_curso_extra', [CursosExtraXInstitucionesCliente::class, 'getDisponibles']);
+Flight::route('POST /cursos-extra-x-instituciones-cliente', [CursosExtraXInstitucionesCliente::class, 'new']);
+Flight::route('PUT /cursos-extra-x-instituciones-cliente', [CursosExtraXInstitucionesCliente::class, 'replace']);
+Flight::route('DELETE /cursos-extra-x-instituciones-cliente', [CursosExtraXInstitucionesCliente::class, 'delete']);
+
 Flight::route('GET /proveedores-x-cursos-extra', [ProveedoresXCursosExtra::class, 'getAll']);
 Flight::route('GET /proveedores-x-cursos-extra/@id', [ProveedoresXCursosExtra::class, 'getById']);
 Flight::route('GET /proveedores-x-cursos-extra/curso/@id_curso_extra', [ProveedoresXCursosExtra::class, 'getByCurso']);
@@ -194,6 +204,7 @@ Flight::route('DELETE /horarios-cursos-extra', [HorariosCursosExtra::class, 'del
 
 // TARIFAS CURSOS EXTRA
 Flight::route('GET /tarifas-cursos-extra', [TarifasCursosExtra::class, 'getAll']);
+Flight::route('GET /tarifas-cursos-extra/vigente/@id_curso_extra/@anio', [TarifasCursosExtra::class, 'getVigente']);
 Flight::route('GET /tarifas-cursos-extra/@id', [TarifasCursosExtra::class, 'getById']);
 Flight::route('GET /tarifas-cursos-extra/curso/@id_curso_extra', [TarifasCursosExtra::class, 'getByCurso']);
 Flight::route('POST /tarifas-cursos-extra', [TarifasCursosExtra::class, 'new']);

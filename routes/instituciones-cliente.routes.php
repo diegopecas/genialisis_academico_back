@@ -19,3 +19,13 @@ Flight::route('GET /tipos-institucion/@id', [TiposInstitucion::class, 'getById']
 Flight::route('POST /tipos-institucion', [TiposInstitucion::class, 'new']);
 Flight::route('PUT /tipos-institucion', [TiposInstitucion::class, 'replace']);
 Flight::route('DELETE /tipos-institucion', [TiposInstitucion::class, 'delete']);
+
+// ESTUDIANTES POR INSTITUCION CLIENTE
+Flight::route('GET /estudiantes-x-instituciones-cliente', [EstudiantesXInstitucionesCliente::class, 'getAll']);
+Flight::route('GET /estudiantes-x-instituciones-cliente/@id', [EstudiantesXInstitucionesCliente::class, 'getById']);
+Flight::route('GET /estudiantes-x-instituciones-cliente/institucion/@id_institucion_cliente', [EstudiantesXInstitucionesCliente::class, 'getByInstitucion']);
+Flight::route('GET /estudiantes-x-instituciones-cliente/estudiante/@id_estudiante', [EstudiantesXInstitucionesCliente::class, 'getByEstudiante']);
+Flight::route('GET /estudiantes-x-instituciones-cliente/disponibles/@id_institucion_cliente/@anio', [EstudiantesXInstitucionesCliente::class, 'getDisponibles']);
+Flight::route('POST /estudiantes-x-instituciones-cliente', [EstudiantesXInstitucionesCliente::class, 'new']);
+Flight::route('PUT /estudiantes-x-instituciones-cliente', [EstudiantesXInstitucionesCliente::class, 'replace']);
+Flight::route('DELETE /estudiantes-x-instituciones-cliente', [EstudiantesXInstitucionesCliente::class, 'delete']);

@@ -18,7 +18,52 @@ class ActividadesAcademicas
                     aa.id_ambiente,
                     ta.nombre as nombre_tipo_actividad,
                     amb.nombre as nombre_ambiente,
-                    amb.icono as icono_ambiente
+                    amb.icono as icono_ambiente,
+                    -- Areas a las que pertenece la actividad, por la cadena
+                    -- indicador -> logro -> area.
+                    (SELECT GROUP_CONCAT(DISTINCT ar.nombre ORDER BY ar.nombre SEPARATOR ', ')
+                     FROM actividades_academicas_x_indicadores_logros x
+                     INNER JOIN indicadores_logros il ON il.id = x.id_indicador_logro
+                     INNER JOIN logros l ON l.id = il.id_logro
+                     INNER JOIN areas_academicas ar ON ar.id = l.id_area_academica
+                     WHERE x.id_actividad_academica = aa.id) AS nombres_areas,
+                    -- Grupos del jardin, por el grado del logro.
+                    (SELECT GROUP_CONCAT(DISTINCT g.nombre ORDER BY g.nombre SEPARATOR ', ')
+                     FROM actividades_academicas_x_indicadores_logros x
+                     INNER JOIN indicadores_logros il ON il.id = x.id_indicador_logro
+                     INNER JOIN logros l ON l.id = il.id_logro
+                     INNER JOIN grados_x_grupo gxg ON gxg.id_grado = l.id_grado
+                     INNER JOIN grupos g ON g.id = gxg.id_grupo
+                     WHERE x.id_actividad_academica = aa.id) AS nombres_grupos,
+                    -- Cursos extracurriculares que usan esas areas. Es un dato
+                    -- derivado (el curso cuelga del area, no de la actividad),
+                    -- pero se muestra junto a los grupos porque es lo que
+                    -- responde a quien trabaja esta actividad.
+                    (SELECT GROUP_CONCAT(DISTINCT ce.nombre ORDER BY ce.nombre SEPARATOR ', ')
+                     FROM actividades_academicas_x_indicadores_logros x
+                     INNER JOIN indicadores_logros il ON il.id = x.id_indicador_logro
+                     INNER JOIN logros l ON l.id = il.id_logro
+                     INNER JOIN cursos_extra ce ON ce.id_area_academica = l.id_area_academica
+                        AND ce.activo = 1 AND ce.id_tenant = aa.id_tenant
+                     WHERE x.id_actividad_academica = aa.id) AS nombres_cursos,
+                    -- Cuantas de sus areas son extracurriculares y cuantas
+                    -- regulares. Con eso el front decide el tipo de la actividad
+                    -- sin traer la lista de cursos, que es un dato derivado y
+                    -- cambia cada vez que se crea un curso del area.
+                    (SELECT COUNT(DISTINCT ar.id)
+                     FROM actividades_academicas_x_indicadores_logros x
+                     INNER JOIN indicadores_logros il ON il.id = x.id_indicador_logro
+                     INNER JOIN logros l ON l.id = il.id_logro
+                     INNER JOIN areas_academicas ar ON ar.id = l.id_area_academica
+                     WHERE x.id_actividad_academica = aa.id
+                       AND ar.es_extracurricular = 1) AS total_areas_extra,
+                    (SELECT COUNT(DISTINCT ar.id)
+                     FROM actividades_academicas_x_indicadores_logros x
+                     INNER JOIN indicadores_logros il ON il.id = x.id_indicador_logro
+                     INNER JOIN logros l ON l.id = il.id_logro
+                     INNER JOIN areas_academicas ar ON ar.id = l.id_area_academica
+                     WHERE x.id_actividad_academica = aa.id
+                       AND ar.es_extracurricular = 0) AS total_areas_regulares
                 FROM actividades_academicas aa
                 LEFT JOIN tipos_actividades_academicas ta ON aa.id_tipo_actividad_academica = ta.id
                 LEFT JOIN ambientes amb ON aa.id_ambiente = amb.id
@@ -599,7 +644,11 @@ class ActividadesAcademicas
                 (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', g.id, 'nombre', g.nombre))
                  FROM grados_x_grupo gxg
                  INNER JOIN grupos g ON gxg.id_grupo = g.id
-                 WHERE gxg.id_grado = l.id_grado) AS grupos_json
+                 WHERE gxg.id_grado = l.id_grado) AS grupos_json,
+                (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', ce.id, 'nombre', ce.nombre))
+                 FROM cursos_extra ce
+                 WHERE ce.id_area_academica = l.id_area_academica
+                   AND ce.activo = 1 AND ce.id_tenant = l.id_tenant) AS cursos_json
                 FROM logros l 
                 INNER JOIN indicadores_logros il ON l.id = il.id_logro
                 INNER JOIN grados gr ON l.id_grado = gr.id

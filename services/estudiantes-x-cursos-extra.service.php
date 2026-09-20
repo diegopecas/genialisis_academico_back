@@ -5,7 +5,7 @@ class EstudiantesXCursosExtra
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo,
+        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente,
         CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo,
         ce.nombre AS nombre_curso
         FROM estudiantes_x_cursos_extra exce
@@ -23,7 +23,7 @@ class EstudiantesXCursosExtra
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo,
+        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente,
         CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo,
         ce.nombre AS nombre_curso
         FROM estudiantes_x_cursos_extra exce
@@ -41,11 +41,17 @@ class EstudiantesXCursosExtra
     public static function getByCurso($id_curso_extra)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo,
-        CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo
+        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente,
+        CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo,
+        CASE
+            WHEN pi.razon_social IS NOT NULL AND pi.razon_social != '' THEN pi.razon_social
+            ELSE CONCAT(IFNULL(pi.primer_nombre, ''), ' ', IFNULL(pi.primer_apellido, ''))
+        END AS nombre_institucion
         FROM estudiantes_x_cursos_extra exce
         INNER JOIN estudiantes e ON exce.id_estudiante = e.id
         INNER JOIN personas p ON e.id_persona = p.id
+        LEFT JOIN instituciones_cliente ic ON exce.id_institucion_cliente = ic.id
+        LEFT JOIN personas pi ON ic.id_persona = pi.id AND pi.id_tenant = ic.id_tenant
         WHERE exce.id_curso_extra = :id_curso_extra AND exce.id_tenant = :id_tenant
         ORDER BY p.primer_apellido, p.primer_nombre");
         $sentence->bindParam(':id_curso_extra', $id_curso_extra);
@@ -58,7 +64,7 @@ class EstudiantesXCursosExtra
     public static function getByEstudiante($id_estudiante)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo,
+        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente,
         ce.nombre AS nombre_curso
         FROM estudiantes_x_cursos_extra exce
         INNER JOIN cursos_extra ce ON exce.id_curso_extra = ce.id
@@ -86,22 +92,33 @@ class EstudiantesXCursosExtra
         $id_curso_extra = Flight::request()->data['id_curso_extra'];
         $fecha_inscripcion = Flight::request()->data['fecha_inscripcion'];
         $anio = Flight::request()->data['anio'];
+        // Convenio por el que entra el estudiante. Opcional: sin el, la
+        // inscripcion es particular y se cobra con la tarifa interna, que es el
+        // comportamiento que ya existia. Se congela aqui porque es lo que decide
+        // la tarifa y a nombre de quien se emite la cuenta, y la pertenencia del
+        // nino a un colegio puede cambiar despues.
+        $id_institucion_cliente = isset(Flight::request()->data['id_institucion_cliente'])
+            ? Flight::request()->data['id_institucion_cliente'] : null;
+        if (empty($id_institucion_cliente)) {
+            $id_institucion_cliente = null;
+        }
 
-        $error = self::validarInscripcion($db, $id_estudiante, $id_curso_extra, $fecha_inscripcion);
+        $error = self::validarInscripcion($db, $id_estudiante, $id_curso_extra, $fecha_inscripcion, $id_institucion_cliente);
         if ($error !== null) {
             Flight::json(array('error' => $error), 400);
             return;
         }
 
         $idNew = Uuid::generar();
-        $sentence = $db->prepare("INSERT INTO estudiantes_x_cursos_extra(id, id_tenant, id_estudiante, id_curso_extra, fecha_inscripcion, anio, activo) 
-        VALUES (:id, :id_tenant, :id_estudiante, :id_curso_extra, :fecha_inscripcion, :anio, 1)");
+        $sentence = $db->prepare("INSERT INTO estudiantes_x_cursos_extra(id, id_tenant, id_estudiante, id_curso_extra, fecha_inscripcion, anio, activo, id_institucion_cliente) 
+        VALUES (:id, :id_tenant, :id_estudiante, :id_curso_extra, :fecha_inscripcion, :anio, 1, :id_institucion_cliente)");
         $sentence->bindValue(':id', $idNew);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
         $sentence->bindParam(':id_curso_extra', $id_curso_extra);
         $sentence->bindParam(':fecha_inscripcion', $fecha_inscripcion);
         $sentence->bindParam(':anio', $anio, PDO::PARAM_INT);
+        $sentence->bindValue(':id_institucion_cliente', $id_institucion_cliente);
         $sentence->execute();
         $id = $idNew;
         Flight::json(array('id' => $id));
@@ -114,8 +131,32 @@ class EstudiantesXCursosExtra
      * masiva dispara una peticion por estudiante y el cupo puede agotarse entre una
      * y otra.
      */
-    private static function validarInscripcion($db, $id_estudiante, $id_curso_extra, $fecha_inscripcion)
+    private static function validarInscripcion($db, $id_estudiante, $id_curso_extra, $fecha_inscripcion, $id_institucion_cliente = null)
     {
+        // El convenio tiene que existir, estar activo y ser de este curso. No se
+        // valida que el nino pertenezca a esa institucion: se puede inscribir a
+        // alguien por un convenio aunque no este en su listado.
+        if (!empty($id_institucion_cliente)) {
+            $stmtConvenio = $db->prepare("
+                SELECT activo FROM cursos_extra_x_instituciones_cliente
+                WHERE id_curso_extra = :id_curso_extra
+                  AND id_institucion_cliente = :id_institucion_cliente
+                  AND id_tenant = :id_tenant
+            ");
+            $stmtConvenio->bindParam(':id_curso_extra', $id_curso_extra);
+            $stmtConvenio->bindParam(':id_institucion_cliente', $id_institucion_cliente);
+            $stmtConvenio->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtConvenio->execute();
+            $convenio = $stmtConvenio->fetch(PDO::FETCH_ASSOC);
+
+            if (!$convenio) {
+                return 'La institución seleccionada no tiene convenio con este curso.';
+            }
+            if (empty($convenio['activo'])) {
+                return 'El convenio con esa institución está inactivo.';
+            }
+        }
+
         $stmtCurso = $db->prepare("
             SELECT nombre, cupo_maximo, permite_sobrecupo, fecha_limite_inscripcion,
             edad_minima_meses, edad_maxima_meses

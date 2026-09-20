@@ -20,12 +20,16 @@ class TareasXSprints
             aa.titulo as titulo_actividad,
             et.nombre as nombre_estado,
             g.nombre as nombre_grupo,
+            ce.nombre as nombre_curso_extra,
+            -- Destino: el grupo del jardin o el curso extracurricular.
+            IFNULL(ce.nombre, g.nombre) as nombre_destino,
             ar.nombre as nombre_area
         FROM tareas_x_sprints txs
         LEFT JOIN sprints s ON txs.id_sprint = s.id
         LEFT JOIN actividades_academicas aa ON txs.id_actividad_academica = aa.id
         LEFT JOIN estados_tareas et ON txs.id_estado_tarea = et.id
         LEFT JOIN grupos g ON txs.id_grupo = g.id
+        LEFT JOIN cursos_extra ce ON txs.id_curso_extra = ce.id
         LEFT JOIN areas_academicas ar ON txs.id_area_academica = ar.id
         WHERE txs.id_tenant = :id_tenant
         ORDER BY txs.id DESC");
@@ -168,11 +172,15 @@ class TareasXSprints
             s.nombre_sprint,
             et.nombre as nombre_estado,
             g.nombre as nombre_grupo,
+            ce.nombre as nombre_curso_extra,
+            -- Destino: el grupo del jardin o el curso extracurricular.
+            IFNULL(ce.nombre, g.nombre) as nombre_destino,
             ar.nombre as nombre_area
         FROM tareas_x_sprints txs
         LEFT JOIN sprints s ON txs.id_sprint = s.id
         LEFT JOIN estados_tareas et ON txs.id_estado_tarea = et.id
         LEFT JOIN grupos g ON txs.id_grupo = g.id
+        LEFT JOIN cursos_extra ce ON txs.id_curso_extra = ce.id
         LEFT JOIN areas_academicas ar ON txs.id_area_academica = ar.id
         WHERE txs.id_actividad_academica = :id_actividad AND txs.id_tenant = :id_tenant
         ORDER BY txs.id");
@@ -1165,11 +1173,15 @@ class TareasXSprints
         try {
             $db = Flight::db();
             $id_sprint = Flight::request()->data['id_sprint'];
-            $id_grupo = Flight::request()->data['id_grupo'];
+            $id_grupo = Flight::request()->data['id_grupo'] ?? null;
             $id_area_academica = Flight::request()->data['id_area_academica'];
+            // Destino alterno: un curso extracurricular en lugar de un grupo.
+            $id_curso_extra = Flight::request()->data['id_curso_extra'] ?? null;
             $tareas = Flight::request()->data['tareas'];
 
-            if (!$id_sprint || !$id_grupo || !$id_area_academica || !is_array($tareas)) {
+            // Tiene que venir uno de los dos destinos, no los dos ni ninguno.
+            $esCurso = !empty($id_curso_extra);
+            if (!$id_sprint || (!$id_grupo && !$esCurso) || !$id_area_academica || !is_array($tareas)) {
                 Flight::json(['error' => 'Datos incompletos para sincronización'], 400);
                 return;
             }
@@ -1182,12 +1194,14 @@ class TareasXSprints
             $stmtActuales = $db->prepare("
                 SELECT id, id_actividad_academica, orden_ejecucion, id_estado_tarea
                 FROM tareas_x_sprints
-                WHERE id_sprint = :id_sprint AND id_grupo = :id_grupo AND id_area_academica = :id_area AND id_tenant = :id_tenant
+                WHERE id_sprint = :id_sprint
+                  AND " . ($esCurso ? "id_curso_extra = :id_destino" : "id_grupo = :id_destino") . "
+                  AND id_area_academica = :id_area AND id_tenant = :id_tenant
                 ORDER BY orden_ejecucion ASC, id ASC
             ");
             $stmtActuales->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtActuales->bindParam(':id_sprint', $id_sprint);
-            $stmtActuales->bindParam(':id_grupo', $id_grupo);
+            $stmtActuales->bindValue(':id_destino', $esCurso ? $id_curso_extra : $id_grupo);
             $stmtActuales->bindParam(':id_area', $id_area_academica);
             $stmtActuales->execute();
             $actuales = $stmtActuales->fetchAll(PDO::FETCH_ASSOC);
@@ -1233,12 +1247,14 @@ class TareasXSprints
 
             $stmtCrear = $db->prepare("INSERT INTO tareas_x_sprints (
                 id_tenant, id_sprint, id_actividad_academica, id_grupo, id_area_academica,
-                id_estado_tarea, fecha_registro, orden_ejecucion
+                id_curso_extra, id_estado_tarea, fecha_registro, orden_ejecucion
             ) VALUES (
                 :id_tenant, :id_sprint, :id_actividad, :id_grupo, :id_area,
-                1, NOW(), :orden
+                :id_curso_extra, 1, NOW(), :orden
             )");
             $stmtCrear->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtCrear->bindValue(':id_grupo', $esCurso ? null : $id_grupo);
+            $stmtCrear->bindValue(':id_curso_extra', $esCurso ? $id_curso_extra : null);
 
             $stmtOrden = $db->prepare("UPDATE tareas_x_sprints SET orden_ejecucion = :orden WHERE id = :id AND id_tenant = :id_tenant");
             $stmtOrden->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -1272,7 +1288,10 @@ class TareasXSprints
                     // Crear nueva tarea
                     $stmtCrear->bindValue(':id_sprint', $id_sprint);
                     $stmtCrear->bindValue(':id_actividad', $idActividad);
-                    $stmtCrear->bindValue(':id_grupo', $id_grupo);
+                    // El destino ya quedó enlazado fuera del bucle: aquí solo se
+                    // repiten los valores que cambian en cada vuelta.
+                    $stmtCrear->bindValue(':id_grupo', $esCurso ? null : $id_grupo);
+                    $stmtCrear->bindValue(':id_curso_extra', $esCurso ? $id_curso_extra : null);
                     $stmtCrear->bindValue(':id_area', $id_area_academica);
                     $stmtCrear->bindValue(':orden', $orden);
                     $stmtCrear->execute();
