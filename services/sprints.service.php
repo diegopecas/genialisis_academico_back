@@ -650,7 +650,43 @@ class Sprints
                 )
                 AND g.id_tenant = :id_tenant_g
                 AND aa.id_tenant = :id_tenant_a
-                ORDER BY g.nombre, aa.nombre
+
+                UNION ALL
+
+                -- Cursos extracurriculares. Ocupan el lugar del grupo: sus
+                -- horarios estan en horarios_cursos_extra y sus tareas se
+                -- identifican por id_curso_extra, no por id_grupo.
+                SELECT
+                    ce.id as id_grupo,
+                    ce.nombre as nombre_grupo,
+                    aa2.id as id_area,
+                    aa2.nombre as nombre_area,
+                    COALESCE((
+                        SELECT SUM(hce.total_minutos * COALESCE(dxs.total_dias, 0))
+                        FROM horarios_cursos_extra hce
+                        LEFT JOIN dias_x_sprint dxs ON hce.id_dia_semana = dxs.id_dia_semana
+                            AND dxs.id_sprint = :id_sprint_horarios_ce
+                        WHERE hce.id_curso_extra = ce.id
+                    ), 0) as minutos_disponibles,
+                    COALESCE((
+                        SELECT SUM(act.minutos_duracion)
+                        FROM tareas_x_sprints txs
+                        INNER JOIN actividades_academicas act ON txs.id_actividad_academica = act.id
+                        WHERE txs.id_sprint = :id_sprint_tareas_ce
+                            AND txs.id_curso_extra = ce.id
+                    ), 0) as minutos_usados,
+                    COALESCE((
+                        SELECT COUNT(DISTINCT txs.id)
+                        FROM tareas_x_sprints txs
+                        WHERE txs.id_sprint = :id_sprint_count_ce
+                            AND txs.id_curso_extra = ce.id
+                    ), 0) as cantidad_actividades
+                FROM cursos_extra ce
+                INNER JOIN areas_academicas aa2 ON aa2.id = ce.id_area_academica
+                WHERE ce.activo = 1
+                AND ce.id_tenant = :id_tenant_ce
+
+                ORDER BY nombre_grupo, nombre_area
             ";
 
             $sentence = $db->prepare($sql);
@@ -659,6 +695,10 @@ class Sprints
             $sentence->bindParam(':id_sprint_horarios', $id_sprint);
             $sentence->bindParam(':id_sprint_tareas', $id_sprint);
             $sentence->bindParam(':id_sprint_count', $id_sprint);
+            $sentence->bindValue(':id_tenant_ce', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindParam(':id_sprint_horarios_ce', $id_sprint);
+            $sentence->bindParam(':id_sprint_tareas_ce', $id_sprint);
+            $sentence->bindParam(':id_sprint_count_ce', $id_sprint);
             $sentence->execute();
 
             $analisis = $sentence->fetchAll();
