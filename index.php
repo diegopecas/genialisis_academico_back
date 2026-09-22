@@ -6,10 +6,14 @@ ini_set('display_startup_errors', 1);
 ini_set('max_execution_time', 300);
 error_reporting(E_ALL);
 
-// Con el servidor embebido (php -S) los errores solo llegan a la terminal si
-// pasan por error_log. display_errors los manda al navegador, no a la consola.
+// Todo error queda registrado con error_log. Con el servidor embebido (php -S)
+// se manda a la terminal, porque display_errors solo lo pinta en el navegador.
+// En producción se deja el error_log que tenga configurado el servidor (el
+// archivo de log de errores del hosting).
 ini_set('log_errors', 1);
-ini_set('error_log', 'php://stderr');
+if (PHP_SAPI === 'cli-server') {
+    ini_set('error_log', 'php://stderr');
+}
 
 date_default_timezone_set('America/Bogota');
 
