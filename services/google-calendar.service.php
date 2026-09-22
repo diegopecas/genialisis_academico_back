@@ -74,7 +74,7 @@ class GoogleCalendarService
         }
 
         $tenant = preg_replace('/[^a-z0-9\-_]/i', '', $tenant);
-        $configFile = __DIR__ . "/../config/tenants/{$tenant}.env.php";
+        $configFile = CONFIG_DIR . "/tenants/{$tenant}.env.php";
 
         if (!file_exists($configFile)) {
             self::redirigirConMensaje($tenant, 'error', 'Tenant no encontrado');

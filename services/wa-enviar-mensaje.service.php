@@ -15,7 +15,7 @@ class WaEnviarMensaje
         
         if ($config) return $config;
         
-        require_once __DIR__ . '/../config/master.env.php';
+        require_once CONFIG_DIR . '/master.env.php';
         
         $dbMaster = new PDO(DB_MASTER_DSN, DB_MASTER_USERNAME, DB_MASTER_PASSWORD, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,

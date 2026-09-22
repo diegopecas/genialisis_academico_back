@@ -6,7 +6,7 @@ class WaOnboarding
      */
     private static function getMasterDb()
     {
-        require_once __DIR__ . '/../config/master.env.php';
+        require_once CONFIG_DIR . '/master.env.php';
 
         return new PDO(DB_MASTER_DSN, DB_MASTER_USERNAME, DB_MASTER_PASSWORD, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,

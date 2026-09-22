@@ -33,6 +33,10 @@ set_time_limit(0);
 
 $raiz = dirname(__DIR__);
 
+// Carpeta de configuracion segun entorno (define CONFIG_DIR). En el cron de
+// cPanel no hay GENIALISIS_ENV, asi que usa config/.
+require_once $raiz . '/config-path.php';
+
 // -------------------------------------------------------------------
 // Argumentos
 // -------------------------------------------------------------------
@@ -56,7 +60,7 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $momento)) {
 // -------------------------------------------------------------------
 // Configuracion del tenant
 // -------------------------------------------------------------------
-$configFile = $raiz . "/config/tenants/{$tenant}.env.php";
+$configFile = CONFIG_DIR . "/tenants/{$tenant}.env.php";
 
 if (!file_exists($configFile)) {
     fwrite(STDERR, "No existe configuracion para el tenant: {$tenant}\n");
