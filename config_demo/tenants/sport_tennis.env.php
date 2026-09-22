@@ -13,7 +13,7 @@ define('DB_DSN', DB_TYPE . ':host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset
 // ID NUMÉRICO DEL TENANT (= tenants.id en la BD maestra)
 // Lo lee TenantContext::id() para aislar las filas por id_tenant.
 // ========================================
-define('TENANT_ID', 3);
+define('TENANT_ID', 101);
 
 // =============================================
 // CONFIGURACIÓN VAPID - PUSH NOTIFICATIONS
