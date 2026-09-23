@@ -8,6 +8,8 @@ class Logros
         SELECT
             l.*,
             gr.nombre AS nombre_grado,
+            l.id_nivel,
+            niv.nombre AS nombre_nivel,
             aa.nombre AS nombre_area_academica,
             ejc.nombre AS nombre_eje_curricular,
             esd.nombre AS nombre_esfera_desarrollo,
@@ -17,6 +19,8 @@ class Logros
         FROM logros l
         LEFT JOIN grados gr
             ON l.id_grado = gr.id
+        LEFT JOIN niveles_area_academica niv
+            ON l.id_nivel = niv.id
         LEFT JOIN areas_academicas aa
             ON l.id_area_academica = aa.id
         LEFT JOIN ejes_curriculares ejc
@@ -64,6 +68,9 @@ class Logros
             $id_estandar_basico = Flight::request()->data['id_estandar_basico'];
             $id_corte_academico = Flight::request()->data['id_corte_academico'];
             $nombre = Flight::request()->data['nombre'];
+            // Nivel: lo usan las areas extracurriculares en lugar del grado.
+            // Los dos conviven, uno con valor y el otro en NULL.
+            $id_nivel = Flight::request()->data['id_nivel'] ?? null;
 
             // Log para depuración
             error_log("Datos recibidos para crear logro: grado=$id_grado, area=$id_area_academica, nombre=$nombre");
@@ -71,12 +78,12 @@ class Logros
             $idNew = Uuid::generar();
             $sentence = $db->prepare("INSERT INTO logros(
                 id, id_tenant,
-                id_grado, id_area_academica, id_esfera_desarrollo, 
+                id_grado, id_nivel, id_area_academica, id_esfera_desarrollo, 
                 id_eje_curricular, id_competencia_cognitiva, id_estandar_basico, 
                 id_corte_academico, nombre
             ) VALUES (
                 :id, :id_tenant,
-                :id_grado, :id_area_academica, :id_esfera_desarrollo,
+                :id_grado, :id_nivel, :id_area_academica, :id_esfera_desarrollo,
                 :id_eje_curricular, :id_competencia_cognitiva, :id_estandar_basico,
                 :id_corte_academico, :nombre
             )");
@@ -84,7 +91,8 @@ class Logros
             // Vincular parámetros
             $sentence->bindValue(':id', $idNew);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $sentence->bindParam(':id_grado', $id_grado);
+            $sentence->bindValue(':id_grado', $id_grado ?: null);
+            $sentence->bindValue(':id_nivel', $id_nivel ?: null);
             $sentence->bindParam(':id_area_academica', $id_area_academica);
             $sentence->bindParam(':id_esfera_desarrollo', $id_esfera_desarrollo);
             $sentence->bindParam(':id_eje_curricular', $id_eje_curricular);
@@ -123,11 +131,14 @@ class Logros
             $id_estandar_basico = Flight::request()->data['id_estandar_basico'];
             $id_corte_academico = Flight::request()->data['id_corte_academico'];
             $nombre = Flight::request()->data['nombre'];
+            // Nivel: lo usan las areas extracurriculares en lugar del grado.
+            $id_nivel = Flight::request()->data['id_nivel'] ?? null;
 
             error_log("Actualizando logro ID: $id");
 
-            // Validar datos requeridos
-            if (!$id || !$id_grado || !$id_area_academica || !$nombre) {
+            // Validar datos requeridos. Tiene que venir grado o nivel, no los
+            // dos ni ninguno: la malla regular usa grado y la extracurricular nivel.
+            if (!$id || (!$id_grado && !$id_nivel) || !$id_area_academica || !$nombre) {
                 Flight::json(array('error' => 'Faltan datos obligatorios'), 400);
                 return;
             }
@@ -144,6 +155,7 @@ class Logros
 
             $sentence = $db->prepare("UPDATE logros SET 
                 id_grado = :id_grado,
+                id_nivel = :id_nivel,
                 id_area_academica = :id_area_academica,
                 id_esfera_desarrollo = :id_esfera_desarrollo,
                 id_eje_curricular = :id_eje_curricular,
@@ -156,7 +168,8 @@ class Logros
             // Vincular parámetros
             $sentence->bindParam(':id', $id);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $sentence->bindParam(':id_grado', $id_grado);
+            $sentence->bindValue(':id_grado', $id_grado ?: null);
+            $sentence->bindValue(':id_nivel', $id_nivel ?: null);
             $sentence->bindParam(':id_area_academica', $id_area_academica);
             $sentence->bindParam(':id_esfera_desarrollo', $id_esfera_desarrollo);
             $sentence->bindParam(':id_eje_curricular', $id_eje_curricular);
@@ -254,6 +267,49 @@ class Logros
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
+    }
+
+    /**
+     * Logros de un area extracurricular, con sus indicadores y su nivel.
+     *
+     * Hermano de getByGrupoAreaConIndicadores: alli los logros se filtran por
+     * el grado del grupo, y un curso extracurricular no tiene grupo. Aqui se
+     * traen todos los del area, de todos los niveles, porque una misma
+     * actividad puede amarrar indicadores de varios niveles: en la clase estan
+     * los ninos de todos los niveles al tiempo.
+     */
+    public static function getByAreaConIndicadores($id_area_academica)
+    {
+        try {
+            $db = Flight::db();
+            $sentence = $db->prepare("
+                SELECT
+                    l.id,
+                    l.nombre,
+                    l.id_nivel,
+                    niv.nombre AS nombre_nivel,
+                    niv.orden AS orden_nivel,
+                    l.id_corte_academico,
+                    cac.nombre AS nombre_corte_academico,
+                    il.id AS id_indicador_logro,
+                    il.nombre AS nombre_indicador
+                FROM logros l
+                LEFT JOIN niveles_area_academica niv ON l.id_nivel = niv.id
+                LEFT JOIN cortes_academicos cac ON l.id_corte_academico = cac.id
+                LEFT JOIN indicadores_logros il ON il.id_logro = l.id
+                WHERE l.id_area_academica = :id_area_academica
+                AND l.id_tenant = :id_tenant
+                ORDER BY niv.orden, cac.orden, l.nombre, il.nombre
+            ");
+            $sentence->bindParam(':id_area_academica', $id_area_academica);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->execute();
+            $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
+            Flight::json($response);
+        } catch (Exception $e) {
+            error_log("Error en getByAreaConIndicadores: " . $e->getMessage());
+            Flight::json(['error' => 'Error al obtener los logros del area'], 500);
+        }
     }
 
     public static function getByGrupoAndArea($id_grupo, $id_area_academica)

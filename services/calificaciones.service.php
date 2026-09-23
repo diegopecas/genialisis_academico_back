@@ -143,10 +143,16 @@ class Calificaciones
                     ELSE 0
                 END as presente,
                 txse.id as id_tarea_estudiante,
-                txse.observacion
+                txse.observacion,
+                -- Nivel del estudiante dentro del curso: es contra lo que
+                -- apuntan los logros que le aplican en la clase.
+                exce.id_nivel,
+                niv.nombre as nombre_nivel,
+                niv.orden as orden_nivel
             FROM estudiantes_x_cursos_extra exce
             INNER JOIN estudiantes e ON exce.id_estudiante = e.id
             INNER JOIN personas p ON e.id_persona = p.id
+            LEFT JOIN niveles_area_academica niv ON exce.id_nivel = niv.id
             LEFT JOIN asistencia_estudiantes ae 
                 ON ae.id_estudiante = e.id 
                 AND DATE(ae.fecha_ingreso) = CURDATE() 

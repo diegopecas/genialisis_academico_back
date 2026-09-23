@@ -31,6 +31,9 @@ Flight::route('GET /logros-grupo/@id_grupo', [Logros::class, 'getByGrupo']);
 Flight::route('GET /logros-area/@id_area_academica', [Logros::class, 'getByAreaAcademica']);
 Flight::route('GET /logros-grupo-area/@id_grupo/@id_area_academica', [Logros::class, 'getByGrupoAndArea']);
 Flight::route('GET /logros-grupo-area-indicadores/@id_grupo/@id_area_academica', [Logros::class, 'getByGrupoAreaConIndicadores']);
+// Logros de un area extracurricular: van por nivel, no por grado, asi que no
+// se filtran por grupo.
+Flight::route('GET /logros-area-indicadores/@id_area_academica', [Logros::class, 'getByAreaConIndicadores']);
 Flight::route('GET /logros/corte/@id_corte_academico', [Logros::class, 'getByCorteAcademico']);
 // Análisis de logros
 Flight::route('GET /logros/analisis/sprint/@id_sprint', [Logros::class, 'getAnalisisLogrosParaSprint']);

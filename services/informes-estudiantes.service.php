@@ -705,6 +705,136 @@ class InformesEstudiantes
     }
 
     // =================================================================
+    // PORTAL DE PADRES
+    //
+    // El acudiente solo ve informes confirmados y con el corte autorizado
+    // para ese estudiante. El sprint no se mira: el boletin cuelga del
+    // corte, no de un sprint.
+    // =================================================================
+
+    /**
+     * Cortes con informe disponible para el acudiente.
+     *
+     * Se valida que el estudiante sea suyo antes de devolver nada.
+     */
+    public static function getDisponiblesAcudiente($id_persona, $id_estudiante)
+    {
+        $db = Flight::db();
+        $idTenant = TenantContext::id();
+
+        if (!Acudientes::esEstudianteDelAcudiente($db, $id_persona, $id_estudiante)) {
+            Flight::json(array('error' => 'No tiene acceso a la información de este estudiante'), 403);
+            return;
+        }
+
+        $sentence = $db->prepare("
+            SELECT i.id AS id_informe,
+                   i.id_corte_academico,
+                   c.nombre AS nombre_corte,
+                   c.orden AS orden_corte,
+                   c.fecha_inicio,
+                   c.fecha_fin,
+                   i.fecha_confirmacion,
+                   g.nombre AS nombre_grupo
+            FROM informes_estudiantes i
+            INNER JOIN cortes_academicos c ON i.id_corte_academico = c.id
+            INNER JOIN autorizaciones_informes_estudiantes a
+                    ON a.id_estudiante = i.id_estudiante
+                   AND a.id_corte_academico = i.id_corte_academico
+                   AND a.id_tenant = i.id_tenant
+                   AND a.autorizado = 1
+            LEFT JOIN grupos g ON i.id_grupo = g.id
+            WHERE i.id_estudiante = :id_estudiante
+              AND i.id_tenant = :id_tenant
+              AND i.estado IN ('confirmado', 'publicado')
+            ORDER BY c.orden");
+        $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+        $sentence->execute();
+        Flight::json($sentence->fetchAll());
+    }
+
+    /**
+     * Informe completo para el acudiente: maestro, secciones y filas.
+     *
+     * Repite las tres validaciones a proposito, porque este endpoint se
+     * puede llamar directo sin pasar por el listado.
+     */
+    public static function getInformeAcudiente($id_persona, $id_estudiante, $id_corte)
+    {
+        $db = Flight::db();
+        $idTenant = TenantContext::id();
+
+        if (!Acudientes::esEstudianteDelAcudiente($db, $id_persona, $id_estudiante)) {
+            Flight::json(array('error' => 'No tiene acceso a la información de este estudiante'), 403);
+            return;
+        }
+
+        $sentence = $db->prepare("
+            SELECT i.*, g.nombre AS nombre_grupo,
+                   c.nombre AS nombre_corte,
+                   TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_estudiante
+            FROM informes_estudiantes i
+            INNER JOIN cortes_academicos c ON i.id_corte_academico = c.id
+            INNER JOIN autorizaciones_informes_estudiantes a
+                    ON a.id_estudiante = i.id_estudiante
+                   AND a.id_corte_academico = i.id_corte_academico
+                   AND a.id_tenant = i.id_tenant
+                   AND a.autorizado = 1
+            LEFT JOIN grupos g ON i.id_grupo = g.id
+            INNER JOIN estudiantes e ON i.id_estudiante = e.id
+            INNER JOIN personas p ON e.id_persona = p.id
+            WHERE i.id_estudiante = :id_estudiante
+              AND i.id_corte_academico = :id_corte
+              AND i.id_tenant = :id_tenant
+              AND i.estado IN ('confirmado', 'publicado')");
+        $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindParam(':id_corte', $id_corte);
+        $sentence->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+        $sentence->execute();
+        $maestro = $sentence->fetch();
+
+        if (!$maestro) {
+            Flight::json(array('informe' => null, 'secciones' => array()));
+            return;
+        }
+
+        // Se devuelve tambien la configuracion y la escala para que el portal
+        // de padres no tenga que llamar endpoints del institucional.
+        $cfg = $db->prepare("
+            SELECT id_parametro_evaluacion, muestra_ausencias, titulo_informe,
+                   encabezado, pie_pagina, firma_uno, firma_dos, firma_acudiente,
+                   estilo_marca, simbolo_marca, color_principal, mostrar_convencion
+            FROM informes_configuracion
+            WHERE id_tenant = :id_tenant
+            LIMIT 1");
+        $cfg->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+        $cfg->execute();
+        $configuracion = $cfg->fetch();
+
+        $valores = array();
+        if ($configuracion && $configuracion['id_parametro_evaluacion']) {
+            $qv = $db->prepare("
+                SELECT id, valor_cuantitativo, valor_cualitativo, icono, color, orden
+                FROM valores_parametros_calificaciones
+                WHERE id_parametros_calificaciones = :id_parametro
+                  AND id_tenant = :id_tenant
+                ORDER BY orden, valor_cuantitativo");
+            $qv->bindValue(':id_parametro', $configuracion['id_parametro_evaluacion']);
+            $qv->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $qv->execute();
+            $valores = $qv->fetchAll();
+        }
+
+        Flight::json(array(
+            'informe'       => $maestro,
+            'secciones'     => self::armarSecciones($maestro['id'], $id_estudiante, $id_corte, $idTenant),
+            'configuracion' => $configuracion ? $configuracion : null,
+            'valores'       => $valores
+        ));
+    }
+
+    // =================================================================
     // PRIVADOS
     // =================================================================
 

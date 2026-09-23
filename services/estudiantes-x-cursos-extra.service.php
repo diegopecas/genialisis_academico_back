@@ -5,13 +5,14 @@ class EstudiantesXCursosExtra
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente,
+        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente, exce.id_nivel, niv.nombre AS nombre_nivel,
         CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo,
         ce.nombre AS nombre_curso
         FROM estudiantes_x_cursos_extra exce
         INNER JOIN estudiantes e ON exce.id_estudiante = e.id
         INNER JOIN personas p ON e.id_persona = p.id
         INNER JOIN cursos_extra ce ON exce.id_curso_extra = ce.id
+        LEFT JOIN niveles_area_academica niv ON exce.id_nivel = niv.id
         WHERE exce.id_tenant = :id_tenant
         ORDER BY p.primer_apellido, p.primer_nombre");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -23,13 +24,14 @@ class EstudiantesXCursosExtra
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente,
+        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente, exce.id_nivel, niv.nombre AS nombre_nivel,
         CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo,
         ce.nombre AS nombre_curso
         FROM estudiantes_x_cursos_extra exce
         INNER JOIN estudiantes e ON exce.id_estudiante = e.id
         INNER JOIN personas p ON e.id_persona = p.id
         INNER JOIN cursos_extra ce ON exce.id_curso_extra = ce.id
+        LEFT JOIN niveles_area_academica niv ON exce.id_nivel = niv.id
         WHERE exce.id = :id AND exce.id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -41,7 +43,7 @@ class EstudiantesXCursosExtra
     public static function getByCurso($id_curso_extra)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente,
+        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente, exce.id_nivel, niv.nombre AS nombre_nivel,
         CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo,
         CASE
             WHEN pi.razon_social IS NOT NULL AND pi.razon_social != '' THEN pi.razon_social
@@ -51,6 +53,7 @@ class EstudiantesXCursosExtra
         INNER JOIN estudiantes e ON exce.id_estudiante = e.id
         INNER JOIN personas p ON e.id_persona = p.id
         LEFT JOIN instituciones_cliente ic ON exce.id_institucion_cliente = ic.id
+        LEFT JOIN niveles_area_academica niv ON exce.id_nivel = niv.id
         LEFT JOIN personas pi ON ic.id_persona = pi.id AND pi.id_tenant = ic.id_tenant
         WHERE exce.id_curso_extra = :id_curso_extra AND exce.id_tenant = :id_tenant
         ORDER BY p.primer_apellido, p.primer_nombre");
@@ -64,10 +67,11 @@ class EstudiantesXCursosExtra
     public static function getByEstudiante($id_estudiante)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente,
+        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente, exce.id_nivel, niv.nombre AS nombre_nivel,
         ce.nombre AS nombre_curso
         FROM estudiantes_x_cursos_extra exce
         INNER JOIN cursos_extra ce ON exce.id_curso_extra = ce.id
+        LEFT JOIN niveles_area_academica niv ON exce.id_nivel = niv.id
         WHERE exce.id_estudiante = :id_estudiante AND exce.id_tenant = :id_tenant
         ORDER BY exce.anio DESC, ce.nombre");
         $sentence->bindParam(':id_estudiante', $id_estudiante);
@@ -103,6 +107,15 @@ class EstudiantesXCursosExtra
             $id_institucion_cliente = null;
         }
 
+        // Nivel del estudiante dentro del curso. Va en la inscripcion y no en el
+        // curso para que pueda subir de nivel sin cambiar de curso. Opcional:
+        // un curso sin malla por niveles no lo necesita.
+        $id_nivel = isset(Flight::request()->data['id_nivel'])
+            ? Flight::request()->data['id_nivel'] : null;
+        if (empty($id_nivel)) {
+            $id_nivel = null;
+        }
+
         $error = self::validarInscripcion($db, $id_estudiante, $id_curso_extra, $fecha_inscripcion, $id_institucion_cliente);
         if ($error !== null) {
             Flight::json(array('error' => $error), 400);
@@ -110,8 +123,8 @@ class EstudiantesXCursosExtra
         }
 
         $idNew = Uuid::generar();
-        $sentence = $db->prepare("INSERT INTO estudiantes_x_cursos_extra(id, id_tenant, id_estudiante, id_curso_extra, fecha_inscripcion, anio, activo, id_institucion_cliente) 
-        VALUES (:id, :id_tenant, :id_estudiante, :id_curso_extra, :fecha_inscripcion, :anio, 1, :id_institucion_cliente)");
+        $sentence = $db->prepare("INSERT INTO estudiantes_x_cursos_extra(id, id_tenant, id_estudiante, id_curso_extra, fecha_inscripcion, anio, activo, id_institucion_cliente, id_nivel) 
+        VALUES (:id, :id_tenant, :id_estudiante, :id_curso_extra, :fecha_inscripcion, :anio, 1, :id_institucion_cliente, :id_nivel)");
         $sentence->bindValue(':id', $idNew);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':id_estudiante', $id_estudiante);
@@ -119,6 +132,7 @@ class EstudiantesXCursosExtra
         $sentence->bindParam(':fecha_inscripcion', $fecha_inscripcion);
         $sentence->bindParam(':anio', $anio, PDO::PARAM_INT);
         $sentence->bindValue(':id_institucion_cliente', $id_institucion_cliente);
+        $sentence->bindValue(':id_nivel', $id_nivel);
         $sentence->execute();
         $id = $idNew;
         Flight::json(array('id' => $id));

@@ -18,3 +18,8 @@ Flight::route('PUT /informes-estudiantes/guardar',          [InformesEstudiantes
 Flight::route('PUT /informes-estudiantes/guardar-masivo',   [InformesEstudiantes::class, 'guardarMasivo']);
 Flight::route('PUT /informes-estudiantes/confirmar',        [InformesEstudiantes::class, 'confirmar']);
 Flight::route('PUT /informes-estudiantes/reabrir',          [InformesEstudiantes::class, 'reabrir']);
+
+// ----- Portal de padres -----
+// El acudiente solo ve informes confirmados y con el corte autorizado.
+Flight::route('GET /informes-estudiantes/acudiente/@id_persona/estudiante/@id_estudiante', [InformesEstudiantes::class, 'getDisponiblesAcudiente']);
+Flight::route('GET /informes-estudiantes/acudiente/@id_persona/estudiante/@id_estudiante/corte/@id_corte', [InformesEstudiantes::class, 'getInformeAcudiente']);
