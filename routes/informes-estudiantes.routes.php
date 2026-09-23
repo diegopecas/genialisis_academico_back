@@ -7,6 +7,12 @@
 Flight::route('GET /informes-estudiantes/grupo/@id_grupo/corte/@id_corte', [InformesEstudiantes::class, 'getEstadoPorGrupo']);
 Flight::route('GET /informes-estudiantes/estudiante/@id_estudiante/corte/@id_corte', [InformesEstudiantes::class, 'getByEstudianteCorte']);
 
+// ----- Estudiantes con informe en un corte (pantalla de autorización) -----
+Flight::route('GET /informes-estudiantes/con-informe/corte/@id_corte', [InformesEstudiantes::class, 'getConInformePorCorte']);
+
+// ----- Grupo completo en una sola consulta -----
+Flight::route('GET /informes-estudiantes/grupo-completo/@id_grupo/corte/@id_corte', [InformesEstudiantes::class, 'getGrupoCompleto']);
+
 // ----- Vista masiva por sección -----
 Flight::route('GET /informes-estudiantes/secciones-grupo/@id_grupo', [InformesEstudiantes::class, 'getSeccionesPorGrupo']);
 Flight::route('GET /informes-estudiantes/seccion-grupo/@id_grupo/corte/@id_corte/seccion/@id_seccion', [InformesEstudiantes::class, 'getSeccionPorGrupo']);

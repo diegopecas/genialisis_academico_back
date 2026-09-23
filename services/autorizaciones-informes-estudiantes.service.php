@@ -96,7 +96,17 @@ class AutorizacionesInformesEstudiantes
                         WHERE a.id_tenant = ca.id_tenant
                             AND a.id_corte_academico = ca.id
                             AND a.autorizado = 1
-                    ) AS total_autorizados
+                    ) AS total_autorizados,
+                    (
+                        -- Informes del modulo nuevo listos para publicar. El
+                        -- boletin nuevo cuelga del corte y no de un sprint,
+                        -- asi que este es el criterio que lo habilita.
+                        SELECT COUNT(*)
+                        FROM informes_estudiantes i
+                        WHERE i.id_tenant = ca.id_tenant
+                            AND i.id_corte_academico = ca.id
+                            AND i.estado IN ('confirmado', 'publicado')
+                    ) AS total_informes_confirmados
                 FROM cortes_academicos ca
                 LEFT JOIN sprints si
                     ON si.id_corte_academico = ca.id

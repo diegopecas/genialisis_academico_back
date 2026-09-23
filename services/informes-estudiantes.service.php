@@ -704,6 +704,98 @@ class InformesEstudiantes
         }
     }
 
+    /**
+     * Estudiantes que ya tienen informe del módulo nuevo en un corte.
+     *
+     * La pantalla de autorización la usa para saber cuál botón mostrar: el
+     * boletín nuevo o el informe viejo del sprint.
+     */
+    public static function getConInformePorCorte($id_corte)
+    {
+        $db = Flight::db();
+
+        $sentence = $db->prepare("
+            SELECT i.id_estudiante, i.id AS id_informe, i.estado
+            FROM informes_estudiantes i
+            WHERE i.id_corte_academico = :id_corte
+              AND i.id_tenant = :id_tenant");
+        $sentence->bindParam(':id_corte', $id_corte);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        Flight::json($sentence->fetchAll());
+    }
+
+    /**
+     * Todos los informes del grupo en un corte, con sus secciones y filas.
+     *
+     * Una sola consulta para toda la pantalla: con esto el front no vuelve
+     * al servidor al cambiar de estudiante, de vista o de sección. Un grupo
+     * de veinte niños con cuarenta filas cada uno son ochocientas filas,
+     * que pesan mucho menos que una peticion por cada clic.
+     */
+    public static function getGrupoCompleto($id_grupo, $id_corte)
+    {
+        $db = Flight::db();
+        $idTenant = TenantContext::id();
+
+        // Estudiantes del grupo con su informe
+        $st = $db->prepare("
+            SELECT e.id AS id_estudiante,
+                   TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_completo,
+                   i.id AS id_informe,
+                   COALESCE(i.estado, 'sin_generar') AS estado,
+                   i.texto_cierre,
+                   i.ausencias,
+                   i.fecha_generacion,
+                   i.fecha_confirmacion,
+                   g.nombre AS nombre_grupo
+            FROM estudiantes_x_grupos eg
+            INNER JOIN estudiantes e ON eg.id_estudiante = e.id
+            INNER JOIN personas p ON e.id_persona = p.id
+            LEFT JOIN grupos g ON eg.id_grupo = g.id
+            LEFT JOIN informes_estudiantes i
+                   ON i.id_estudiante = e.id
+                  AND i.id_corte_academico = :id_corte
+                  AND i.id_tenant = :id_tenant_informe
+            WHERE eg.id_grupo = :id_grupo
+              AND eg.activo = 1
+              AND e.activo = 1
+              AND eg.id_tenant = :id_tenant
+            ORDER BY p.primer_apellido, p.segundo_apellido, p.primer_nombre");
+        $st->bindParam(':id_grupo', $id_grupo);
+        $st->bindParam(':id_corte', $id_corte);
+        $st->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+        $st->bindValue(':id_tenant_informe', $idTenant, PDO::PARAM_INT);
+        $st->execute();
+        $estudiantes = $st->fetchAll();
+
+        foreach ($estudiantes as $k => $est) {
+            $estudiantes[$k]['secciones'] = $est['id_informe']
+                ? self::armarSecciones($est['id_informe'], $est['id_estudiante'], $id_corte, $idTenant)
+                : array();
+
+            // Solo cuentan las secciones que se califican: las informativas
+            // listan sus filas pero no llevan marca.
+            $total = 0;
+            $calificadas = 0;
+            foreach ($estudiantes[$k]['secciones'] as $sec) {
+                if ($sec['se_califica'] != 1) {
+                    continue;
+                }
+                foreach ($sec['filas'] as $fila) {
+                    $total++;
+                    if ($fila['id_valor_parametro'] !== null) {
+                        $calificadas++;
+                    }
+                }
+            }
+            $estudiantes[$k]['filas_total'] = $total;
+            $estudiantes[$k]['filas_calificadas'] = $calificadas;
+        }
+
+        Flight::json($estudiantes);
+    }
+
     // =================================================================
     // PORTAL DE PADRES
     //
