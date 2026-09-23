@@ -856,7 +856,7 @@ class InformesEstudiantes
         $id_grado = $fila ? $fila['id_grado'] : null;
 
         // Secciones aplicables: las del jardín, sin grado o del grado del estudiante
-        $st = $db->prepare("SELECT id, tipo_origen, id_origen, se_califica
+        $st = $db->prepare("SELECT id, tipo_origen, id_origen, se_califica, requiere_inscripcion
                             FROM informes_secciones
                             WHERE id_tenant = :id_tenant AND activo = 1
                               AND (id_grado IS NULL OR id_grado = :id_grado)
@@ -879,18 +879,56 @@ class InformesEstudiantes
                 if ($sec['id_origen'] === null) {
                     continue; // sección sin origen definido todavía
                 }
-                $campo = $sec['tipo_origen'] === 'esfera' ? 'id_esfera_desarrollo' : 'id_area_academica';
-                $q = $db->prepare("SELECT id FROM logros
-                                   WHERE id_tenant = :id_tenant
-                                     AND $campo = :id_origen
-                                     AND id_corte_academico = :id_corte
-                                     AND (:id_grado_nulo IS NULL OR id_grado = :id_grado)
-                                   ORDER BY nombre");
-                $q->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
-                $q->bindValue(':id_origen', $sec['id_origen']);
-                $q->bindValue(':id_corte', $id_corte);
-                $q->bindValue(':id_grado', $id_grado);
-                $q->bindValue(':id_grado_nulo', $id_grado);
+
+                // Un área extracurricular no cuelga de un grado sino de un
+                // nivel, y el nivel vive en la inscripción del estudiante al
+                // curso. Por eso se resuelve aparte.
+                $id_nivel = null;
+                $esExtracurricular = false;
+
+                if ($sec['tipo_origen'] === 'area') {
+                    $esExtracurricular = self::esAreaExtracurricular($db, $sec['id_origen'], $idTenant);
+
+                    if ($esExtracurricular) {
+                        $id_nivel = self::nivelDelEstudianteEnArea($db, $id_estudiante, $sec['id_origen'], $idTenant);
+
+                        // Sin inscripción no hay nada que calificar: la
+                        // sección no aparece en el informe de ese niño.
+                        if ($id_nivel === false && $sec['requiere_inscripcion'] == 1) {
+                            continue;
+                        }
+                    }
+                }
+
+                if ($esExtracurricular) {
+                    // Por nivel. Si el estudiante está inscrito pero sin nivel
+                    // asignado, se traen los logros del área sin filtrar.
+                    $q = $db->prepare("SELECT id FROM logros
+                                       WHERE id_tenant = :id_tenant
+                                         AND id_area_academica = :id_origen
+                                         AND id_corte_academico = :id_corte
+                                         AND (:id_nivel_nulo IS NULL OR id_nivel = :id_nivel)
+                                       ORDER BY nombre");
+                    $q->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                    $q->bindValue(':id_origen', $sec['id_origen']);
+                    $q->bindValue(':id_corte', $id_corte);
+                    $q->bindValue(':id_nivel', $id_nivel ? $id_nivel : null);
+                    $q->bindValue(':id_nivel_nulo', $id_nivel ? $id_nivel : null);
+                } else {
+                    $campo = $sec['tipo_origen'] === 'esfera' ? 'id_esfera_desarrollo' : 'id_area_academica';
+                    $q = $db->prepare("SELECT id FROM logros
+                                       WHERE id_tenant = :id_tenant
+                                         AND $campo = :id_origen
+                                         AND id_corte_academico = :id_corte
+                                         AND (:id_grado_nulo IS NULL OR id_grado = :id_grado)
+                                       ORDER BY nombre");
+                    $q->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+                    $q->bindValue(':id_origen', $sec['id_origen']);
+                    $q->bindValue(':id_corte', $id_corte);
+                    $q->bindValue(':id_grado', $id_grado);
+                    $q->bindValue(':id_grado_nulo', $id_grado);
+                }
+
                 $q->execute();
                 foreach ($q->fetchAll() as $r) {
                     $filas[] = array('tipo' => 'logro', 'id' => $r['id']);
@@ -924,6 +962,63 @@ class InformesEstudiantes
         }
 
         return $creadas;
+    }
+
+    /**
+     * True si el área está marcada como extracurricular.
+     *
+     * Un área extracurricular no se asigna a grupos y su malla cuelga de un
+     * nivel, no de un grado.
+     */
+    private static function esAreaExtracurricular($db, $id_area, $idTenant)
+    {
+        $st = $db->prepare("SELECT es_extracurricular FROM areas_academicas
+                            WHERE id = :id_area AND id_tenant = :id_tenant");
+        $st->bindValue(':id_area', $id_area);
+        $st->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+        $st->execute();
+        $fila = $st->fetch();
+
+        return $fila && (int) $fila['es_extracurricular'] === 1;
+    }
+
+    /**
+     * Nivel del estudiante en los cursos de esa área.
+     *
+     * El nivel vive en la inscripción y no en el curso, para que un niño
+     * suba de nivel sin cambiar de curso. Un mismo curso tiene niños en
+     * niveles distintos y a cada uno le aplican logros distintos.
+     *
+     * Devuelve false si no está inscrito, y null si lo está pero sin nivel
+     * asignado: son dos casos diferentes, porque sin inscripción la sección
+     * no debe aparecer y sin nivel se muestran todos los logros del área.
+     *
+     * @return string|null|false
+     */
+    private static function nivelDelEstudianteEnArea($db, $id_estudiante, $id_area, $idTenant)
+    {
+        $st = $db->prepare("
+            SELECT exc.id_nivel
+            FROM estudiantes_x_cursos_extra exc
+            INNER JOIN cursos_extra ce ON exc.id_curso_extra = ce.id
+            WHERE exc.id_estudiante = :id_estudiante
+              AND ce.id_area_academica = :id_area
+              AND exc.activo = 1
+              AND ce.activo = 1
+              AND exc.id_tenant = :id_tenant
+            ORDER BY exc.fecha_inscripcion DESC
+            LIMIT 1");
+        $st->bindValue(':id_estudiante', $id_estudiante);
+        $st->bindValue(':id_area', $id_area);
+        $st->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+        $st->execute();
+        $fila = $st->fetch();
+
+        if (!$fila) {
+            return false;
+        }
+
+        return $fila['id_nivel'];
     }
 
     /**
