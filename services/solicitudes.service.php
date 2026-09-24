@@ -298,6 +298,8 @@ class Solicitudes
 
         // Los avisos van fuera de la transaccion: si el push falla, la
         // solicitud ya quedo guardada y no tiene por que perderse.
+        MotorSolicitudesAvisos::avisarNueva($db, $id, $idUsuario);
+
         if ($idEstado === self::ESTADO_PENDIENTE) {
             MotorSolicitudesAvisos::avisarPorAprobar($db, $id);
         }

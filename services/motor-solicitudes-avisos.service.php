@@ -3,8 +3,12 @@
 SERVICIO - MOTOR DE AVISOS DE SOLICITUDES
 Archivo: services/motor-solicitudes-avisos.service.php
 
-Arma los tres avisos del modulo:
+Arma los cuatro avisos del modulo:
 
+  0. Al responsable, apenas se crea la solicitud (institucional). Es el
+     unico que sale siempre, sin importar si la solicitud nacio pendiente
+     o autorizada: la docente tiene que enterarse del compromiso desde
+     que el papa lo manda.
   1. Al aprobador, cuando entra una solicitud pendiente (institucional).
   2. Al responsable, X minutos antes de cada ocurrencia (institucional).
      Lo dispara el cron; la ocurrencia guarda la notificacion que se creo
@@ -24,6 +28,64 @@ class MotorSolicitudesAvisos
 {
     /** Categoria bajo la que viajan al portal de padres estos avisos. */
     const CODIGO_CATEGORIA = 'GENERAL';
+
+    /**
+     * Avisa a los responsables que acaba de entrar una solicitud.
+     *
+     * Sale siempre que se crea, este pendiente o autorizada. El aviso de
+     * aprobacion no reemplaza a este: va a otras personas (los aprobadores)
+     * y no existe cuando el tipo no exige aprobacion.
+     *
+     * A quien la registro no se le avisa: ya sabe que la creo.
+     *
+     * @param  PDO    $db
+     * @param  string $idSolicitud
+     * @param  string $idUsuarioRegistra Usuario que creo la solicitud, o null
+     * @return bool   true si se creo el aviso
+     */
+    public static function avisarNueva(PDO $db, $idSolicitud, $idUsuarioRegistra = null)
+    {
+        try {
+            $solicitud = self::obtenerSolicitud($db, $idSolicitud);
+
+            if (!$solicitud) {
+                return false;
+            }
+
+            $destinatarios = SolicitudesPersonas::listarPorRol($db, $idSolicitud, SolicitudesPersonas::ROL_RESPONSABLE);
+
+            if ($idUsuarioRegistra !== null) {
+                $destinatarios = array_values(array_filter($destinatarios, function ($destinatario) use ($idUsuarioRegistra) {
+                    return empty($destinatario['id_usuario']) || $destinatario['id_usuario'] !== $idUsuarioRegistra;
+                }));
+            }
+
+            if (count($destinatarios) === 0) {
+                error_log('[MotorSolicitudesAvisos] Solicitud ' . $idSolicitud . ' creada sin responsables a quien avisar.');
+                return false;
+            }
+
+            $titulo = 'Nueva solicitud: ' . $solicitud['tipo_nombre'];
+            $cuerpo = $solicitud['estudiante_nombre'] . ' - ' . $solicitud['descripcion']
+                    . self::textoVigencia($solicitud)
+                    . self::textoOrigen($solicitud);
+
+            $id = NotificacionesColaboradores::crear(
+                $db,
+                NotificacionesColaboradores::TIPO_SOLICITUD_NUEVA,
+                $titulo,
+                $cuerpo,
+                $idSolicitud,
+                $destinatarios,
+                null
+            );
+
+            return $id !== null;
+        } catch (Exception $e) {
+            error_log('[MotorSolicitudesAvisos::avisarNueva] ' . $e->getMessage());
+            return false;
+        }
+    }
 
     /**
      * Avisa a los aprobadores que hay una solicitud esperando.
@@ -342,13 +404,15 @@ class MotorSolicitudesAvisos
     private static function obtenerSolicitud(PDO $db, $idSolicitud)
     {
         $sentence = $db->prepare("SELECT s.id, s.descripcion, s.id_estudiante, s.id_persona_solicita,
-                                         s.fecha_inicio, s.fecha_fin,
+                                         s.fecha_inicio, s.fecha_fin, s.id_origen,
+                                         o.nombre AS origen_nombre,
                                          t.nombre AS tipo_nombre,
                                          TRIM(CONCAT(COALESCE(pes.primer_nombre, ''), ' ', COALESCE(pes.primer_apellido, ''))) AS estudiante_nombre
                                   FROM solicitudes s
-                                  INNER JOIN tipos_solicitud t ON t.id = s.id_tipo_solicitud
-                                  INNER JOIN estudiantes est   ON est.id = s.id_estudiante
-                                  INNER JOIN personas pes      ON pes.id = est.id_persona
+                                  INNER JOIN tipos_solicitud t    ON t.id = s.id_tipo_solicitud
+                                  INNER JOIN origenes_solicitud o ON o.id = s.id_origen
+                                  INNER JOIN estudiantes est      ON est.id = s.id_estudiante
+                                  INNER JOIN personas pes         ON pes.id = est.id_persona
                                   WHERE s.id = :id AND s.id_tenant = :id_tenant");
         $sentence->bindValue(':id', $idSolicitud);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -385,6 +449,19 @@ class MotorSolicitudesAvisos
         }
 
         return ' (del ' . $solicitud['fecha_inicio'] . ' al ' . $solicitud['fecha_fin'] . ')';
+    }
+
+    /**
+     * De quien viene la solicitud, para que la docente sepa de una si la
+     * escribio el papa o alguien del jardin.
+     */
+    private static function textoOrigen($solicitud)
+    {
+        if (empty($solicitud['origen_nombre'])) {
+            return '';
+        }
+
+        return ' - Enviada por: ' . $solicitud['origen_nombre'];
     }
 
     private static function generarPreview($cuerpo)

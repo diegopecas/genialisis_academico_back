@@ -569,31 +569,96 @@ PROMPT;
 
     private static function llamarIA($config, $prompt)
     {
-        $gemini_key = $config['gemini_api_key'] ?? null;
-        if ($gemini_key) {
-            $resultado = self::llamarGemini($gemini_key, $prompt);
-            if ($resultado['success']) {
-                return ["success" => true, "respuesta" => $resultado['respuesta'], "proveedor" => "gemini"];
-            }
-            error_log("IaMaquinaActividades - Gemini falló: " . ($resultado['error'] ?? 'desconocido'));
+        // Cadena de proveedores (mismo formato que ia_chat_cadena e ia_vision_cadena):
+        // "proveedor|modelo;proveedor|modelo". Se prueba en orden y se cae al
+        // siguiente si el proveedor falla. Asi el modelo se cambia por tenant sin
+        // tocar codigo (p.ej. cuando Google retira un modelo para cuentas nuevas).
+        // 'gemini' usa la llave gratis (gemini_api_key) y 'gemini_pago' la paga
+        // (gemini_pago_api_key): la paga queda de respaldo para cuando la gratis
+        // responda 503 por alta demanda o se le acabe la cuota.
+        $cadenaRaw = isset($config['ia_actividades_cadena']) ? trim($config['ia_actividades_cadena']) : '';
+        $pasos = self::parsearCadena($cadenaRaw);
+
+        if (empty($pasos)) {
+            error_log("IaMaquinaActividades: no hay cadena de proveedores configurada (ia_actividades_cadena)");
+            return ["success" => false, "error" => "No hay proveedores de IA configurados"];
         }
 
-        $groq_key = $config['groq_api_key'] ?? null;
-        if ($groq_key) {
-            $resultado = self::llamarGroq($groq_key, $prompt);
-            if ($resultado['success']) {
-                return ["success" => true, "respuesta" => $resultado['respuesta'], "proveedor" => "groq"];
+        foreach ($pasos as $paso) {
+            $proveedor = $paso['proveedor'];
+            $modelo = $paso['modelo'];
+            $resultado = null;
+
+            if ($proveedor === 'gemini') {
+                $key = $config['gemini_api_key'] ?? null;
+                if (!$key) {
+                    error_log("IaMaquinaActividades - se salta 'gemini': falta gemini_api_key");
+                    continue;
+                }
+                $resultado = self::llamarGemini($key, $modelo, $prompt);
+            } elseif ($proveedor === 'gemini_pago') {
+                $key = $config['gemini_pago_api_key'] ?? null;
+                if (!$key) {
+                    error_log("IaMaquinaActividades - se salta 'gemini_pago': falta gemini_pago_api_key");
+                    continue;
+                }
+                $resultado = self::llamarGemini($key, $modelo, $prompt);
+            } elseif ($proveedor === 'groq') {
+                $key = $config['groq_api_key'] ?? null;
+                if (!$key) {
+                    error_log("IaMaquinaActividades - se salta 'groq': falta groq_api_key");
+                    continue;
+                }
+                $resultado = self::llamarGroq($key, $modelo, $prompt);
+            } else {
+                error_log("IaMaquinaActividades - proveedor no soportado en la cadena: {$proveedor}");
+                continue;
             }
-            error_log("IaMaquinaActividades - Groq falló: " . ($resultado['error'] ?? 'desconocido'));
+
+            if (!empty($resultado['success'])) {
+                return ["success" => true, "respuesta" => $resultado['respuesta'], "proveedor" => $proveedor];
+            }
+            error_log("IaMaquinaActividades - {$proveedor} ({$modelo}) falló: " . ($resultado['error'] ?? 'desconocido'));
         }
 
         return ["success" => false, "error" => "No hay proveedores de IA disponibles"];
     }
 
-    private static function llamarGemini($api_key, $prompt)
+    /**
+     * Parsea "proveedor|modelo;proveedor|modelo" a una lista ordenada de pasos.
+     * Ignora trozos vacíos o mal formados.
+     */
+    private static function parsearCadena($cadena)
+    {
+        $pasos = [];
+        if (trim($cadena) === '') {
+            return $pasos;
+        }
+        foreach (explode(';', $cadena) as $trozo) {
+            $trozo = trim($trozo);
+            if ($trozo === '') {
+                continue;
+            }
+            $partes = explode('|', $trozo, 2);
+            if (count($partes) !== 2) {
+                continue;
+            }
+            $proveedor = strtolower(trim($partes[0]));
+            $modelo = trim($partes[1]);
+            if ($proveedor === '' || $modelo === '') {
+                continue;
+            }
+            $pasos[] = ['proveedor' => $proveedor, 'modelo' => $modelo];
+        }
+        return $pasos;
+    }
+
+    private static function llamarGemini($api_key, $modelo, $prompt)
     {
         try {
-            $url = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=" . $api_key;
+            // v1beta expone todos los modelos (los nuevos no siempre salen primero en v1).
+            // La llave va en el header y no en la URL para que no quede en logs.
+            $url = "https://generativelanguage.googleapis.com/v1beta/models/" . rawurlencode($modelo) . ":generateContent";
 
             $body = json_encode([
                 "contents" => [["role" => "user", "parts" => [["text" => $prompt]]]],
@@ -604,7 +669,7 @@ PROMPT;
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_POST, true);
             curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json', 'X-goog-api-key: ' . $api_key]);
             curl_setopt($ch, CURLOPT_TIMEOUT, 120);
 
             $response = curl_exec($ch);
@@ -617,8 +682,19 @@ PROMPT;
 
             $data = json_decode($response, true);
 
-            if (isset($data['candidates'][0]['content']['parts'][0]['text'])) {
-                return ["success" => true, "respuesta" => trim($data['candidates'][0]['content']['parts'][0]['text'])];
+            // Los modelos con razonamiento pueden devolver varias partes: se toma
+            // el texto de todas las que no sean de pensamiento.
+            $partes = $data['candidates'][0]['content']['parts'] ?? [];
+            $texto = '';
+            foreach ($partes as $parte) {
+                if (!empty($parte['thought'])) {
+                    continue;
+                }
+                $texto .= $parte['text'] ?? '';
+            }
+
+            if (trim($texto) !== '') {
+                return ["success" => true, "respuesta" => trim($texto)];
             }
 
             return ["success" => false, "error" => "Formato inesperado de Gemini"];
@@ -627,13 +703,13 @@ PROMPT;
         }
     }
 
-    private static function llamarGroq($api_key, $prompt)
+    private static function llamarGroq($api_key, $modelo, $prompt)
     {
         try {
             $url = "https://api.groq.com/openai/v1/chat/completions";
 
             $body = json_encode([
-                "model" => "llama-3.3-70b-versatile",
+                "model" => $modelo,
                 "messages" => [
                     ["role" => "system", "content" => "Eres un experto pedagógico en educación preescolar colombiana. Responde SOLO con JSON válido, sin markdown ni texto adicional."],
                     ["role" => "user", "content" => $prompt]
@@ -654,7 +730,8 @@ PROMPT;
             curl_close($ch);
 
             if ($http_code !== 200) {
-                return ["success" => false, "error" => "HTTP " . $http_code];
+                // Se incluye el cuerpo para saber por qué falla (modelo retirado, llave, etc.)
+                return ["success" => false, "error" => "HTTP " . $http_code . " - " . substr((string)$response, 0, 300)];
             }
 
             $data = json_decode($response, true);
