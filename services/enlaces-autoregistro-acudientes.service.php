@@ -576,7 +576,7 @@ class EnlacesAutoregistroAcudientes
                 . "- Si un campo no aparece o no es legible, usa null. No inventes datos.";
 
             $resultado = IaVision::extraerDeImagen($config, $base64, $mimeType, $prompt, false, 600);
-            IaVision::registrarUso($db, TenantContext::id(), $resultado);
+            IaVision::registrarUso($db, TenantContext::id(), $resultado, 'autoregistro', 'leer_documento');
 
             if (!$resultado['success']) {
                 self::registrarFalloIa($db, $intento['id'], $resultado['error']);
@@ -1402,7 +1402,10 @@ class EnlacesAutoregistroAcudientes
     }
 
     /**
-     * Mismos contadores que usan las demas lecturas con IA.
+     * Mismo contador de mensajes que usan las demas lecturas con IA (controla el
+     * limite diario). Los tokens ya no se acumulan en ia_configuracion: el
+     * consumo queda en ia_consumos, que registra IaVision::registrarUso.
+     * $tokens se conserva en la firma para no cambiar a quien la llama.
      */
     private static function sumarContadoresIa(PDO $db, $tokens)
     {
@@ -1410,14 +1413,6 @@ class EnlacesAutoregistroAcudientes
                                   WHERE clave = 'mensajes_generados_hoy' AND id_tenant = :id_tenant");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
-
-        if ($tokens > 0) {
-            $sentence = $db->prepare("UPDATE ia_configuracion SET valor = valor + :tokens, fecha_actualizacion = NOW()
-                                      WHERE clave = 'tokens_consumidos_hoy' AND id_tenant = :id_tenant");
-            $sentence->bindValue(':tokens', (int) $tokens, PDO::PARAM_INT);
-            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $sentence->execute();
-        }
     }
 
     /**

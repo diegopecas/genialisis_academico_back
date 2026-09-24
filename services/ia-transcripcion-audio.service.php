@@ -1,6 +1,10 @@
 <?php
 class IaTranscripcionAudio
 {
+    // Modelo de transcripción. En constante para que el registro de consumo
+    // (ia_consumos) guarde el mismo modelo que se llama.
+    const MODELO_WHISPER = 'whisper-large-v3';
+
     /**
      * Recibe un archivo de audio y lo transcribe usando Groq Whisper Large v3.
      * Espera multipart/form-data con el campo "audio" y opcionalmente "idioma".
@@ -36,6 +40,11 @@ class IaTranscripcionAudio
             $inicio_tiempo = microtime(true);
             $resultado = self::llamarGroqWhisper($groq_key, $archivo['tmp_name'], $archivo['name'], $idioma);
             $tiempo_ms = round((microtime(true) - $inicio_tiempo) * 1000);
+
+            // Whisper no reporta tokens: el registro queda con tokens en NULL
+            IaConsumos::registrar('transcripcion', 'transcribir', [
+                IaConsumos::intento('groq', self::MODELO_WHISPER, $resultado, $inicio_tiempo)
+            ]);
 
             if (!$resultado['success']) {
                 Flight::json([
@@ -80,7 +89,7 @@ class IaTranscripcionAudio
 
             $postFields = [
                 'file' => $cfile,
-                'model' => 'whisper-large-v3',
+                'model' => self::MODELO_WHISPER,
                 'language' => $idioma,
                 'response_format' => 'verbose_json',
                 'temperature' => 0
@@ -100,7 +109,7 @@ class IaTranscripcionAudio
             curl_close($ch);
 
             if ($http_code !== 200) {
-                return ["success" => false, "error" => "HTTP " . $http_code . " - " . substr($response, 0, 300)];
+                return ["success" => false, "http" => $http_code, "error" => "HTTP " . $http_code . " - " . substr((string)$response, 0, 300)];
             }
 
             $data = json_decode($response, true);

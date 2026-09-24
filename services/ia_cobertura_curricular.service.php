@@ -1,6 +1,11 @@
 <?php
 class IaCoberturaCurricular
 {
+    // Modelos que usa este servicio. Se sacan a constantes para que el registro
+    // de consumo (ia_consumos) guarde el mismo modelo que se llama.
+    const MODELO_GEMINI = 'gemini-2.5-flash';
+    const MODELO_GROQ = 'llama-3.3-70b-versatile';
+
     public static function analizarCobertura()
     {
         try {
@@ -410,10 +415,16 @@ PROMPT;
 
     private static function llamarIA($config, $prompt)
     {
+        // Todos los proveedores que se prueben quedan en un solo registro de consumo
+        $intentos = [];
+
         $gemini_key = $config['gemini_api_key'] ?? null;
         if ($gemini_key) {
+            $inicio = microtime(true);
             $resultado = self::llamarGemini($gemini_key, $prompt);
+            $intentos[] = IaConsumos::intento('gemini', self::MODELO_GEMINI, $resultado, $inicio);
             if ($resultado['success']) {
+                IaConsumos::registrar('cobertura_curricular', 'analizar', $intentos);
                 return ["success" => true, "respuesta" => $resultado['respuesta'], "proveedor" => "gemini"];
             }
             error_log("IaCoberturaCurricular - Gemini falló: " . ($resultado['error'] ?? 'desconocido'));
@@ -421,20 +432,24 @@ PROMPT;
 
         $groq_key = $config['groq_api_key'] ?? null;
         if ($groq_key) {
+            $inicio = microtime(true);
             $resultado = self::llamarGroq($groq_key, $prompt);
+            $intentos[] = IaConsumos::intento('groq', self::MODELO_GROQ, $resultado, $inicio);
             if ($resultado['success']) {
+                IaConsumos::registrar('cobertura_curricular', 'analizar', $intentos);
                 return ["success" => true, "respuesta" => $resultado['respuesta'], "proveedor" => "groq"];
             }
             error_log("IaCoberturaCurricular - Groq falló: " . ($resultado['error'] ?? 'desconocido'));
         }
 
+        IaConsumos::registrar('cobertura_curricular', 'analizar', $intentos);
         return ["success" => false, "error" => "No hay proveedores de IA disponibles"];
     }
 
     private static function llamarGemini($api_key, $prompt)
     {
         try {
-            $url = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=" . $api_key;
+            $url = "https://generativelanguage.googleapis.com/v1/models/" . self::MODELO_GEMINI . ":generateContent?key=" . $api_key;
 
             $body = json_encode([
                 "contents" => [["role" => "user", "parts" => [["text" => $prompt]]]],
@@ -453,13 +468,13 @@ PROMPT;
             curl_close($ch);
 
             if ($http_code !== 200) {
-                return ["success" => false, "error" => "HTTP " . $http_code . " - " . substr($response, 0, 300)];
+                return ["success" => false, "http" => $http_code, "error" => "HTTP " . $http_code . " - " . substr((string)$response, 0, 300)];
             }
 
             $data = json_decode($response, true);
 
             if (isset($data['candidates'][0]['content']['parts'][0]['text'])) {
-                return ["success" => true, "respuesta" => trim($data['candidates'][0]['content']['parts'][0]['text'])];
+                return ["success" => true, "http" => $http_code, "respuesta" => trim($data['candidates'][0]['content']['parts'][0]['text']), "tokens" => IaConsumos::tokensGemini($data)];
             }
 
             return ["success" => false, "error" => "Formato inesperado de Gemini"];
@@ -474,7 +489,7 @@ PROMPT;
             $url = "https://api.groq.com/openai/v1/chat/completions";
 
             $body = json_encode([
-                "model" => "llama-3.3-70b-versatile",
+                "model" => self::MODELO_GROQ,
                 "messages" => [
                     ["role" => "system", "content" => "Eres un experto pedagógico en educación preescolar colombiana. Responde SOLO con JSON válido, sin markdown ni texto adicional."],
                     ["role" => "user", "content" => $prompt]
@@ -495,13 +510,14 @@ PROMPT;
             curl_close($ch);
 
             if ($http_code !== 200) {
-                return ["success" => false, "error" => "HTTP " . $http_code];
+                // Se incluye el cuerpo para saber por qué falla (modelo retirado, llave, etc.)
+                return ["success" => false, "http" => $http_code, "error" => "HTTP " . $http_code . " - " . substr((string)$response, 0, 300)];
             }
 
             $data = json_decode($response, true);
 
             if (isset($data['choices'][0]['message']['content'])) {
-                return ["success" => true, "respuesta" => trim($data['choices'][0]['message']['content'])];
+                return ["success" => true, "http" => $http_code, "respuesta" => trim($data['choices'][0]['message']['content']), "tokens" => IaConsumos::tokensOpenAI($data)];
             }
 
             return ["success" => false, "error" => "Formato inesperado de Groq"];

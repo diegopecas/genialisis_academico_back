@@ -1095,13 +1095,18 @@ class IaChat
 
         if (empty($pasos)) {
             error_log("IaChat: no hay cadena de proveedores configurada (ia_chat_cadena)");
+            IaConsumos::registrar('chat', 'enviar_mensaje', []);
             return self::respuestaFallback();
         }
+
+        // Todos los proveedores que se prueben quedan en un solo registro de consumo
+        $intentos = [];
 
         foreach ($pasos as $paso) {
             $proveedor = $paso['proveedor'];
             $modelo = $paso['modelo'];
             $r = null;
+            $inicio = microtime(true);
 
             if ($proveedor === 'gemini') {
                 $key = $config['gemini_api_key'] ?? null;
@@ -1142,12 +1147,16 @@ class IaChat
                 continue;
             }
 
+            $intentos[] = IaConsumos::intento($proveedor, $modelo, $r, $inicio);
+
             if (!empty($r['success'])) {
+                IaConsumos::registrar('chat', 'enviar_mensaje', $intentos);
                 return ["respuesta" => $r['respuesta'], "proveedor" => $proveedor];
             }
             error_log("IaChat - proveedor '{$proveedor}' ({$modelo}) falló: " . ($r['error'] ?? 'desconocido'));
         }
 
+        IaConsumos::registrar('chat', 'enviar_mensaje', $intentos);
         return self::respuestaFallback();
     }
 
@@ -1230,16 +1239,16 @@ class IaChat
             curl_close($ch);
 
             if ($http_code !== 200) {
-                return ["success" => false, "error" => "HTTP " . $http_code];
+                return ["success" => false, "http" => $http_code, "error" => "HTTP " . $http_code . " - " . substr((string)$response, 0, 300)];
             }
 
             $data = json_decode($response, true);
 
             if (isset($data['candidates'][0]['content']['parts'][0]['text'])) {
-                return ["success" => true, "respuesta" => trim($data['candidates'][0]['content']['parts'][0]['text'])];
+                return ["success" => true, "http" => $http_code, "respuesta" => trim($data['candidates'][0]['content']['parts'][0]['text']), "tokens" => IaConsumos::tokensGemini($data)];
             }
 
-            return ["success" => false, "error" => "Formato inesperado"];
+            return ["success" => false, "http" => $http_code, "error" => "Formato inesperado"];
         } catch (Exception $e) {
             return ["success" => false, "error" => $e->getMessage()];
         }
@@ -1292,16 +1301,16 @@ class IaChat
                 return ["success" => false, "error" => "conexión: " . $curl_error];
             }
             if ($http_code !== 200) {
-                return ["success" => false, "error" => "HTTP " . $http_code];
+                return ["success" => false, "http" => $http_code, "error" => "HTTP " . $http_code . " - " . substr((string)$response, 0, 300)];
             }
 
             $data = json_decode($response, true);
 
             if (isset($data['choices'][0]['message']['content'])) {
-                return ["success" => true, "respuesta" => trim($data['choices'][0]['message']['content'])];
+                return ["success" => true, "http" => $http_code, "respuesta" => trim($data['choices'][0]['message']['content']), "tokens" => IaConsumos::tokensOpenAI($data)];
             }
 
-            return ["success" => false, "error" => "Formato inesperado"];
+            return ["success" => false, "http" => $http_code, "error" => "Formato inesperado"];
         } catch (Exception $e) {
             return ["success" => false, "error" => $e->getMessage()];
         }

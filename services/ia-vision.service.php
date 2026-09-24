@@ -23,6 +23,9 @@
  * No conoce reglas de negocio (montos, pagos, etc.): recibe imagen + prompt y
  * devuelve el texto crudo del modelo, el proveedor que respondió y los tokens.
  * Interpretar ese texto es tarea de quien la llama.
+ *
+ * El consumo lo registra quien la llama con registrarUso(), que lo graba en la
+ * tabla ia_consumos (un registro por lectura con todos los intentos).
  */
 class IaVision
 {
@@ -53,8 +56,11 @@ class IaVision
      *   'success'   => bool,
      *   'texto'     => string|null,   // texto crudo devuelto por el modelo
      *   'proveedor' => string|null,   // 'gemini' | 'openrouter' | 'qwen' | 'groq'
+     *   'modelo'    => string|null,   // modelo que respondió
      *   'tokens'    => ['input'=>int, 'output'=>int, 'total'=>int],
-     *   'error'     => string|null    // motivo si ningún proveedor respondió
+     *   'error'     => string|null,   // motivo si ningún proveedor respondió
+     *   'fallidos'  => array,         // [proveedor, error] de los que fallaron
+     *   'intentos'  => array          // detalle de cada intento para ia_consumos
      * ]
      */
     public static function extraerDeImagen($config, $base64, $mimeType, $prompt, $esPdf = false, $maxTokens = 500)
@@ -63,18 +69,19 @@ class IaVision
 
         $cadenaRaw = isset($config['ia_vision_cadena']) ? trim($config['ia_vision_cadena']) : '';
         if ($cadenaRaw === '') {
-            return array('success' => false, 'texto' => null, 'proveedor' => null, 'tokens' => $tokensVacios,
-                'error' => 'No hay cadena de proveedores de IA configurada (ia_vision_cadena)', 'fallidos' => array());
+            return array('success' => false, 'texto' => null, 'proveedor' => null, 'modelo' => null, 'tokens' => $tokensVacios,
+                'error' => 'No hay cadena de proveedores de IA configurada (ia_vision_cadena)', 'fallidos' => array(), 'intentos' => array());
         }
 
         $pasos = self::parsearCadena($cadenaRaw);
         if (empty($pasos)) {
-            return array('success' => false, 'texto' => null, 'proveedor' => null, 'tokens' => $tokensVacios,
-                'error' => 'La cadena ia_vision_cadena no tiene pasos válidos (formato esperado: proveedor|modelo)', 'fallidos' => array());
+            return array('success' => false, 'texto' => null, 'proveedor' => null, 'modelo' => null, 'tokens' => $tokensVacios,
+                'error' => 'La cadena ia_vision_cadena no tiene pasos válidos (formato esperado: proveedor|modelo)', 'fallidos' => array(), 'intentos' => array());
         }
 
         $ultimoError = 'Ningún proveedor de la cadena pudo procesar el documento';
         $fallidos = array();
+        $intentos = array();
 
         // Timeout por llamada, configurable por tenant; si falta la clave se usa el default.
         $timeout = (isset($config['ia_vision_timeout']) && $config['ia_vision_timeout'] !== '')
@@ -92,6 +99,7 @@ class IaVision
             }
 
             $r = null;
+            $inicio = microtime(true);
 
             if ($proveedor === 'gemini') {
                 $key = isset($config['gemini_api_key']) ? $config['gemini_api_key'] : null;
@@ -140,8 +148,10 @@ class IaVision
                 continue;
             }
 
+            $intentos[] = IaConsumos::intento($proveedor, $modelo, $r, $inicio);
+
             if ($r['success']) {
-                return array('success' => true, 'texto' => $r['texto'], 'proveedor' => $proveedor, 'tokens' => $r['tokens'], 'error' => null, 'fallidos' => $fallidos);
+                return array('success' => true, 'texto' => $r['texto'], 'proveedor' => $proveedor, 'modelo' => $modelo, 'tokens' => $r['tokens'], 'error' => null, 'fallidos' => $fallidos, 'intentos' => $intentos);
             }
 
             $fallidos[] = array('proveedor' => $proveedor, 'error' => $r['error']);
@@ -149,98 +159,31 @@ class IaVision
             error_log("IaVision - '$proveedor' falló: " . $r['error']);
         }
 
-        return array('success' => false, 'texto' => null, 'proveedor' => null, 'tokens' => $tokensVacios, 'error' => $ultimoError, 'fallidos' => $fallidos);
+        return array('success' => false, 'texto' => null, 'proveedor' => null, 'modelo' => null, 'tokens' => $tokensVacios, 'error' => $ultimoError, 'fallidos' => $fallidos, 'intentos' => $intentos);
     }
 
     /**
-     * Registra el uso por proveedor en la clave ia_vision_uso (JSON) del tenant.
-     * Por cada proveedor acumula: total (histórico, nunca se borra) y dia (se
-     * reinicia al cambiar de fecha), cada uno con llamadas, tokens y fallos.
+     * Registra la lectura en la tabla ia_consumos: un registro con el intento que
+     * respondió y el detalle de todos los que se probaron. Antes acumulaba el uso
+     * en la clave ia_vision_uso de ia_configuracion; esa clave ya no se usa.
      * Es best-effort: si algo falla, se registra en el log pero NUNCA rompe el
      * flujo que la llamó.
      *
-     * @param PDO   $db        Conexión (Flight::db()).
-     * @param int   $idTenant  Tenant.
-     * @param array $resultado Lo que devolvió extraerDeImagen (usa 'success',
-     *                         'proveedor', 'tokens' y 'fallidos').
+     * @param PDO    $db        Conexión (se conserva por compatibilidad; el registro
+     *                          lo hace IaConsumos, que reconecta si hace falta).
+     * @param int    $idTenant  Tenant (se conserva por compatibilidad; se usa TenantContext).
+     * @param array  $resultado Lo que devolvió extraerDeImagen (usa 'intentos').
+     * @param string $servicio  Módulo que hizo la lectura (pagos, estudiantes, autoregistro...).
+     * @param string|null $accion Operación dentro del módulo.
      * @return void
      */
-    public static function registrarUso($db, $idTenant, $resultado)
+    public static function registrarUso($db, $idTenant, $resultado, $servicio = 'vision', $accion = null)
     {
         try {
-            $hoy = date('Y-m-d');
-
-            $stmt = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = 'ia_vision_uso' AND id_tenant = :t LIMIT 1");
-            $stmt->bindValue(':t', $idTenant, PDO::PARAM_INT);
-            $stmt->execute();
-            $fila = $stmt->fetch(PDO::FETCH_ASSOC);
-
-            $existe = ($fila !== false);
-            $uso = $existe ? json_decode($fila['valor'], true) : null;
-            if (!is_array($uso)) {
-                $uso = array('fecha_dia' => $hoy);
-            }
-
-            // Reinicio diario: al cambiar la fecha, poner en cero los "dia" de todos.
-            if (!isset($uso['fecha_dia']) || $uso['fecha_dia'] !== $hoy) {
-                foreach ($uso as $claveProv => $datos) {
-                    if ($claveProv === 'fecha_dia') {
-                        continue;
-                    }
-                    $uso[$claveProv]['dia'] = array('llamadas' => 0, 'tokens' => 0, 'fallos' => 0);
-                }
-                $uso['fecha_dia'] = $hoy;
-            }
-
-            // Garantiza la estructura de un proveedor antes de sumarle.
-            $asegurar = function (&$uso, $prov) {
-                if (!isset($uso[$prov]) || !is_array($uso[$prov])) {
-                    $uso[$prov] = array(
-                        'total' => array('llamadas' => 0, 'tokens' => 0, 'fallos' => 0),
-                        'dia'   => array('llamadas' => 0, 'tokens' => 0, 'fallos' => 0)
-                    );
-                }
-            };
-
-            // Proveedor que acertó: +1 llamada y +tokens (total y dia).
-            if (!empty($resultado['success']) && !empty($resultado['proveedor'])) {
-                $p = $resultado['proveedor'];
-                $asegurar($uso, $p);
-                $tk = isset($resultado['tokens']['total']) ? intval($resultado['tokens']['total']) : 0;
-                $uso[$p]['total']['llamadas'] += 1;
-                $uso[$p]['total']['tokens'] += $tk;
-                $uso[$p]['dia']['llamadas'] += 1;
-                $uso[$p]['dia']['tokens'] += $tk;
-            }
-
-            // Proveedores que fallaron: +1 fallo cada uno (total y dia) y se guarda
-            // el ultimo error, recortado para no inflar el JSON.
-            if (!empty($resultado['fallidos']) && is_array($resultado['fallidos'])) {
-                foreach ($resultado['fallidos'] as $f) {
-                    $p = is_array($f) ? $f['proveedor'] : $f;
-                    $asegurar($uso, $p);
-                    $uso[$p]['total']['fallos'] += 1;
-                    $uso[$p]['dia']['fallos'] += 1;
-                    if (is_array($f) && isset($f['error'])) {
-                        $uso[$p]['ultimo_error'] = mb_substr(trim($f['error']), 0, 120);
-                        $uso[$p]['ultimo_error_fecha'] = date('Y-m-d H:i');
-                    }
-                }
-            }
-
-            $json = json_encode($uso, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-
-            if ($existe) {
-                $up = $db->prepare("UPDATE ia_configuracion SET valor = :v, fecha_actualizacion = NOW() WHERE clave = 'ia_vision_uso' AND id_tenant = :t");
-                $up->bindValue(':v', $json);
-                $up->bindValue(':t', $idTenant, PDO::PARAM_INT);
-                $up->execute();
-            } else {
-                $ins = $db->prepare("INSERT INTO ia_configuracion (id, id_tenant, clave, valor, descripcion, fecha_actualizacion) VALUES (UUID(), :t, 'ia_vision_uso', :v, 'Uso de IA de vision por proveedor (JSON: total/dia con llamadas, tokens, fallos)', NOW())");
-                $ins->bindValue(':t', $idTenant, PDO::PARAM_INT);
-                $ins->bindValue(':v', $json);
-                $ins->execute();
-            }
+            $intentos = (is_array($resultado) && isset($resultado['intentos']) && is_array($resultado['intentos']))
+                ? $resultado['intentos']
+                : array();
+            IaConsumos::registrar($servicio, $accion, $intentos);
         } catch (Exception $e) {
             error_log("IaVision - registrarUso falló (no afecta la lectura): " . $e->getMessage());
         }
@@ -335,12 +278,12 @@ class IaVision
 
                 if ($httpCode !== 200) {
                     // Otro error (400, 401, 500, ...): reintentar no ayuda.
-                    return array('success' => false, 'texto' => null, 'tokens' => $tokens, 'error' => 'HTTP ' . $httpCode);
+                    return array('success' => false, 'texto' => null, 'tokens' => $tokens, 'http' => $httpCode, 'error' => 'HTTP ' . $httpCode . ' - ' . substr((string) $response, 0, 300));
                 }
 
                 $data = json_decode($response, true);
                 if (!isset($data['candidates'][0]['content']['parts'][0]['text'])) {
-                    return array('success' => false, 'texto' => null, 'tokens' => $tokens, 'error' => 'formato de respuesta inesperado');
+                    return array('success' => false, 'texto' => null, 'tokens' => $tokens, 'http' => $httpCode, 'error' => 'formato de respuesta inesperado');
                 }
 
                 if (isset($data['usageMetadata'])) {
@@ -349,7 +292,7 @@ class IaVision
                     $tokens['total'] = $tokens['input'] + $tokens['output'];
                 }
 
-                return array('success' => true, 'texto' => trim($data['candidates'][0]['content']['parts'][0]['text']), 'tokens' => $tokens, 'error' => null);
+                return array('success' => true, 'texto' => trim($data['candidates'][0]['content']['parts'][0]['text']), 'tokens' => $tokens, 'http' => $httpCode, 'error' => null);
             } catch (Exception $e) {
                 $ultimoError = $e->getMessage(); // por si es transitorio, se reintenta
                 continue;
@@ -404,12 +347,12 @@ class IaVision
                 return array('success' => false, 'texto' => null, 'tokens' => $tokens, 'error' => 'conexión: ' . $curlError);
             }
             if ($httpCode !== 200) {
-                return array('success' => false, 'texto' => null, 'tokens' => $tokens, 'error' => 'HTTP ' . $httpCode);
+                return array('success' => false, 'texto' => null, 'tokens' => $tokens, 'http' => $httpCode, 'error' => 'HTTP ' . $httpCode . ' - ' . substr((string) $response, 0, 300));
             }
 
             $data = json_decode($response, true);
             if (!isset($data['choices'][0]['message']['content'])) {
-                return array('success' => false, 'texto' => null, 'tokens' => $tokens, 'error' => 'formato de respuesta inesperado');
+                return array('success' => false, 'texto' => null, 'tokens' => $tokens, 'http' => $httpCode, 'error' => 'formato de respuesta inesperado');
             }
 
             if (isset($data['usage'])) {
@@ -418,7 +361,7 @@ class IaVision
                 $tokens['total'] = intval(isset($data['usage']['total_tokens']) ? $data['usage']['total_tokens'] : ($tokens['input'] + $tokens['output']));
             }
 
-            return array('success' => true, 'texto' => trim($data['choices'][0]['message']['content']), 'tokens' => $tokens, 'error' => null);
+            return array('success' => true, 'texto' => trim($data['choices'][0]['message']['content']), 'tokens' => $tokens, 'http' => $httpCode, 'error' => null);
         } catch (Exception $e) {
             return array('success' => false, 'texto' => null, 'tokens' => $tokens, 'error' => $e->getMessage());
         }

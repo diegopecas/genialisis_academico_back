@@ -43,3 +43,6 @@ Flight::route('POST /ia-mejorar-texto/mejorar', [IaMejorarTexto::class, 'mejorar
 
 // IA-TRANSCRIPCION AUDIO
 Flight::route('POST /ia-transcripcion-audio/transcribir', [IaTranscripcionAudio::class, 'transcribir']);
+
+// IA-CONSUMOS (reporte de consumo de IA)
+Flight::route('GET /ia-consumos/reporte', [IaConsumos::class, 'getReporte']);

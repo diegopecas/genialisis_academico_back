@@ -1,6 +1,10 @@
 <?php
 class MedidasXEstudiantes
 {
+    // Modelo de visión para leer el reporte de la báscula. En constante para que
+    // el registro de consumo (ia_consumos) guarde el mismo modelo que se llama.
+    const MODELO_GEMINI_MEDIDAS = 'gemini-2.5-flash-lite';
+
     public static function getAll()
     {
         try {
@@ -458,7 +462,7 @@ class MedidasXEstudiantes
                 . "- La fecha conviértela a YYYY-MM-DD.\n"
                 . "- Usa el campo 'nombre' para buscar equivalentes (ej: 'IMC' puede ser 'BMI').";
 
-            $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" . $apiKey;
+            $url = "https://generativelanguage.googleapis.com/v1beta/models/" . self::MODELO_GEMINI_MEDIDAS . ":generateContent?key=" . $apiKey;
 
             $payload = [
                 'contents' => [[
@@ -469,6 +473,8 @@ class MedidasXEstudiantes
                 ]],
                 'generationConfig' => ['temperature' => 0.1, 'maxOutputTokens' => 1000]
             ];
+
+            $inicioIa = microtime(true);
 
             $ch = curl_init();
             curl_setopt($ch, CURLOPT_URL, $url);
@@ -482,6 +488,20 @@ class MedidasXEstudiantes
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             $curlError = curl_error($ch);
             curl_close($ch);
+
+            // Un registro de consumo por lectura, haya o no respondido la IA
+            $respuestaIa = (!$curlError && $httpCode === 200) ? json_decode($response, true) : null;
+            $errorIa = $curlError
+                ? 'conexión: ' . $curlError
+                : ($httpCode !== 200 ? 'HTTP ' . $httpCode . ' - ' . substr((string)$response, 0, 300) : 'formato de respuesta inesperado');
+            IaConsumos::registrar('medidas', 'analizar_reporte_medidas', [
+                IaConsumos::intento('gemini', self::MODELO_GEMINI_MEDIDAS, [
+                    'success' => isset($respuestaIa['candidates'][0]['content']['parts'][0]['text']),
+                    'http' => $curlError ? null : $httpCode,
+                    'error' => $errorIa,
+                    'tokens' => IaConsumos::tokensGemini($respuestaIa)
+                ], $inicioIa)
+            ]);
 
             if ($curlError) {
                 Flight::json(['error' => 'Error de conexión con IA: ' . $curlError], 500);
@@ -526,12 +546,7 @@ class MedidasXEstudiantes
                 $tokensTotal = $tokensInput + $tokensOutput;
             }
 
-            if ($tokensTotal > 0) {
-                $stmtTokens = $db->prepare("UPDATE ia_configuracion SET valor = valor + :tokens, fecha_actualizacion = NOW() WHERE clave = 'tokens_consumidos_hoy' AND id_tenant = :id_tenant");
-                $stmtTokens->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-                $stmtTokens->bindParam(':tokens', $tokensTotal);
-                $stmtTokens->execute();
-            }
+            // Los tokens ya no se acumulan en ia_configuracion: el consumo queda en ia_consumos.
 
             Flight::json([
                 'success' => true,

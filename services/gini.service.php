@@ -1,6 +1,10 @@
 <?php
 class Gini
 {
+    // Modelo de la sesión en tiempo real. En constante para que el registro de
+    // consumo (ia_consumos) guarde el mismo modelo que se pide.
+    const MODELO_REALTIME = 'gpt-4o-mini-realtime-preview';
+
     public static function generarSesion()
     {
         $db = Flight::db();
@@ -39,7 +43,7 @@ class Gini
         $payload = json_encode([
             "session" => [
                 "type" => "realtime",
-                "model" => "gpt-4o-mini-realtime-preview",
+                "model" => self::MODELO_REALTIME,
                 "instructions" => $instructions,
                 "audio" => [
                     "output" => ["voice" => "shimmer"],
@@ -56,6 +60,8 @@ class Gini
             ]
         ]);
 
+        $inicio = microtime(true);
+
         $ch = curl_init("https://api.openai.com/v1/realtime/client_secrets");
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POST, true);
@@ -69,6 +75,16 @@ class Gini
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
+
+        // Se registra la creación de la sesión. El audio se consume después desde el
+        // navegador directo contra OpenAI, así que aquí no hay tokens que medir.
+        IaConsumos::registrar('gini', 'generar_sesion_' . $modo, [
+            IaConsumos::intento('openai', self::MODELO_REALTIME, [
+                'success' => $httpCode === 200,
+                'http' => $httpCode,
+                'error' => 'HTTP ' . $httpCode . ' - ' . substr((string)$response, 0, 300)
+            ], $inicio)
+        ]);
 
         if ($httpCode !== 200) {
             Flight::json(['error' => true, 'message' => 'Error generando sesión OpenAI', 'detalle' => $response], 500);

@@ -1,6 +1,10 @@
 <?php
 class IaMensajes
 {
+    // Modelo del mensaje personalizado. En constante para que el registro de
+    // consumo (ia_consumos) guarde el mismo modelo que se llama.
+    const MODELO_GEMINI = 'gemini-2.5-flash';
+
     private static $cacheDir = __DIR__ . '/../cache/';
     private static $logFile = 'ia_mensajes_log.json';
 
@@ -177,7 +181,7 @@ class IaMensajes
             // Usar prompt personalizado si existe, o el prompt normal
             $prompt = $promptPersonalizado ?? $prompts[$tipoSeleccionado];
 
-            $url = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=" . $apiKey;
+            $url = "https://generativelanguage.googleapis.com/v1/models/" . self::MODELO_GEMINI . ":generateContent?key=" . $apiKey;
 
             $body = json_encode([
                 'contents' => [
@@ -188,6 +192,8 @@ class IaMensajes
                     ]
                 ]
             ]);
+
+            $inicio = microtime(true);
 
             $ch = curl_init($url);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -201,6 +207,19 @@ class IaMensajes
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
 
+            $data = $httpCode === 200 ? json_decode($response, true) : null;
+            $hayTexto = isset($data['candidates'][0]['content']['parts'][0]['text']);
+
+            // Un registro de consumo por mensaje, haya o no respondido Gemini
+            IaConsumos::registrar('mensajes', 'mensaje_personalizado', [
+                IaConsumos::intento('gemini', self::MODELO_GEMINI, [
+                    'success' => $hayTexto,
+                    'http' => $httpCode,
+                    'error' => $httpCode !== 200 ? 'HTTP ' . $httpCode . ' - ' . substr((string)$response, 0, 300) : 'Formato de respuesta inválido',
+                    'tokens' => IaConsumos::tokensGemini($data)
+                ], $inicio)
+            ]);
+
             if ($httpCode !== 200) {
                 error_log("Gemini HTTP Error: " . $httpCode);
                 error_log("Response: " . $response);
@@ -210,9 +229,7 @@ class IaMensajes
                 ];
             }
 
-            $data = json_decode($response, true);
-
-            if (isset($data['candidates'][0]['content']['parts'][0]['text'])) {
+            if ($hayTexto) {
                 $respuestaCompleta = trim($data['candidates'][0]['content']['parts'][0]['text']);
 
                 // Extraer SOLO lo que está entre comillas dobles

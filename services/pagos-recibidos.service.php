@@ -1437,8 +1437,8 @@ class PagosRecibidos
             // los maneja IaVision; acá solo interpretamos el texto que devuelva.
             $resultado = IaVision::extraerDeImagen($config, $base64, $mimeType, $prompt, $esPdf);
 
-            // Registro de uso por proveedor (best-effort; nunca rompe la lectura).
-            IaVision::registrarUso($db, TenantContext::id(), $resultado);
+            // Registro de consumo en ia_consumos (best-effort; nunca rompe la lectura).
+            IaVision::registrarUso($db, TenantContext::id(), $resultado, 'pagos', 'analizar_comprobante');
 
             if (!$resultado['success']) {
                 Flight::json(array('error' => 'No se pudo analizar el comprobante con ningún proveedor de IA: ' . $resultado['error']), 503);
@@ -1461,7 +1461,8 @@ class PagosRecibidos
                 return;
             }
 
-            // Registrar uso: contador de mensajes y acumulado de tokens consumidos.
+            // Contador de mensajes (controla el límite diario). Los tokens ya no se
+            // acumulan en ia_configuracion: el consumo queda en ia_consumos.
             $stmtContador = $db->prepare("UPDATE ia_configuracion SET valor = valor + 1, fecha_actualizacion = NOW() WHERE clave = 'mensajes_generados_hoy' AND id_tenant = :id_tenant");
             $stmtContador->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtContador->execute();
@@ -1469,13 +1470,6 @@ class PagosRecibidos
             $tokensInput = $resultado['tokens']['input'];
             $tokensOutput = $resultado['tokens']['output'];
             $tokensTotal = $resultado['tokens']['total'];
-
-            if ($tokensTotal > 0) {
-                $stmtTokens = $db->prepare("UPDATE ia_configuracion SET valor = valor + :tokens, fecha_actualizacion = NOW() WHERE clave = 'tokens_consumidos_hoy' AND id_tenant = :id_tenant");
-                $stmtTokens->bindParam(':tokens', $tokensTotal);
-                $stmtTokens->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-                $stmtTokens->execute();
-            }
 
             // El monto se normaliza en el backend a partir del texto literal del
             // comprobante (formato colombiano, sin centavos), no del cálculo de la IA.

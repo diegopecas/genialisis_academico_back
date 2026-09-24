@@ -1548,8 +1548,8 @@ class Estudiantes
             // más larga que un comprobante (que usa el default de 500 en IaVision).
             $resultado = IaVision::extraerDeImagen($config, $base64, $mimeType, $prompt, $esPdf, 1200);
 
-            // Registro de uso por proveedor (best-effort; nunca rompe la lectura).
-            IaVision::registrarUso($db, TenantContext::id(), $resultado);
+            // Registro de consumo en ia_consumos (best-effort; nunca rompe la lectura).
+            IaVision::registrarUso($db, TenantContext::id(), $resultado, 'estudiantes', 'analizar_registro_civil');
 
             if (!$resultado['success']) {
                 Flight::json(array('error' => 'No se pudo analizar el registro civil con ningún proveedor de IA: ' . $resultado['error']), 503);
@@ -1572,18 +1572,11 @@ class Estudiantes
                 return;
             }
 
-            // Registrar uso: contador de mensajes y acumulado de tokens consumidos.
+            // Contador de mensajes (controla el límite diario). Los tokens ya no se
+            // acumulan en ia_configuracion: el consumo queda en ia_consumos.
             $stmtContador = $db->prepare("UPDATE ia_configuracion SET valor = valor + 1, fecha_actualizacion = NOW() WHERE clave = 'mensajes_generados_hoy' AND id_tenant = :id_tenant");
             $stmtContador->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtContador->execute();
-
-            $tokensTotal = $resultado['tokens']['total'];
-            if ($tokensTotal > 0) {
-                $stmtTokens = $db->prepare("UPDATE ia_configuracion SET valor = valor + :tokens, fecha_actualizacion = NOW() WHERE clave = 'tokens_consumidos_hoy' AND id_tenant = :id_tenant");
-                $stmtTokens->bindParam(':tokens', $tokensTotal);
-                $stmtTokens->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-                $stmtTokens->execute();
-            }
 
             Flight::json(array(
                 'success' => true,

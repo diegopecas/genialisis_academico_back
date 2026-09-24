@@ -180,7 +180,7 @@ PROMPT;
 
             $config = self::obtenerConfiguracion($db);
             $inicio_tiempo = microtime(true);
-            $respuesta_ia = self::llamarIA($config, $prompt);
+            $respuesta_ia = self::llamarIA($config, $prompt, 'generar');
             $tiempo_ms = round((microtime(true) - $inicio_tiempo) * 1000);
 
             if (!$respuesta_ia['success']) {
@@ -567,7 +567,11 @@ PROMPT;
         return $config;
     }
 
-    private static function llamarIA($config, $prompt)
+    /**
+     * @param string|null $accion Operación que dispara la llamada; se registra
+     *                            en ia_consumos junto con todos los intentos.
+     */
+    private static function llamarIA($config, $prompt, $accion = null)
     {
         // Cadena de proveedores (mismo formato que ia_chat_cadena e ia_vision_cadena):
         // "proveedor|modelo;proveedor|modelo". Se prueba en orden y se cae al
@@ -581,13 +585,18 @@ PROMPT;
 
         if (empty($pasos)) {
             error_log("IaMaquinaActividades: no hay cadena de proveedores configurada (ia_actividades_cadena)");
+            IaConsumos::registrar('maquina_actividades', $accion, []);
             return ["success" => false, "error" => "No hay proveedores de IA configurados"];
         }
+
+        // Todos los proveedores que se prueben quedan en un solo registro de consumo
+        $intentos = [];
 
         foreach ($pasos as $paso) {
             $proveedor = $paso['proveedor'];
             $modelo = $paso['modelo'];
             $resultado = null;
+            $inicio = microtime(true);
 
             if ($proveedor === 'gemini') {
                 $key = $config['gemini_api_key'] ?? null;
@@ -615,12 +624,16 @@ PROMPT;
                 continue;
             }
 
+            $intentos[] = IaConsumos::intento($proveedor, $modelo, $resultado, $inicio);
+
             if (!empty($resultado['success'])) {
+                IaConsumos::registrar('maquina_actividades', $accion, $intentos);
                 return ["success" => true, "respuesta" => $resultado['respuesta'], "proveedor" => $proveedor];
             }
             error_log("IaMaquinaActividades - {$proveedor} ({$modelo}) falló: " . ($resultado['error'] ?? 'desconocido'));
         }
 
+        IaConsumos::registrar('maquina_actividades', $accion, $intentos);
         return ["success" => false, "error" => "No hay proveedores de IA disponibles"];
     }
 
@@ -677,7 +690,7 @@ PROMPT;
             curl_close($ch);
 
             if ($http_code !== 200) {
-                return ["success" => false, "error" => "HTTP " . $http_code . " - " . substr($response, 0, 300)];
+                return ["success" => false, "http" => $http_code, "error" => "HTTP " . $http_code . " - " . substr((string)$response, 0, 300)];
             }
 
             $data = json_decode($response, true);
@@ -694,10 +707,10 @@ PROMPT;
             }
 
             if (trim($texto) !== '') {
-                return ["success" => true, "respuesta" => trim($texto)];
+                return ["success" => true, "http" => $http_code, "respuesta" => trim($texto), "tokens" => IaConsumos::tokensGemini($data)];
             }
 
-            return ["success" => false, "error" => "Formato inesperado de Gemini"];
+            return ["success" => false, "http" => $http_code, "error" => "Formato inesperado de Gemini"];
         } catch (Exception $e) {
             return ["success" => false, "error" => $e->getMessage()];
         }
@@ -731,16 +744,16 @@ PROMPT;
 
             if ($http_code !== 200) {
                 // Se incluye el cuerpo para saber por qué falla (modelo retirado, llave, etc.)
-                return ["success" => false, "error" => "HTTP " . $http_code . " - " . substr((string)$response, 0, 300)];
+                return ["success" => false, "http" => $http_code, "error" => "HTTP " . $http_code . " - " . substr((string)$response, 0, 300)];
             }
 
             $data = json_decode($response, true);
 
             if (isset($data['choices'][0]['message']['content'])) {
-                return ["success" => true, "respuesta" => trim($data['choices'][0]['message']['content'])];
+                return ["success" => true, "http" => $http_code, "respuesta" => trim($data['choices'][0]['message']['content']), "tokens" => IaConsumos::tokensOpenAI($data)];
             }
 
-            return ["success" => false, "error" => "Formato inesperado de Groq"];
+            return ["success" => false, "http" => $http_code, "error" => "Formato inesperado de Groq"];
         } catch (Exception $e) {
             return ["success" => false, "error" => $e->getMessage()];
         }
@@ -868,7 +881,7 @@ PROMPT;
 
             $config = self::obtenerConfiguracion($db);
             $inicio_tiempo = microtime(true);
-            $respuesta_ia = self::llamarIA($config, $prompt);
+            $respuesta_ia = self::llamarIA($config, $prompt, 'sugerir_individual');
             $tiempo_ms = round((microtime(true) - $inicio_tiempo) * 1000);
 
             if (!$respuesta_ia['success']) {
@@ -1241,7 +1254,7 @@ PROMPT;
 
             $config = self::obtenerConfiguracion($db);
             $inicio_tiempo = microtime(true);
-            $respuesta_ia = self::llamarIA($config, $prompt);
+            $respuesta_ia = self::llamarIA($config, $prompt, 'generar_evaluacion');
             $tiempo_ms = round((microtime(true) - $inicio_tiempo) * 1000);
 
             if (!$respuesta_ia['success']) {
