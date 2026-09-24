@@ -19,7 +19,7 @@ class NotificacionesColaboradores
 {
     const TIPO_POR_APROBAR         = 1;
     const TIPO_COMPROMISO_PROXIMO  = 2;
-    const TIPO_SOLICITUD_NUEVA     = 3;
+    const TIPO_PREGUNTA_TAREA      = 3;
 
     /**
      * Listado general del tenant. Es la vista de seguimiento, no la bandeja

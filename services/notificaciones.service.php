@@ -363,6 +363,101 @@ class Notificaciones
     }
 
     /**
+     * Crea una notificacion generada por otro modulo (hoy, Tareas
+     * Estudiantes) para todos los acudientes habilitados de los estudiantes
+     * y dispara el push. No responde por HTTP: devuelve el resumen para que
+     * el modulo que la llama decida que hacer.
+     *
+     * Usa el mismo resolverDestinatarios que new(), asi que respeta
+     * ve_en_portal_padres igual que una notificacion escrita a mano.
+     *
+     * @param PDO    $db
+     * @param string $titulo
+     * @param string $cuerpo
+     * @param string $idCategoria
+     * @param string $criterioTexto
+     * @param array  $estudiantes  Lista de id_estudiante
+     * @param string $idUsuarioEnvio
+     * @param array  $datosPush    Datos extra que viajan en el push
+     * @return array|null id, total_destinatarios y push; null si no hay a quien avisar
+     */
+    public static function crearDesdeSistema(PDO $db, $titulo, $cuerpo, $idCategoria, $criterioTexto, array $estudiantes, $idUsuarioEnvio, array $datosPush = array())
+    {
+        $destinatarios = self::resolverDestinatarios($db, $estudiantes);
+
+        if (count($destinatarios) === 0 || !$idUsuarioEnvio) {
+            return null;
+        }
+
+        $idNotificacion = Uuid::generar();
+
+        $db->beginTransaction();
+        try {
+            $insertar = $db->prepare("
+                INSERT INTO notificaciones
+                    (id, id_tenant, titulo, cuerpo, id_categoria, criterio_texto, incluir_whatsapp, enviar_correo, id_usuario_envio)
+                VALUES
+                    (:id, :id_tenant, :titulo, :cuerpo, :id_categoria, :criterio_texto, 0, 0, :id_usuario_envio)
+            ");
+            $insertar->bindValue(':id', $idNotificacion);
+            $insertar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $insertar->bindValue(':titulo', $titulo);
+            $insertar->bindValue(':cuerpo', $cuerpo);
+            $insertar->bindValue(':id_categoria', $idCategoria);
+            $insertar->bindValue(':criterio_texto', $criterioTexto);
+            $insertar->bindValue(':id_usuario_envio', $idUsuarioEnvio);
+            $insertar->execute();
+
+            $insertarDestinatario = $db->prepare("
+                INSERT INTO notificaciones_destinatarios
+                    (id, id_tenant, id_notificacion, id_estudiante, id_persona, id_usuario)
+                VALUES
+                    (:id, :id_tenant, :id_notificacion, :id_estudiante, :id_persona, :id_usuario)
+            ");
+
+            $idsUsuarios = array();
+            foreach ($destinatarios as $destinatario) {
+                $insertarDestinatario->bindValue(':id', Uuid::generar());
+                $insertarDestinatario->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $insertarDestinatario->bindValue(':id_notificacion', $idNotificacion);
+                $insertarDestinatario->bindValue(':id_estudiante', $destinatario['id_estudiante']);
+                $insertarDestinatario->bindValue(':id_persona', $destinatario['id_persona']);
+                $insertarDestinatario->bindValue(':id_usuario', $destinatario['id_usuario']);
+                $insertarDestinatario->execute();
+
+                if (!empty($destinatario['id_usuario'])) {
+                    $idsUsuarios[$destinatario['id_usuario']] = true;
+                }
+            }
+
+            $db->commit();
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            throw $e;
+        }
+
+        $resultadoPush = array('enviadas' => 0, 'sin_suscripcion' => 0);
+        if (count($idsUsuarios) > 0) {
+            $pushService = new PushNotificationService($db);
+            $resultadoPush = $pushService->notificarAUsuarios(
+                array_keys($idsUsuarios),
+                $titulo,
+                self::generarPreview($cuerpo),
+                array_merge(array('id_notificacion' => $idNotificacion, 'tipo' => 'notificacion'), $datosPush),
+                JWTService::PORTAL_PADRES
+            );
+        }
+
+        return array(
+            'id'                  => $idNotificacion,
+            'total_destinatarios' => count($destinatarios),
+            'push'                => $resultadoPush,
+        );
+    }
+
+    /**
      * Vista previa de a quienes llegaria la notificacion, sin crearla.
      * Le sirve al formulario para mostrar el conteo antes de enviar.
      */

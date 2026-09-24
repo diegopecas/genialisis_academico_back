@@ -151,6 +151,14 @@ class MiAgenda
             'permiso_padres' => 'padres.mi_cuenta.cobros',
             'orden'  => 11,
         ],
+        'tareas' => [
+            'nombre' => 'Tareas',
+            'icono'  => '📚',
+            'color'  => '#6610F2',
+            'metodo' => 'fuenteTareas',
+            'permiso_padres' => 'padres.tareas.ver',
+            'orden'  => 12,
+        ],
     ];
 
     // =====================================================================
@@ -958,6 +966,42 @@ class MiAgenda
                     'leida' => !empty($fila['fecha_lectura']),
                     'ruta'  => '/notificaciones',
                     'ruta_permisos' => ['padres.notificaciones.ver'],
+                ],
+            ]);
+        }
+
+        return $eventos;
+    }
+
+    /**
+     * Tareas del dia: la tarea publicada el dia de su asignacion y, si ya se
+     * califico, el dia de la calificacion. La consulta vive en el servicio de
+     * la tabla principal (TareasEstudiantes::eventosDelDia).
+     */
+    private static function fuenteTareas($db, $id_estudiante, $fecha, $contexto)
+    {
+        $filas = TareasEstudiantes::eventosDelDia($db, $id_estudiante, $fecha);
+        $eventos = [];
+
+        foreach ($filas as $fila) {
+            $esCalificada = $fila['tipo'] === 'calificada';
+
+            $detalle = $esCalificada
+                ? trim(($fila['valoracion_texto'] ?? '') . (!empty($fila['observacion']) ? ' · ' . self::resumirTexto($fila['observacion'], 160) : ''))
+                : 'Entregar el ' . self::fechaEnTexto($fila['fecha_entrega']) . (!empty($fila['descripcion']) ? '. ' . self::resumirTexto($fila['descripcion'], 180) : '');
+
+            $eventos[] = self::evento('tareas', $fila['tipo'], $fila['id'], [
+                'fecha_hora' => $fila['fecha_hora'],
+                'titulo'     => ($esCalificada ? 'Tarea calificada: ' : 'Nueva tarea: ') . $fila['titulo'],
+                'detalle'    => $detalle,
+                'etiqueta'   => $fila['area_nombre'],
+                'valor'      => $esCalificada ? $fila['valoracion_texto'] : null,
+                'orden'      => 650,
+                'meta'       => [
+                    'estado'           => $fila['estado'],
+                    'valoracion_color' => $fila['valoracion_color'],
+                    'ruta'             => '/tareas',
+                    'ruta_permisos'    => ['padres.tareas.ver'],
                 ],
             ]);
         }

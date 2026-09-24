@@ -99,12 +99,17 @@ class Calendarios
         // 3. Cumpleaños de estudiantes, colaboradores y acudientes
         $cumpleanos = self::cumpleanos($db, $anio, $mes);
 
+        // 4. Tareas de los hijos del acudiente, en su fecha de entrega. Solo
+        // en el portal de padres y con el permiso de tareas; si no, vacio.
+        $tareas = TareasEstudiantes::calendarioDelAcudiente($db, JWTService::requerirAutenticacion(), $fecha_inicio, $fecha_fin);
+
         Flight::json([
             'anio' => $anio,
             'mes' => $mes,
             'dias' => $dias,
             'eventos' => $eventos,
-            'cumpleanos' => $cumpleanos
+            'cumpleanos' => $cumpleanos,
+            'tareas' => $tareas
         ]);
     }
 
