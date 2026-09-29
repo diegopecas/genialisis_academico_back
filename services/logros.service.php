@@ -277,35 +277,69 @@ class Logros
      * traen todos los del area, de todos los niveles, porque una misma
      * actividad puede amarrar indicadores de varios niveles: en la clase estan
      * los ninos de todos los niveles al tiempo.
+     *
+     * Devuelve la misma forma agrupada que el hermano de grupo y area
+     * ({ id, nombre, indicadores: [] }) para que las pantallas que consumen
+     * cualquiera de los dos no tengan que distinguir el origen. El nivel y el
+     * corte viajan en el logro como contexto para mostrarlo en la UI.
      */
     public static function getByAreaConIndicadores($id_area_academica)
     {
         try {
             $db = Flight::db();
+            // INNER JOIN contra indicadores: un logro sin indicadores no aporta
+            // nada a la pantalla de asociar, que es de donde se consume.
             $sentence = $db->prepare("
                 SELECT
-                    l.id,
-                    l.nombre,
+                    l.id AS logro_id,
+                    l.nombre AS logro_nombre,
                     l.id_nivel,
                     niv.nombre AS nombre_nivel,
                     niv.orden AS orden_nivel,
                     l.id_corte_academico,
                     cac.nombre AS nombre_corte_academico,
-                    il.id AS id_indicador_logro,
-                    il.nombre AS nombre_indicador
+                    ed.nombre AS esfera_nombre,
+                    il.id AS indicador_id,
+                    il.nombre AS indicador_nombre
                 FROM logros l
+                INNER JOIN indicadores_logros il ON il.id_logro = l.id
                 LEFT JOIN niveles_area_academica niv ON l.id_nivel = niv.id
                 LEFT JOIN cortes_academicos cac ON l.id_corte_academico = cac.id
-                LEFT JOIN indicadores_logros il ON il.id_logro = l.id
+                LEFT JOIN esferas_desarrollo ed ON l.id_esfera_desarrollo = ed.id
                 WHERE l.id_area_academica = :id_area_academica
-                AND l.id_tenant = :id_tenant
+                AND l.id_tenant = :id_tenant_l
+                AND il.id_tenant = :id_tenant_il
                 ORDER BY niv.orden, cac.orden, l.nombre, il.nombre
             ");
             $sentence->bindParam(':id_area_academica', $id_area_academica);
-            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant_l', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant_il', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
-            $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
-            Flight::json($response);
+            $rows = $sentence->fetchAll(PDO::FETCH_ASSOC);
+
+            $logrosAgrupados = [];
+            foreach ($rows as $row) {
+                $lid = $row['logro_id'];
+                if (!isset($logrosAgrupados[$lid])) {
+                    $logrosAgrupados[$lid] = [
+                        'id' => $lid,
+                        'nombre' => $row['logro_nombre'],
+                        'esfera' => $row['esfera_nombre'],
+                        'id_nivel' => $row['id_nivel'],
+                        'nombre_nivel' => $row['nombre_nivel'],
+                        'orden_nivel' => $row['orden_nivel'],
+                        'id_corte_academico' => $row['id_corte_academico'],
+                        'nombre_corte_academico' => $row['nombre_corte_academico'],
+                        'indicadores' => []
+                    ];
+                }
+                $logrosAgrupados[$lid]['indicadores'][] = [
+                    'id' => $row['indicador_id'],
+                    'nombre' => $row['indicador_nombre']
+                ];
+            }
+
+            Flight::json(array_values($logrosAgrupados));
         } catch (Exception $e) {
             error_log("Error en getByAreaConIndicadores: " . $e->getMessage());
             Flight::json(['error' => 'Error al obtener los logros del area'], 500);

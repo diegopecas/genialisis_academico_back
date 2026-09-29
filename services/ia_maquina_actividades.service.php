@@ -272,10 +272,17 @@ PROMPT;
             $id_sprint = $data['id_sprint'] ?? null;
             $id_grupo = $data['id_grupo'] ?? null;
             $id_area = $data['id_area'] ?? null;
+            // Una clase de curso extracurricular no cuelga de un grupo: la tarea
+            // se identifica por el curso y id_grupo queda nulo.
+            $id_curso_extra = $data['id_curso_extra'] ?? null;
             $es_tarea_adicional = !empty($data['es_tarea_adicional']) ? 1 : 0;
 
-            if (!$id_sprint || !$id_grupo || !$id_area) {
-                Flight::json(["error" => "id_sprint, id_grupo e id_area son requeridos"], 400);
+            if ($id_curso_extra) {
+                $id_grupo = null;
+            }
+
+            if (!$id_sprint || !$id_area || (!$id_grupo && !$id_curso_extra)) {
+                Flight::json(["error" => "id_sprint, id_area y uno de id_grupo o id_curso_extra son requeridos"], 400);
                 return;
             }
 
@@ -374,9 +381,9 @@ PROMPT;
 
                 $idTarea = Uuid::generar();
                 $stmtTarea = $db->prepare("
-                    INSERT INTO tareas_x_sprints 
-                    (id, id_tenant, id_sprint, id_actividad_academica, id_grupo, id_area_academica, id_estado_tarea, es_tarea_adicional, fecha_registro)
-                    VALUES (:id, :id_tenant, :id_sprint, :id_actividad, :id_grupo, :id_area, 1, :es_tarea_adicional, NOW())
+                    INSERT INTO tareas_x_sprints
+                    (id, id_tenant, id_sprint, id_actividad_academica, id_grupo, id_area_academica, id_curso_extra, id_estado_tarea, es_tarea_adicional, fecha_registro)
+                    VALUES (:id, :id_tenant, :id_sprint, :id_actividad, :id_grupo, :id_area, :id_curso_extra, 1, :es_tarea_adicional, NOW())
                 ");
                 $stmtTarea->bindValue(':id', $idTarea);
                 $stmtTarea->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -384,6 +391,7 @@ PROMPT;
                 $stmtTarea->bindValue(':id_actividad', $idActividad);
                 $stmtTarea->bindValue(':id_grupo', $id_grupo);
                 $stmtTarea->bindValue(':id_area', $id_area);
+                $stmtTarea->bindValue(':id_curso_extra', $id_curso_extra);
                 $stmtTarea->bindValue(':es_tarea_adicional', $es_tarea_adicional);
                 $stmtTarea->execute();
 
@@ -773,6 +781,9 @@ PROMPT;
             $id_grupo = $data['id_grupo'] ?? null;
             $id_area = $data['id_area'] ?? null;
             $id_sprint = $data['id_sprint'] ?? null;
+            // Cuando la sugerencia se pide desde un curso extracurricular no hay
+            // grupo ni grado: los logros salen del area y van por nivel.
+            $id_curso_extra = $data['id_curso_extra'] ?? null;
             $nombre_grupo = $data['nombre_grupo'] ?? 'el grupo';
             $nombre_area = $data['nombre_area'] ?? 'el área';
             $ambientes = $data['ambientes'] ?? [];
@@ -782,18 +793,14 @@ PROMPT;
             // los formularios. Las columnas siguen en la base con lo que ya
             // tenian las actividades viejas, y las nuevas se graban vacias.
 
-            if (!$titulo || !$id_grupo || !$id_area || !$id_sprint) {
-                Flight::json(["error" => "titulo, id_grupo, id_area e id_sprint son requeridos"], 400);
-                return;
+            if ($id_curso_extra) {
+                $id_grupo = null;
             }
 
-            $stmtGrados = $db->prepare("SELECT g.id, g.nombre FROM grados_x_grupo gxg INNER JOIN grados g ON gxg.id_grado = g.id WHERE gxg.id_grupo = :id_grupo AND gxg.id_tenant = :id_tenant");
-            $stmtGrados->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $stmtGrados->bindParam(':id_grupo', $id_grupo);
-            $stmtGrados->execute();
-            $grados = $stmtGrados->fetchAll(PDO::FETCH_ASSOC);
-            $gradosIds = array_column($grados, 'id');
-            $gradosTexto = implode(', ', array_column($grados, 'nombre'));
+            if (!$titulo || !$id_area || !$id_sprint || (!$id_grupo && !$id_curso_extra)) {
+                Flight::json(["error" => "titulo, id_area, id_sprint y uno de id_grupo o id_curso_extra son requeridos"], 400);
+                return;
+            }
 
             $stmtSprint = $db->prepare("SELECT s.id_corte_academico FROM sprints s WHERE s.id = :id_sprint AND s.id_tenant = :id_tenant");
             $stmtSprint->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -802,18 +809,52 @@ PROMPT;
             $sprint = $stmtSprint->fetch(PDO::FETCH_ASSOC);
             $id_corte = $sprint['id_corte_academico'] ?? null;
 
-            $placeholders = implode(',', array_fill(0, count($gradosIds), '?'));
-            $sqlLogros = "SELECT l.id AS logro_id, l.nombre AS logro_nombre, il.id AS indicador_id, il.nombre AS indicador_nombre
-                FROM logros l INNER JOIN indicadores_logros il ON l.id = il.id_logro
-                WHERE l.id_grado IN ($placeholders) AND l.id_area_academica = ?" . ($id_corte ? " AND l.id_corte_academico = ?" : "") . " AND l.id_tenant = ? ORDER BY l.nombre";
-            $stmtLogros = $db->prepare($sqlLogros);
-            $paramIndex = 1;
-            foreach ($gradosIds as $gid) { $stmtLogros->bindValue($paramIndex++, $gid); }
-            $stmtLogros->bindValue($paramIndex++, $id_area);
-            if ($id_corte) { $stmtLogros->bindValue($paramIndex++, $id_corte); }
-            $stmtLogros->bindValue($paramIndex++, TenantContext::id(), PDO::PARAM_INT);
-            $stmtLogros->execute();
-            $logrosIndicadores = $stmtLogros->fetchAll(PDO::FETCH_ASSOC);
+            if ($id_curso_extra) {
+                // El curso no tiene grado: para el prompt se describe por nivel,
+                // y los indicadores se traen de toda el area sin filtrar corte,
+                // porque en la clase estan los ninos de todos los niveles.
+                $gradosTexto = 'curso extracurricular, niños de distintas edades';
+
+                $stmtLogros = $db->prepare("SELECT l.id AS logro_id, l.nombre AS logro_nombre, il.id AS indicador_id, il.nombre AS indicador_nombre
+                    FROM logros l
+                    INNER JOIN indicadores_logros il ON l.id = il.id_logro
+                    WHERE l.id_area_academica = :id_area
+                    AND l.id_tenant = :id_tenant_l
+                    AND il.id_tenant = :id_tenant_il
+                    ORDER BY l.nombre, il.nombre");
+                $stmtLogros->bindValue(':id_area', $id_area);
+                $stmtLogros->bindValue(':id_tenant_l', TenantContext::id(), PDO::PARAM_INT);
+                $stmtLogros->bindValue(':id_tenant_il', TenantContext::id(), PDO::PARAM_INT);
+                $stmtLogros->execute();
+                $logrosIndicadores = $stmtLogros->fetchAll(PDO::FETCH_ASSOC);
+            } else {
+                $stmtGrados = $db->prepare("SELECT g.id, g.nombre FROM grados_x_grupo gxg INNER JOIN grados g ON gxg.id_grado = g.id WHERE gxg.id_grupo = :id_grupo AND gxg.id_tenant = :id_tenant");
+                $stmtGrados->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmtGrados->bindParam(':id_grupo', $id_grupo);
+                $stmtGrados->execute();
+                $grados = $stmtGrados->fetchAll(PDO::FETCH_ASSOC);
+                $gradosIds = array_column($grados, 'id');
+                $gradosTexto = implode(', ', array_column($grados, 'nombre'));
+
+                // Sin grados el IN quedaria vacio y rompe el SQL: no hay contra
+                // que buscar logros, se sigue sin indicadores.
+                if (empty($gradosIds)) {
+                    $logrosIndicadores = [];
+                } else {
+                    $placeholders = implode(',', array_fill(0, count($gradosIds), '?'));
+                    $sqlLogros = "SELECT l.id AS logro_id, l.nombre AS logro_nombre, il.id AS indicador_id, il.nombre AS indicador_nombre
+                        FROM logros l INNER JOIN indicadores_logros il ON l.id = il.id_logro
+                        WHERE l.id_grado IN ($placeholders) AND l.id_area_academica = ?" . ($id_corte ? " AND l.id_corte_academico = ?" : "") . " AND l.id_tenant = ? ORDER BY l.nombre";
+                    $stmtLogros = $db->prepare($sqlLogros);
+                    $paramIndex = 1;
+                    foreach ($gradosIds as $gid) { $stmtLogros->bindValue($paramIndex++, $gid); }
+                    $stmtLogros->bindValue($paramIndex++, $id_area);
+                    if ($id_corte) { $stmtLogros->bindValue($paramIndex++, $id_corte); }
+                    $stmtLogros->bindValue($paramIndex++, TenantContext::id(), PDO::PARAM_INT);
+                    $stmtLogros->execute();
+                    $logrosIndicadores = $stmtLogros->fetchAll(PDO::FETCH_ASSOC);
+                }
+            }
 
             $indicadoresTexto = "";
             foreach ($logrosIndicadores as $li) {
@@ -850,8 +891,12 @@ PROMPT;
             $tiposDisponibles = $stmtTipos->fetchAll(PDO::FETCH_ASSOC);
             $tiposTexto = implode(', ', array_map(function($t) { return "ID:{$t['id']} \"{$t['nombre']}\""; }, $tiposDisponibles));
 
+            // El destino se nombra distinto segun de donde venga la sugerencia:
+            // un curso extracurricular no es un grupo de la malla regular.
+            $etiquetaDestino = $id_curso_extra ? 'curso extracurricular' : 'grupo';
+
             $prompt = <<<PROMPT
-Eres un experto pedagógico en educación preescolar colombiana. Completa los campos faltantes para esta actividad del grupo "{$nombre_grupo}" (Grado: {$gradosTexto}) en el área "{$nombre_area}".
+Eres un experto pedagógico en educación preescolar colombiana. Completa los campos faltantes para esta actividad del {$etiquetaDestino} "{$nombre_grupo}" (Grado: {$gradosTexto}) en el área "{$nombre_area}".
 
 ACTIVIDAD:
 - Título: "{$titulo}"
