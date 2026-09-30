@@ -939,5 +939,227 @@ class Calificaciones
     {
         self::obtenerCalificacionesPorSprintEstudiantes($id_sprint, $id_estudiante);
     }
+    /**
+     * Reporte de calificaciones por actividad entre dos fechas
+     * (query: fecha_inicio, fecha_fin en formato YYYY-MM-DD).
+     *
+     * Actividades: todas las de grupo y de cursos extracurriculares ejecutadas
+     * en el rango, más las pendientes que ya tengan alguna calificación. La
+     * fecha que se compara es la de ejecución; si no la tiene, la de inicio
+     * del sprint.
+     * Estudiantes de cada actividad:
+     *  - De grupo: los que estaban en el grupo en esa fecha, según las fechas
+     *    de estudiantes_x_grupos. Una fila inactiva y sin fecha_fin no se toma
+     *    por fecha (no se sabe hasta cuándo estuvo).
+     *  - Extracurricular: la misma lógica de la lista de actividades
+     *    (inscritos activos en el curso), limitada a los que ya estaban
+     *    inscritos en esa fecha.
+     *  - En los dos casos se suma cualquiera que tenga una calificación en la
+     *    actividad, aunque ya se haya cambiado de grupo, retirado o
+     *    desinscrito.
+     * De cada estudiante, actividad y parámetro se toma la calificación más
+     * reciente, igual que en anidarCalificaciones, por los duplicados viejos.
+     *
+     * Devuelve { parametros: [{id, nombre}], filas: [...] }. Cada fila trae en
+     * 'calificaciones' un mapa id_parametro => {valor_cuantitativo, valor_cualitativo}.
+     */
+    public static function getReporteCalificacionesActividades()
+    {
+        try {
+            $fechaInicio = Flight::request()->query['fecha_inicio'] ?? '';
+            $fechaFin = Flight::request()->query['fecha_fin'] ?? '';
+            $formato = '/^\d{4}-\d{2}-\d{2}$/';
+            if (!preg_match($formato, $fechaInicio) || !preg_match($formato, $fechaFin)) {
+                Flight::json(['error' => 'Selecciona la fecha inicial y la final'], 400);
+                return;
+            }
+            if ($fechaInicio > $fechaFin) {
+                Flight::json(['error' => 'La fecha inicial no puede ser mayor que la final'], 400);
+                return;
+            }
+
+            $db = Flight::db();
+            $idTenant = TenantContext::id();
+
+            // Condición de las actividades que entran al reporte. Se repite en
+            // varias consultas con un sufijo en los parámetros, porque PDO con
+            // prepares nativos no deja repetir un mismo nombre.
+            $condicionActividades = function ($sufijo) {
+                return "txs.id_tenant = :id_tenant_$sufijo
+                  AND (txs.id_estado_tarea = 2
+                       OR EXISTS (SELECT 1 FROM calificaciones cx
+                                  WHERE cx.id_tarea_x_sprint = txs.id
+                                    AND cx.id_tenant = txs.id_tenant))
+                  AND DATE(COALESCE(txs.fecha_ejecucion, s.fecha_inicial)) BETWEEN :fecha_inicio_$sufijo AND :fecha_fin_$sufijo";
+            };
+            $enlazarCondicion = function ($stmt, $sufijo) use ($idTenant, $fechaInicio, $fechaFin) {
+                $stmt->bindValue(":id_tenant_$sufijo", $idTenant, PDO::PARAM_INT);
+                $stmt->bindValue(":fecha_inicio_$sufijo", $fechaInicio);
+                $stmt->bindValue(":fecha_fin_$sufijo", $fechaFin);
+            };
+
+            // 1. Parámetros de calificación del jardín (definen las columnas)
+            $stmt = $db->prepare("SELECT id, nombre
+                FROM parametros_calificaciones
+                WHERE id_tenant = :id_tenant
+                ORDER BY nombre");
+            $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $stmt->execute();
+            $parametros = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            // 2. Actividades del rango (de grupo y extracurriculares)
+            $stmt = $db->prepare("SELECT
+                    txs.id AS id_tarea_x_sprint,
+                    txs.fecha_ejecucion,
+                    s.nombre_sprint,
+                    aa.titulo AS titulo_actividad,
+                    ar.nombre AS nombre_area,
+                    txs.id_curso_extra,
+                    COALESCE(g.nombre, ce.nombre) AS nombre_grupo_curso,
+                    -- Quien la ejecutó: el docente que la inició y, si no quedó, el que la finalizó
+                    COALESCE(
+                        NULLIF(TRIM(CONCAT_WS(' ', pdi.primer_nombre, pdi.primer_apellido)), ''),
+                        NULLIF(TRIM(CONCAT_WS(' ', pdf.primer_nombre, pdf.primer_apellido)), '')
+                    ) AS ejecutada_por
+                FROM tareas_x_sprints txs
+                INNER JOIN sprints s ON s.id = txs.id_sprint
+                INNER JOIN actividades_academicas aa ON aa.id = txs.id_actividad_academica
+                LEFT JOIN grupos g ON g.id = txs.id_grupo
+                LEFT JOIN cursos_extra ce ON ce.id = txs.id_curso_extra
+                LEFT JOIN areas_academicas ar ON ar.id = COALESCE(txs.id_area_academica, ce.id_area_academica)
+                LEFT JOIN docentes di ON di.id = txs.id_docente_inicia
+                LEFT JOIN personas pdi ON pdi.id = di.id_persona
+                LEFT JOIN docentes df ON df.id = txs.id_docente
+                LEFT JOIN personas pdf ON pdf.id = df.id_persona
+                WHERE " . $condicionActividades('act') . "
+                ORDER BY DATE(COALESCE(txs.fecha_ejecucion, s.fecha_inicial)), txs.fecha_ejecucion, aa.titulo");
+            $enlazarCondicion($stmt, 'act');
+            $stmt->execute();
+            $actividades = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            // 3. Estudiantes de cada actividad
+            $stmt = $db->prepare("SELECT
+                    x.id_tarea_x_sprint,
+                    e.id AS id_estudiante,
+                    TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_estudiante
+                FROM (
+                    -- De grupo: los que estaban en el grupo ese día
+                    SELECT txs.id AS id_tarea_x_sprint, exg.id_estudiante
+                    FROM tareas_x_sprints txs
+                    INNER JOIN sprints s ON s.id = txs.id_sprint
+                    INNER JOIN estudiantes_x_grupos exg
+                        ON exg.id_grupo = txs.id_grupo
+                       AND exg.id_tenant = txs.id_tenant
+                       AND exg.fecha_inicio <= DATE(COALESCE(txs.fecha_ejecucion, s.fecha_inicial))
+                       AND (exg.fecha_fin IS NULL OR exg.fecha_fin >= DATE(COALESCE(txs.fecha_ejecucion, s.fecha_inicial)))
+                       AND (exg.activo = 1 OR exg.fecha_fin IS NOT NULL)
+                    WHERE " . $condicionActividades('grp') . "
+                    UNION
+                    -- Extracurricular: inscritos activos, como en la lista de actividades
+                    SELECT txs.id AS id_tarea_x_sprint, exce.id_estudiante
+                    FROM tareas_x_sprints txs
+                    INNER JOIN sprints s ON s.id = txs.id_sprint
+                    INNER JOIN estudiantes_x_cursos_extra exce
+                        ON exce.id_curso_extra = txs.id_curso_extra
+                       AND exce.id_tenant = txs.id_tenant
+                       AND exce.activo = 1
+                       AND exce.fecha_inscripcion <= DATE(COALESCE(txs.fecha_ejecucion, s.fecha_inicial))
+                    INNER JOIN estudiantes ee ON ee.id = exce.id_estudiante AND ee.activo = 1
+                    WHERE " . $condicionActividades('ext') . "
+                    UNION
+                    -- Cualquiera que tenga calificación en la actividad
+                    SELECT c.id_tarea_x_sprint, c.id_estudiante
+                    FROM calificaciones c
+                    INNER JOIN tareas_x_sprints txs ON txs.id = c.id_tarea_x_sprint
+                    INNER JOIN sprints s ON s.id = txs.id_sprint
+                    WHERE c.id_tenant = txs.id_tenant
+                      AND " . $condicionActividades('cal') . "
+                ) x
+                INNER JOIN estudiantes e ON e.id = x.id_estudiante
+                INNER JOIN personas p ON p.id = e.id_persona
+                ORDER BY p.primer_nombre, p.primer_apellido");
+            $enlazarCondicion($stmt, 'grp');
+            $enlazarCondicion($stmt, 'ext');
+            $enlazarCondicion($stmt, 'cal');
+            $stmt->execute();
+
+            // Estudiantes en orden alfabético y, para cada uno, sus actividades
+            $estudiantes = [];
+            $actividadesPorEstudiante = [];
+            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $registro) {
+                $idEstudiante = $registro['id_estudiante'];
+                if (!isset($estudiantes[$idEstudiante])) {
+                    $estudiantes[$idEstudiante] = $registro['nombre_estudiante'];
+                }
+                $actividadesPorEstudiante[$idEstudiante][$registro['id_tarea_x_sprint']] = true;
+            }
+
+            // 4. Calificaciones de esas actividades (la más reciente por combinación)
+            $stmt = $db->prepare("SELECT
+                    c.id_tarea_x_sprint,
+                    c.id_estudiante,
+                    c.id_parametro_calificacion,
+                    v.valor_cuantitativo,
+                    v.valor_cualitativo
+                FROM calificaciones c
+                INNER JOIN tareas_x_sprints txs ON txs.id = c.id_tarea_x_sprint
+                INNER JOIN sprints s ON s.id = txs.id_sprint
+                INNER JOIN valores_parametros_calificaciones v ON v.id = c.id_valor_parametro_calificacion
+                WHERE c.id_tenant = txs.id_tenant
+                  AND " . $condicionActividades('val') . "
+                  AND NOT EXISTS (
+                        SELECT 1 FROM calificaciones c2
+                        WHERE c2.id_tarea_x_sprint = c.id_tarea_x_sprint
+                          AND c2.id_estudiante = c.id_estudiante
+                          AND c2.id_parametro_calificacion = c.id_parametro_calificacion
+                          AND c2.id_tenant = c.id_tenant
+                          AND (c2.fecha_registro > c.fecha_registro
+                               OR (c2.fecha_registro = c.fecha_registro AND c2.id > c.id))
+                  )");
+            $enlazarCondicion($stmt, 'val');
+            $stmt->execute();
+
+            $calificaciones = [];
+            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $cal) {
+                $calificaciones[$cal['id_tarea_x_sprint']][$cal['id_estudiante']][$cal['id_parametro_calificacion']] = [
+                    'valor_cuantitativo' => $cal['valor_cuantitativo'],
+                    'valor_cualitativo' => $cal['valor_cualitativo']
+                ];
+            }
+
+            // 5. Una fila por estudiante y actividad en la que estuvo
+            $filas = [];
+            foreach ($estudiantes as $idEstudiante => $nombreEstudiante) {
+                foreach ($actividades as $actividad) {
+                    $idTarea = $actividad['id_tarea_x_sprint'];
+                    if (!isset($actividadesPorEstudiante[$idEstudiante][$idTarea])) {
+                        continue;
+                    }
+                    $filas[] = [
+                        'id' => $idTarea . '_' . $idEstudiante,
+                        'id_estudiante' => $idEstudiante,
+                        'nombre_estudiante' => $nombreEstudiante,
+                        'id_tarea_x_sprint' => $idTarea,
+                        'tipo' => $actividad['id_curso_extra'] ? 'Extracurricular' : 'Grupo',
+                        'nombre_grupo_curso' => $actividad['nombre_grupo_curso'],
+                        'nombre_sprint' => $actividad['nombre_sprint'],
+                        'fecha_ejecucion' => $actividad['fecha_ejecucion'],
+                        'nombre_area' => $actividad['nombre_area'],
+                        'titulo_actividad' => $actividad['titulo_actividad'],
+                        'ejecutada_por' => $actividad['ejecutada_por'],
+                        'calificaciones' => $calificaciones[$idTarea][$idEstudiante] ?? new stdClass()
+                    ];
+                }
+            }
+
+            Flight::json([
+                'parametros' => $parametros,
+                'filas' => $filas
+            ]);
+        } catch (Exception $e) {
+            error_log('Error en getReporteCalificacionesActividades(): ' . $e->getMessage());
+            Flight::json(['error' => 'Error al obtener el reporte de calificaciones por actividad'], 500);
+        }
+    }
 
 }
