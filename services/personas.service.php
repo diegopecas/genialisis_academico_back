@@ -2,6 +2,13 @@
 class Personas
 {
     /**
+     * Permiso que habilita corregir el tipo o el numero de documento de una
+     * persona ya creada. Sin el, replace() rechaza cualquier cambio de
+     * documento aunque el front lo mande.
+     */
+    const PERMISO_EDITAR_DOCUMENTO = 'personas.editar_documento';
+
+    /**
      * Normaliza un campo de texto antes de guardarlo:
      * quita espacios sobrantes y convierte la cadena vacia en NULL.
      * Se usa en los nombres y apellidos para que la concatenacion del nombre
@@ -253,6 +260,172 @@ class Personas
     }
 
     /**
+     * Mensaje de duplicado cuando se esta corrigiendo el documento de una
+     * persona que ya existe. Aqui no aplica "busque el documento": lo que
+     * pasa es que el numero nuevo ya es de otra persona.
+     */
+    private static function mensajeDuplicadoCorreccion($existente)
+    {
+        $mensaje = 'No se puede corregir el documento: el número ' . $existente['numero_identificacion']
+            . ' ya pertenece a otra persona';
+
+        if (!empty($existente['nombre'])) {
+            $mensaje .= ' (' . $existente['nombre'] . ')';
+        }
+
+        if (!empty($existente['tipo_identificacion'])) {
+            $mensaje .= ', registrada como ' . $existente['tipo_identificacion'];
+        }
+
+        return $mensaje . '.';
+    }
+
+    /**
+     * Documento guardado hoy de la persona, con el nombre del tipo para el
+     * historial. Devuelve null si la persona no existe en el tenant.
+     */
+    private static function obtenerDocumentoActual(PDO $db, $id)
+    {
+        $sentence = $db->prepare("SELECT p.id_tipo_identificacion,
+                                         p.numero_identificacion,
+                                         ti.nombre AS tipo_identificacion
+                                  FROM personas p
+                                  LEFT JOIN tipos_identificacion ti ON ti.id = p.id_tipo_identificacion
+                                  WHERE p.id = :id AND p.id_tenant = :id_tenant");
+        $sentence->bindParam(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $fila = $sentence->fetch();
+
+        return $fila ? $fila : null;
+    }
+
+    /**
+     * Nombre del tipo de identificacion. tipos_identificacion es global (no
+     * tiene id_tenant), por eso no se filtra por tenant.
+     */
+    private static function nombreTipoIdentificacion(PDO $db, $id_tipo_identificacion)
+    {
+        $sentence = $db->prepare("SELECT nombre FROM tipos_identificacion WHERE id = :id");
+        $sentence->bindParam(':id', $id_tipo_identificacion);
+        $sentence->execute();
+        $nombre = $sentence->fetchColumn();
+
+        return $nombre !== false ? $nombre : (string) $id_tipo_identificacion;
+    }
+
+    /**
+     * Usuarios de la persona cuyo nombre de usuario es el numero de documento
+     * anterior. Solo esos se renombran al corregir el documento: si alguien
+     * escogio otro nombre de usuario, se respeta.
+     */
+    private static function usuariosConDocumentoAnterior(PDO $db, $id_persona, $numero_anterior)
+    {
+        $sentence = $db->prepare("SELECT id, usuario
+                                  FROM usuarios
+                                  WHERE id_persona = :id_persona
+                                    AND usuario = :usuario
+                                    AND id_tenant = :id_tenant");
+        $sentence->bindParam(':id_persona', $id_persona);
+        $sentence->bindParam(':usuario', $numero_anterior);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+
+        return $sentence->fetchAll();
+    }
+
+    /**
+     * Usuario de OTRA persona que ya tiene ese nombre de usuario en el tenant,
+     * o null. Con el nombre de la persona para el mensaje.
+     */
+    private static function usuarioOcupado(PDO $db, $usuario, $id_usuario_excluir)
+    {
+        $sentence = $db->prepare("SELECT u.id,
+                                         TRIM(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido)) AS nombre
+                                  FROM usuarios u
+                                  LEFT JOIN personas p ON p.id = u.id_persona AND p.id_tenant = u.id_tenant
+                                  WHERE u.usuario = :usuario
+                                    AND u.id <> :id_excluir
+                                    AND u.id_tenant = :id_tenant
+                                  LIMIT 1");
+        $sentence->bindParam(':usuario', $usuario);
+        $sentence->bindParam(':id_excluir', $id_usuario_excluir);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $fila = $sentence->fetch();
+
+        return $fila ? $fila : null;
+    }
+
+    /**
+     * Deja constancia del cambio en historial_cambios_persona, la misma tabla
+     * que usa el portal de padres cuando el acudiente actualiza sus datos.
+     */
+    private static function registrarHistorial(PDO $db, $id_persona, $id_usuario, $campo, $valor_anterior, $valor_nuevo)
+    {
+        $sentence = $db->prepare("INSERT INTO historial_cambios_persona
+            (id, id_tenant, id_persona, id_usuario, campo_modificado, valor_anterior, valor_nuevo, ip_address)
+            VALUES (:id, :id_tenant, :id_persona, :id_usuario, :campo_modificado, :valor_anterior, :valor_nuevo, :ip_address)");
+
+        $sentence->bindValue(':id', Uuid::generar());
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_persona', $id_persona);
+        $sentence->bindValue(':id_usuario', $id_usuario);
+        $sentence->bindValue(':campo_modificado', $campo);
+        $sentence->bindValue(':valor_anterior', $valor_anterior);
+        $sentence->bindValue(':valor_nuevo', $valor_nuevo);
+        $sentence->bindValue(':ip_address', $_SERVER['REMOTE_ADDR'] ?? null);
+        $sentence->execute();
+    }
+
+    /**
+     * Renombra el usuario en la BD maestra (usuarios_tenants, que es la que
+     * resuelve el tenant en el pre-login, y el indice de credenciales
+     * biometricas). Solo toca las filas del tenant actual: la misma persona
+     * puede tener usuario en otro jardin con el documento viejo.
+     *
+     * Lanza excepcion si algo falla, para que replace() revierta todo.
+     */
+    private static function renombrarUsuarioEnMaster($usuario_anterior, $usuario_nuevo)
+    {
+        $dbMaster = Flight::db_master();
+        $codigo = TenantContext::codigo();
+
+        $stmtTenant = $dbMaster->prepare("SELECT id FROM tenants WHERE codigo = :codigo");
+        $stmtTenant->bindParam(':codigo', $codigo);
+        $stmtTenant->execute();
+        $idTenantMaster = $stmtTenant->fetchColumn();
+
+        if ($idTenantMaster === false) {
+            throw new Exception("Tenant no encontrado en master: {$codigo}");
+        }
+
+        // Si la fila del usuario nuevo ya existe (quedo de antes), basta con
+        // quitar la del anterior; el indice unico (usuario, id_tenant) no deja
+        // renombrar encima de ella.
+        $stmtExiste = $dbMaster->prepare("SELECT id FROM usuarios_tenants WHERE usuario = :usuario AND id_tenant = :id_tenant");
+        $stmtExiste->bindParam(':usuario', $usuario_nuevo);
+        $stmtExiste->bindParam(':id_tenant', $idTenantMaster);
+        $stmtExiste->execute();
+
+        if ($stmtExiste->fetch()) {
+            $stmt = $dbMaster->prepare("DELETE FROM usuarios_tenants WHERE usuario = :anterior AND id_tenant = :id_tenant");
+        } else {
+            $stmt = $dbMaster->prepare("UPDATE usuarios_tenants SET usuario = :nuevo WHERE usuario = :anterior AND id_tenant = :id_tenant");
+            $stmt->bindParam(':nuevo', $usuario_nuevo);
+        }
+        $stmt->bindParam(':anterior', $usuario_anterior);
+        $stmt->bindParam(':id_tenant', $idTenantMaster);
+        $stmt->execute();
+
+        $stmtWebauthn = $dbMaster->prepare("UPDATE webauthn_credentials_master SET usuario = :nuevo WHERE usuario = :anterior AND tenant_codigo = :codigo");
+        $stmtWebauthn->bindParam(':nuevo', $usuario_nuevo);
+        $stmtWebauthn->bindParam(':anterior', $usuario_anterior);
+        $stmtWebauthn->bindParam(':codigo', $codigo);
+        $stmtWebauthn->execute();
+    }
+
+    /**
      * Busca una persona por su documento.
      *
      * La busqueda va SOLO por numero, aunque el tipo se siga recibiendo: el
@@ -422,11 +595,23 @@ class Personas
         }
     }
 
+    /**
+     * Actualiza la persona.
+     *
+     * El documento (tipo y numero) solo se puede cambiar con el permiso
+     * personas.editar_documento. Cuando cambia:
+     * - no se deja poner un numero que ya tiene otra persona del tenant;
+     * - los usuarios de la persona cuyo nombre de usuario era el numero
+     *   anterior pasan al numero nuevo, en el tenant y en la BD maestra;
+     * - queda el antes y el despues en historial_cambios_persona.
+     * Todo va en una transaccion: si algo falla no queda nada a medias.
+     */
     public static function replace()
     {
-        try {
-            $db = Flight::db();
+        $db = Flight::db();
+        $masterRenombrado = [];
 
+        try {
             $id = Flight::request()->data['id'];
             $primer_nombre = self::normalizarTexto(isset(Flight::request()->data['primer_nombre']) ? Flight::request()->data['primer_nombre'] : null);
             $segundo_nombre = self::normalizarTexto(isset(Flight::request()->data['segundo_nombre']) ? Flight::request()->data['segundo_nombre'] : null);
@@ -453,14 +638,58 @@ class Personas
                 return;
             }
 
+            $actual = self::obtenerDocumentoActual($db, $id);
+
+            if (!$actual) {
+                Flight::json(array('error' => 'No se encontró la persona con el ID especificado'), 404);
+                return;
+            }
+
+            // Se compara como texto y sin espacios: el front puede mandar el
+            // tipo como numero o como cadena y eso no es un cambio.
+            $numeroAnterior = trim((string) $actual['numero_identificacion']);
+            $numeroNuevo = trim((string) $numero_identificacion);
+            $cambiaNumero = $numeroAnterior !== $numeroNuevo;
+            $cambiaTipo = (string) $actual['id_tipo_identificacion'] !== (string) $id_tipo_identificacion;
+            $cambiaDocumento = $cambiaNumero || $cambiaTipo;
+
+            $userData = null;
+            if ($cambiaDocumento) {
+                $userData = JWTService::requerirAutenticacion();
+
+                // Se usa tiene() y no validar(): la validacion general de
+                // permisos del back esta apagada y este control si debe cumplirse.
+                if (!PermisosService::tiene($userData, self::PERMISO_EDITAR_DOCUMENTO)) {
+                    Flight::json(array('error' => 'No tiene permiso para corregir el documento de identidad.'), 403);
+                    return;
+                }
+            }
+
             // Se excluye la propia persona: editarla sin cambiarle el
             // documento no puede chocar consigo misma.
             $existente = self::buscarPorNumero($db, $numero_identificacion, $id);
 
             if ($existente) {
-                Flight::json(array('error' => self::mensajeDuplicado($existente)), 400);
+                $mensaje = $cambiaDocumento ? self::mensajeDuplicadoCorreccion($existente) : self::mensajeDuplicado($existente);
+                Flight::json(array('error' => $mensaje), 400);
                 return;
             }
+
+            // Usuarios que pasan al numero nuevo. Se valida antes de tocar
+            // nada que el numero nuevo no sea ya el usuario de otra persona.
+            $usuariosRenombrar = $cambiaNumero ? self::usuariosConDocumentoAnterior($db, $id, $numeroAnterior) : [];
+
+            foreach ($usuariosRenombrar as $usuarioRenombrar) {
+                $ocupado = self::usuarioOcupado($db, $numeroNuevo, $usuarioRenombrar['id']);
+                if ($ocupado) {
+                    $quien = !empty($ocupado['nombre']) ? ' (' . $ocupado['nombre'] . ')' : '';
+                    Flight::json(array('error' => 'No se puede corregir el documento: el número ' . $numeroNuevo
+                        . ' ya es el usuario de ingreso de otra persona' . $quien . '.'), 400);
+                    return;
+                }
+            }
+
+            $db->beginTransaction();
 
             // Preparar la sentencia SQL
             $sentence = $db->prepare("UPDATE personas SET 
@@ -504,11 +733,60 @@ class Personas
             // Ejecutar la sentencia
             $sentence->execute();
 
+            if ($cambiaDocumento) {
+                $idUsuario = $userData->id ?? null;
+
+                foreach ($usuariosRenombrar as $usuarioRenombrar) {
+                    $stmtUsuario = $db->prepare("UPDATE usuarios SET usuario = :usuario WHERE id = :id AND id_tenant = :id_tenant");
+                    $stmtUsuario->bindParam(':usuario', $numeroNuevo);
+                    $stmtUsuario->bindParam(':id', $usuarioRenombrar['id']);
+                    $stmtUsuario->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $stmtUsuario->execute();
+                }
+
+                if ($idUsuario) {
+                    if ($cambiaTipo) {
+                        self::registrarHistorial($db, $id, $idUsuario, 'Tipo de Identificación',
+                            $actual['tipo_identificacion'], self::nombreTipoIdentificacion($db, $id_tipo_identificacion));
+                    }
+                    if ($cambiaNumero) {
+                        self::registrarHistorial($db, $id, $idUsuario, 'Número de Identificación', $numeroAnterior, $numeroNuevo);
+                    }
+                    foreach ($usuariosRenombrar as $usuarioRenombrar) {
+                        self::registrarHistorial($db, $id, $idUsuario, 'Usuario', $usuarioRenombrar['usuario'], $numeroNuevo);
+                    }
+                }
+
+                // La maestra va al final, justo antes del commit, para que un
+                // error del tenant no la deje cambiada.
+                if (!empty($usuariosRenombrar)) {
+                    self::renombrarUsuarioEnMaster($numeroAnterior, $numeroNuevo);
+                    $masterRenombrado = [$numeroAnterior, $numeroNuevo];
+                }
+
+                error_log("Documento corregido: persona $id, $numeroAnterior -> $numeroNuevo, usuarios renombrados: " . count($usuariosRenombrar));
+            }
+
+            $db->commit();
+
             error_log("ID actualizado: $id");
 
             // Obtener y devolver los datos actualizados
             self::getById($id);
         } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+
+            // Si la maestra alcanzo a cambiar y el tenant no, se devuelve.
+            if (!empty($masterRenombrado)) {
+                try {
+                    self::renombrarUsuarioEnMaster($masterRenombrado[1], $masterRenombrado[0]);
+                } catch (Exception $eMaster) {
+                    error_log("Error revirtiendo el usuario en master: " . $eMaster->getMessage());
+                }
+            }
+
             error_log("Error en la ejecución del método replace: " . $e->getMessage());
             Flight::json(array('error' => 'Hubo un problema al actualizar la persona. Inténtalo más tarde.'), 500);
         }
