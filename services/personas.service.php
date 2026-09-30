@@ -379,53 +379,6 @@ class Personas
     }
 
     /**
-     * Renombra el usuario en la BD maestra (usuarios_tenants, que es la que
-     * resuelve el tenant en el pre-login, y el indice de credenciales
-     * biometricas). Solo toca las filas del tenant actual: la misma persona
-     * puede tener usuario en otro jardin con el documento viejo.
-     *
-     * Lanza excepcion si algo falla, para que replace() revierta todo.
-     */
-    private static function renombrarUsuarioEnMaster($usuario_anterior, $usuario_nuevo)
-    {
-        $dbMaster = Flight::db_master();
-        $codigo = TenantContext::codigo();
-
-        $stmtTenant = $dbMaster->prepare("SELECT id FROM tenants WHERE codigo = :codigo");
-        $stmtTenant->bindParam(':codigo', $codigo);
-        $stmtTenant->execute();
-        $idTenantMaster = $stmtTenant->fetchColumn();
-
-        if ($idTenantMaster === false) {
-            throw new Exception("Tenant no encontrado en master: {$codigo}");
-        }
-
-        // Si la fila del usuario nuevo ya existe (quedo de antes), basta con
-        // quitar la del anterior; el indice unico (usuario, id_tenant) no deja
-        // renombrar encima de ella.
-        $stmtExiste = $dbMaster->prepare("SELECT id FROM usuarios_tenants WHERE usuario = :usuario AND id_tenant = :id_tenant");
-        $stmtExiste->bindParam(':usuario', $usuario_nuevo);
-        $stmtExiste->bindParam(':id_tenant', $idTenantMaster);
-        $stmtExiste->execute();
-
-        if ($stmtExiste->fetch()) {
-            $stmt = $dbMaster->prepare("DELETE FROM usuarios_tenants WHERE usuario = :anterior AND id_tenant = :id_tenant");
-        } else {
-            $stmt = $dbMaster->prepare("UPDATE usuarios_tenants SET usuario = :nuevo WHERE usuario = :anterior AND id_tenant = :id_tenant");
-            $stmt->bindParam(':nuevo', $usuario_nuevo);
-        }
-        $stmt->bindParam(':anterior', $usuario_anterior);
-        $stmt->bindParam(':id_tenant', $idTenantMaster);
-        $stmt->execute();
-
-        $stmtWebauthn = $dbMaster->prepare("UPDATE webauthn_credentials_master SET usuario = :nuevo WHERE usuario = :anterior AND tenant_codigo = :codigo");
-        $stmtWebauthn->bindParam(':nuevo', $usuario_nuevo);
-        $stmtWebauthn->bindParam(':anterior', $usuario_anterior);
-        $stmtWebauthn->bindParam(':codigo', $codigo);
-        $stmtWebauthn->execute();
-    }
-
-    /**
      * Busca una persona por su documento.
      *
      * La busqueda va SOLO por numero, aunque el tipo se siga recibiendo: el
@@ -760,7 +713,7 @@ class Personas
                 // La maestra va al final, justo antes del commit, para que un
                 // error del tenant no la deje cambiada.
                 if (!empty($usuariosRenombrar)) {
-                    self::renombrarUsuarioEnMaster($numeroAnterior, $numeroNuevo);
+                    Usuarios::renombrarEnMaster($numeroAnterior, $numeroNuevo);
                     $masterRenombrado = [$numeroAnterior, $numeroNuevo];
                 }
 
@@ -781,7 +734,7 @@ class Personas
             // Si la maestra alcanzo a cambiar y el tenant no, se devuelve.
             if (!empty($masterRenombrado)) {
                 try {
-                    self::renombrarUsuarioEnMaster($masterRenombrado[1], $masterRenombrado[0]);
+                    Usuarios::renombrarEnMaster($masterRenombrado[1], $masterRenombrado[0]);
                 } catch (Exception $eMaster) {
                     error_log("Error revirtiendo el usuario en master: " . $eMaster->getMessage());
                 }

@@ -27,6 +27,35 @@ class HistorialCambiosPersona
         }
     }
 
+    /**
+     * Registra un cambio desde el back, dentro de la transaccion de quien lo
+     * llama. Lo usan los servicios que cambian datos de la persona sin pasar
+     * por el endpoint new() (por ejemplo, el nombre de usuario).
+     *
+     * @param PDO    $db
+     * @param string $id_persona
+     * @param string $id_usuario     Usuario que hace el cambio
+     * @param string $campo          Nombre visible del campo
+     * @param string $valor_anterior
+     * @param string $valor_nuevo
+     */
+    public static function registrar(PDO $db, $id_persona, $id_usuario, $campo, $valor_anterior, $valor_nuevo)
+    {
+        $sentence = $db->prepare("INSERT INTO historial_cambios_persona
+            (id, id_tenant, id_persona, id_usuario, campo_modificado, valor_anterior, valor_nuevo, ip_address)
+            VALUES (:id, :id_tenant, :id_persona, :id_usuario, :campo_modificado, :valor_anterior, :valor_nuevo, :ip_address)");
+
+        $sentence->bindValue(':id', Uuid::generar());
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_persona', $id_persona);
+        $sentence->bindValue(':id_usuario', $id_usuario);
+        $sentence->bindValue(':campo_modificado', $campo);
+        $sentence->bindValue(':valor_anterior', $valor_anterior);
+        $sentence->bindValue(':valor_nuevo', $valor_nuevo);
+        $sentence->bindValue(':ip_address', $_SERVER['REMOTE_ADDR'] ?? null);
+        $sentence->execute();
+    }
+
     public static function new()
     {
         try {

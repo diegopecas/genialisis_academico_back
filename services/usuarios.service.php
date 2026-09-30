@@ -110,6 +110,69 @@ class Usuarios
         }
     }
 
+    /**
+     * Renombra el usuario en la BD maestra: usuarios_tenants, que es la que
+     * resuelve el tenant en el pre-login, y el indice de credenciales
+     * biometricas. Solo toca las filas del tenant actual: la misma persona
+     * puede tener usuario en otro jardin con el nombre anterior.
+     *
+     * Lo usan Usuarios::replace (cambio del nombre de usuario) y
+     * Personas::replace (correccion del documento).
+     *
+     * A diferencia de insertarEnMaster, lanza excepcion si algo falla, para
+     * que quien lo llama revierta su transaccion.
+     */
+    public static function renombrarEnMaster($usuario_anterior, $usuario_nuevo)
+    {
+        $dbMaster = Flight::db_master();
+        $codigo = TenantContext::codigo();
+
+        $stmtTenant = $dbMaster->prepare("SELECT id FROM tenants WHERE codigo = :codigo");
+        $stmtTenant->bindParam(':codigo', $codigo);
+        $stmtTenant->execute();
+        $idTenantMaster = $stmtTenant->fetchColumn();
+
+        if ($idTenantMaster === false) {
+            throw new Exception("Tenant no encontrado en master: {$codigo}");
+        }
+
+        // Si la fila del usuario nuevo ya existe (quedo de antes), basta con
+        // quitar la del anterior; el indice unico (usuario, id_tenant) no deja
+        // renombrar encima de ella.
+        $stmtExiste = $dbMaster->prepare("SELECT id FROM usuarios_tenants WHERE usuario = :usuario AND id_tenant = :id_tenant");
+        $stmtExiste->bindParam(':usuario', $usuario_nuevo);
+        $stmtExiste->bindParam(':id_tenant', $idTenantMaster);
+        $stmtExiste->execute();
+
+        if ($stmtExiste->fetch()) {
+            $stmt = $dbMaster->prepare("DELETE FROM usuarios_tenants WHERE usuario = :anterior AND id_tenant = :id_tenant");
+            $stmt->bindParam(':anterior', $usuario_anterior);
+            $stmt->bindParam(':id_tenant', $idTenantMaster);
+            $stmt->execute();
+        } else {
+            $stmt = $dbMaster->prepare("UPDATE usuarios_tenants SET usuario = :nuevo WHERE usuario = :anterior AND id_tenant = :id_tenant");
+            $stmt->bindParam(':nuevo', $usuario_nuevo);
+            $stmt->bindParam(':anterior', $usuario_anterior);
+            $stmt->bindParam(':id_tenant', $idTenantMaster);
+            $stmt->execute();
+
+            // Si el anterior nunca quedo en la maestra, se crea la fila del
+            // nuevo: si no, el usuario no pasaria del pre-login.
+            if ($stmt->rowCount() === 0) {
+                $stmtInsert = $dbMaster->prepare("INSERT INTO usuarios_tenants (usuario, id_tenant) VALUES (:usuario, :id_tenant)");
+                $stmtInsert->bindParam(':usuario', $usuario_nuevo);
+                $stmtInsert->bindParam(':id_tenant', $idTenantMaster);
+                $stmtInsert->execute();
+            }
+        }
+
+        $stmtWebauthn = $dbMaster->prepare("UPDATE webauthn_credentials_master SET usuario = :nuevo WHERE usuario = :anterior AND tenant_codigo = :codigo");
+        $stmtWebauthn->bindParam(':nuevo', $usuario_nuevo);
+        $stmtWebauthn->bindParam(':anterior', $usuario_anterior);
+        $stmtWebauthn->bindParam(':codigo', $codigo);
+        $stmtWebauthn->execute();
+    }
+
     private static function obtenerPermisosUsuario($idUsuario)
     {
         try {
@@ -531,9 +594,16 @@ class Usuarios
         }
     }
 
+    /**
+     * Actualiza el usuario. Si cambia el nombre de usuario, tambien se renombra
+     * en la BD maestra (sin eso el pre-login deja de encontrarlo) y queda
+     * registro en historial_cambios_persona. Si la maestra falla se revierte
+     * todo.
+     */
     public static function replace()
     {
         $db = Flight::db();
+        $masterRenombrado = [];
         try {
             $db->beginTransaction();
 
@@ -551,11 +621,12 @@ class Usuarios
             $super_admin = $puedeSuperAdmin ? (Flight::request()->data['super_admin'] ? 1 : 0) : null;
             $sqlSuper = $puedeSuperAdmin ? ", super_admin = :super_admin" : "";
 
-            $checkUsuario = $db->prepare("SELECT id FROM usuarios WHERE id = :id AND id_tenant = :id_tenant");
+            $checkUsuario = $db->prepare("SELECT id, id_persona, usuario FROM usuarios WHERE id = :id AND id_tenant = :id_tenant");
             $checkUsuario->bindParam(':id', $id);
             $checkUsuario->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $checkUsuario->execute();
-            if (!$checkUsuario->fetch()) {
+            $usuarioActual = $checkUsuario->fetch();
+            if (!$usuarioActual) {
                 $db->rollBack();
                 Flight::json(['error' => 'Usuario no encontrado'], 404);
                 return;
@@ -563,8 +634,10 @@ class Usuarios
 
             // El nombre de usuario solo se cambia si el front lo manda y viene distinto
             $usuarioNuevo = isset(Flight::request()->data['usuario']) ? trim(Flight::request()->data['usuario']) : '';
+            $usuarioAnterior = (string) $usuarioActual['usuario'];
+            $cambiaUsuario = $usuarioNuevo !== '' && $usuarioNuevo !== $usuarioAnterior;
             $sqlUsuario = '';
-            if ($usuarioNuevo !== '') {
+            if ($cambiaUsuario) {
                 $checkNombre = $db->prepare("SELECT id FROM usuarios WHERE usuario = :usuario AND id <> :id AND id_tenant = :id_tenant");
                 $checkNombre->bindParam(':usuario', $usuarioNuevo);
                 $checkNombre->bindParam(':id', $id);
@@ -601,10 +674,34 @@ class Usuarios
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
 
+            if ($cambiaUsuario) {
+                if (!empty($usuarioAutenticado->id)) {
+                    HistorialCambiosPersona::registrar($db, $usuarioActual['id_persona'], $usuarioAutenticado->id,
+                        'Usuario', $usuarioAnterior, $usuarioNuevo);
+                }
+
+                // La maestra va al final, justo antes del commit, para que un
+                // error del tenant no la deje cambiada.
+                self::renombrarEnMaster($usuarioAnterior, $usuarioNuevo);
+                $masterRenombrado = [$usuarioAnterior, $usuarioNuevo];
+            }
+
             $db->commit();
             Flight::json(['id' => $id, 'message' => 'Usuario actualizado correctamente']);
         } catch (Exception $e) {
-            $db->rollBack();
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+
+            // Si la maestra alcanzo a cambiar y el tenant no, se devuelve.
+            if (!empty($masterRenombrado)) {
+                try {
+                    self::renombrarEnMaster($masterRenombrado[1], $masterRenombrado[0]);
+                } catch (Exception $eMaster) {
+                    error_log("Error revirtiendo el usuario en master: " . $eMaster->getMessage());
+                }
+            }
+
             Flight::json(['error' => $e->getMessage()], 500);
         }
     }
