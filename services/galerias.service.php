@@ -11,8 +11,13 @@ class Galerias
         // para poder mostrarlos como columna del listado sin una segunda
         // peticion. Va como subconsulta y no como JOIN + GROUP BY para no
         // alterar las filas que ya devolvia este metodo.
+        // titulo_actividad: la actividad ejecutada de la que salio la galeria.
+        // El LEFT JOIN es uno a uno (una galeria apunta a una sola tarea), asi
+        // que tampoco multiplica filas.
         $sentence = $db->prepare("
             SELECT g.id, g.nombre, g.descripcion, g.thumbnail, g.fecha, g.es_publica, g.activo, g.orden,
+                   g.id_tarea_x_sprint,
+                   aa.titulo AS titulo_actividad,
                    (
                        SELECT GROUP_CONCAT(gr.nombre ORDER BY gr.orden SEPARATOR ', ')
                        FROM galerias_x_grupos gxg
@@ -21,6 +26,10 @@ class Galerias
                        AND gxg.id_tenant = g.id_tenant
                    ) AS grupos_nombres
             FROM galerias g
+            LEFT JOIN tareas_x_sprints ts
+                   ON ts.id = g.id_tarea_x_sprint
+                  AND ts.id_tenant = g.id_tenant
+            LEFT JOIN actividades_academicas aa ON aa.id = ts.id_actividad_academica
             WHERE g.id_tenant = :id_tenant
             ORDER BY g.orden, g.fecha DESC
         ");
@@ -51,14 +60,28 @@ class Galerias
 
     /**
      * Obtener galería por ID
+     *
+     * Si la galeria se creo desde una actividad ejecutada, trae tambien los
+     * datos de esa actividad para mostrarlos de solo lectura al editar.
      */
     public static function getById($id)
     {
         $db = Flight::db();
         $sentence = $db->prepare("
-            SELECT id, nombre, descripcion, thumbnail, fecha, es_publica, activo, orden 
-            FROM galerias 
-            WHERE id = :id AND id_tenant = :id_tenant
+            SELECT g.id, g.nombre, g.descripcion, g.thumbnail, g.fecha, g.es_publica, g.activo, g.orden,
+                   g.id_tarea_x_sprint,
+                   aa.titulo AS titulo_actividad,
+                   ts.fecha_ejecucion AS fecha_ejecucion_actividad,
+                   gr.nombre AS nombre_grupo_actividad,
+                   ar.nombre AS nombre_area_actividad
+            FROM galerias g
+            LEFT JOIN tareas_x_sprints ts
+                   ON ts.id = g.id_tarea_x_sprint
+                  AND ts.id_tenant = g.id_tenant
+            LEFT JOIN actividades_academicas aa ON aa.id = ts.id_actividad_academica
+            LEFT JOIN grupos gr ON gr.id = ts.id_grupo
+            LEFT JOIN areas_academicas ar ON ar.id = ts.id_area_academica
+            WHERE g.id = :id AND g.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -345,14 +368,32 @@ class Galerias
         $es_publica = isset($data['es_publica']) ? $data['es_publica'] : 1;
         $activo = isset($data['activo']) ? $data['activo'] : 1;
         $orden = isset($data['orden']) ? $data['orden'] : 0;
-        
+        // Actividad ejecutada de la que sale la galeria. Es opcional: una
+        // galeria se puede crear sin actividad. Solo se fija al crear.
+        $id_tarea_x_sprint = !empty($data['id_tarea_x_sprint']) ? $data['id_tarea_x_sprint'] : null;
+
+        if ($id_tarea_x_sprint !== null) {
+            $check = $db->prepare("
+                SELECT id FROM tareas_x_sprints
+                WHERE id = :id AND id_tenant = :id_tenant
+            ");
+            $check->bindParam(':id', $id_tarea_x_sprint);
+            $check->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $check->execute();
+            if (!$check->fetch()) {
+                Flight::json(['error' => 'La actividad seleccionada no existe'], 400);
+                return;
+            }
+        }
+
         $idNew = Uuid::generar();
         $sentence = $db->prepare("
-            INSERT INTO galerias (id, id_tenant, nombre, descripcion, thumbnail, fecha, es_publica, activo, orden) 
-            VALUES (:id, :id_tenant, :nombre, :descripcion, :thumbnail, :fecha, :es_publica, :activo, :orden)
+            INSERT INTO galerias (id, id_tenant, nombre, descripcion, thumbnail, fecha, es_publica, activo, orden, id_tarea_x_sprint)
+            VALUES (:id, :id_tenant, :nombre, :descripcion, :thumbnail, :fecha, :es_publica, :activo, :orden, :id_tarea_x_sprint)
         ");
         $sentence->bindValue(':id', $idNew);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tarea_x_sprint', $id_tarea_x_sprint);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':descripcion', $descripcion);
         $sentence->bindParam(':thumbnail', $thumbnail);

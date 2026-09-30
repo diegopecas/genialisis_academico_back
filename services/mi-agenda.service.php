@@ -554,7 +554,29 @@ class MiAgenda
                     INNER JOIN valores_parametros_calificaciones vpc ON vpc.id = c.id_valor_parametro_calificacion
                     WHERE c.id_tarea_x_sprint = ts.id
                       AND c.id_estudiante = :id_estudiante_calif
-                   ) AS calificaciones_crudas
+                   ) AS calificaciones_crudas,
+                   -- Galeria creada desde esta actividad, solo si el
+                   -- estudiante la puede ver: activa, con fotos y publica o
+                   -- asignada a su grupo. Va id y nombre en un solo campo
+                   -- para no repetir la subconsulta.
+                   (SELECT CONCAT_WS('|@|', ga.id, ga.nombre)
+                    FROM galerias ga
+                    WHERE ga.id_tarea_x_sprint = ts.id
+                      AND ga.id_tenant = ts.id_tenant
+                      AND ga.activo = 1
+                      AND EXISTS (SELECT 1 FROM galeria_imagenes gi WHERE gi.id_galeria = ga.id)
+                      AND (
+                            ga.es_publica = 1
+                            OR EXISTS (
+                                SELECT 1
+                                FROM galerias_x_grupos gxg
+                                WHERE gxg.id_galeria = ga.id
+                                  AND gxg.id_grupo = :id_grupo_galeria
+                            )
+                      )
+                    ORDER BY ga.created_at DESC
+                    LIMIT 1
+                   ) AS galeria_cruda
             FROM tareas_x_sprints ts
             INNER JOIN actividades_academicas aa ON aa.id = ts.id_actividad_academica
             LEFT JOIN tipos_actividades_academicas ta ON ta.id = aa.id_tipo_actividad_academica
@@ -579,6 +601,7 @@ class MiAgenda
         $sentence->bindParam(':id_estudiante', $id_estudiante);
         $sentence->bindParam(':id_estudiante_calif', $id_estudiante);
         $sentence->bindValue(':id_grupo', $contexto['id_grupo']);
+        $sentence->bindValue(':id_grupo_galeria', $contexto['id_grupo']);
         $sentence->bindParam(':fecha', $fecha);
         $sentence->bindValue(':estado', self::ESTADO_TAREA_EJECUTADA, PDO::PARAM_INT);
         $sentence->execute();
@@ -619,6 +642,10 @@ class MiAgenda
                     'observacion_estudiante' => $fila['observacion_estudiante'],
                     'observacion_grupo'      => $fila['observacion_grupo'],
                     'calificaciones'         => self::desarmarCalificaciones($fila['calificaciones_crudas']),
+                    // Galeria de la actividad. Solo va el id y el nombre: la
+                    // ruta y el permiso los pone cada portal, porque la
+                    // pantalla de galeria no es la misma en los dos.
+                    'galeria'                => self::desarmarGaleria($fila['galeria_cruda']),
                 ] + self::rutaFichaEstudiante($id_estudiante, 'actividades', 'padres.estudiante.actividades', ['fecha' => $fecha]),
             ]);
         }
@@ -890,15 +917,24 @@ class MiAgenda
         foreach ($filas as $fila) {
             $total = (int) $fila['total_imagenes'];
 
+            // La descripcion de la galeria sale del CKEditor y puede traer
+            // HTML. Igual que en actividades: texto plano en detalle y el
+            // HTML aparte en meta para pintarlo con su formato.
+            $detalle = self::textoPlano($fila['descripcion']);
+            $detalleHtml = self::tieneHtml($fila['descripcion']) && $detalle !== null
+                ? $fila['descripcion']
+                : null;
+
             $eventos[] = self::evento('galerias', 'galeria', $fila['id'], [
                 'fecha_hora' => null,
                 'titulo'     => $fila['nombre'],
-                'detalle'    => $fila['descripcion'],
+                'detalle'    => $detalle,
                 'pie'        => $total . ' ' . ($total === 1 ? 'foto' : 'fotos'),
                 'orden'      => 500,
                 'meta'       => [
                     'total_imagenes' => $total,
                     'es_publica'     => (int) $fila['es_publica'],
+                    'descripcion_html' => $detalleHtml,
                     'imagenes'       => self::desarmarImagenes($fila['imagenes_crudas']),
                     // Las fotos de este dia ya se ven en la tarjeta; el
                     // enlace lleva a la galeria completa del jardin, que es
@@ -1671,6 +1707,31 @@ class MiAgenda
         }
 
         return $salida;
+    }
+
+    /**
+     * Convierte la galeria de una actividad ("id|@|nombre") en un arreglo
+     * con id y nombre, o null si la actividad no tiene galeria visible.
+     *
+     * @param string|null $cruda
+     * @return array|null
+     */
+    private static function desarmarGaleria($cruda)
+    {
+        if (empty($cruda)) {
+            return null;
+        }
+
+        $partes = explode('|@|', $cruda, 2);
+
+        if (empty($partes[0])) {
+            return null;
+        }
+
+        return [
+            'id'     => $partes[0],
+            'nombre' => isset($partes[1]) ? $partes[1] : '',
+        ];
     }
 
     /**

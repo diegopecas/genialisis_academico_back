@@ -28,6 +28,9 @@ Flight::route('GET /sprints/validar-actividad/@id_sprint/@id_actividad', [Sprint
 Flight::route('GET /tareas-x-sprints', [TareasXSprints::class, 'getAll']);
 Flight::route('GET /tareas-x-sprints/reporte-ejecucion', [TareasXSprints::class, 'getReporteEjecucionTareas']);
 Flight::route('GET /tareas-x-sprints/estudiante/@id_estudiante', [TareasXSprints::class, 'getActividadesEstudiante']);
+// Ultimas actividades ejecutadas del jardin (creacion de galerias). Debe ir
+// ANTES de 'GET /tareas-x-sprints/@id', si no getById la captura.
+Flight::route('GET /tareas-x-sprints/ultimas-ejecutadas', [TareasXSprints::class, 'getUltimasEjecutadas']);
 Flight::route('GET /tareas-x-sprints/@id', [TareasXSprints::class, 'getById']);
 Flight::route('GET /tareas-x-sprints/sprint/@id_sprint', [TareasXSprints::class, 'getBySprintId']);
 Flight::route('GET /tareas-x-sprints/actividad/@id_actividad', [TareasXSprints::class, 'getByActividadId']);

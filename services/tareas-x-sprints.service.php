@@ -1042,6 +1042,68 @@ class TareasXSprints
     }
 
     /**
+     * Ultimas actividades ejecutadas del jardin, de la mas reciente a la mas
+     * antigua. Las usa la creacion de galerias para tomar de la actividad el
+     * nombre, la descripcion, la fecha y el grupo. Solo las de grupo: las de
+     * cursos extra no tienen grupo al cual asignar la galeria.
+     *
+     * Se traen todas de una vez; el front filtra por grupo, area y texto
+     * sobre esta lista sin volver a consultar.
+     *
+     * Query param opcional: limite (por defecto 20, maximo 100).
+     * tiene_galeria indica si la actividad ya tiene una galeria asociada.
+     */
+    public static function getUltimasEjecutadas()
+    {
+        try {
+            $limite = (int) (Flight::request()->query['limite'] ?? 20);
+            if ($limite < 1 || $limite > 100) {
+                $limite = 20;
+            }
+
+            $db = Flight::db();
+            // El LIMIT va como entero ya validado: con prepares nativos no
+            // todas las versiones aceptan un parametro ahi.
+            $sentence = $db->prepare("
+                SELECT
+                    txs.id,
+                    txs.id_grupo,
+                    txs.id_area_academica,
+                    txs.fecha_ejecucion,
+                    aa.titulo AS titulo_actividad,
+                    aa.descripcion AS descripcion_actividad,
+                    g.nombre AS nombre_grupo,
+                    ar.nombre AS nombre_area,
+                    TRIM(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido)) AS nombre_docente,
+                    EXISTS (
+                        SELECT 1 FROM galerias ga
+                        WHERE ga.id_tarea_x_sprint = txs.id
+                          AND ga.id_tenant = txs.id_tenant
+                    ) AS tiene_galeria
+                FROM tareas_x_sprints txs
+                INNER JOIN actividades_academicas aa ON aa.id = txs.id_actividad_academica
+                INNER JOIN grupos g ON g.id = txs.id_grupo
+                LEFT JOIN areas_academicas ar ON ar.id = txs.id_area_academica
+                LEFT JOIN docentes d ON d.id = txs.id_docente
+                LEFT JOIN personas p ON p.id = d.id_persona
+                WHERE txs.id_tenant = :id_tenant
+                  AND txs.id_estado_tarea = :estado
+                  AND txs.fecha_ejecucion IS NOT NULL
+                ORDER BY txs.fecha_ejecucion DESC
+                LIMIT " . $limite . "
+            ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindValue(':estado', self::ESTADO_TAREA_EJECUTADA, PDO::PARAM_INT);
+            $sentence->execute();
+            $response = $sentence->fetchAll(PDO::FETCH_ASSOC);
+            Flight::json($response);
+        } catch (Exception $e) {
+            error_log("Error en getUltimasEjecutadas: " . $e->getMessage());
+            Flight::json(['error' => 'Error al obtener las actividades ejecutadas'], 500);
+        }
+    }
+
+    /**
      * Actualizar el orden de ejecución de múltiples tareas
      * Recibe un array de objetos con id y orden_ejecucion
      */
