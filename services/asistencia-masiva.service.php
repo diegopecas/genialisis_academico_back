@@ -372,7 +372,7 @@ class AsistenciaMasiva
      *     filas: [
      *       { id_estudiante, id_asistencia (solo salida), hora,
      *         observacion (opcional),
-     *         id_colaborador (opcional): recibe en ingreso, entrega en salida,
+     *         id_colaborador (obligatorio): recibe en ingreso, entrega en salida,
      *         id_persona (opcional): quien lo trae en ingreso, quien lo recoge en salida,
      *         utiles: [ { id, id_util_diario, nombre_libre, trajo, regreso } ],
      *         cobros: [ ...los que la usuaria dejo marcados... ] }
@@ -409,6 +409,18 @@ class AsistenciaMasiva
 
         foreach ($filas as $fila) {
             try {
+                // Hora y colaborador son obligatorios. La fila que no los trae
+                // no se procesa y vuelve con el motivo.
+                $faltante = self::validarFila($db, $fila, $tipo);
+                if ($faltante !== null) {
+                    $resultados[] = array(
+                        'id_estudiante' => isset($fila['id_estudiante']) ? $fila['id_estudiante'] : null,
+                        'procesado'     => false,
+                        'motivo'        => $faltante
+                    );
+                    continue;
+                }
+
                 $observacion = isset($fila['observacion']) && trim($fila['observacion']) !== ''
                     ? trim($fila['observacion'])
                     : $observacionGeneral;
@@ -474,6 +486,33 @@ class AsistenciaMasiva
             'cobros_generados' => $cobrosGenerados,
             'resultados'       => $resultados
         ));
+    }
+
+    /**
+     * Revisa que la fila traiga lo obligatorio: hora y colaborador que recibe
+     * (ingreso) o entrega (salida). Quien lo trae o lo recoge es opcional.
+     *
+     * @return string|null Motivo de lo que falta, o null si esta completa
+     */
+    private static function validarFila($db, $fila, $tipo)
+    {
+        $esSalida = $tipo === self::TIPO_SALIDA;
+        $faltantes = array();
+
+        if (empty($fila['hora'])) {
+            $faltantes[] = 'la hora';
+        }
+
+        $id_colaborador = AsistenciaEstudiantes::colaboradorValido($db, !empty($fila['id_colaborador']) ? $fila['id_colaborador'] : null);
+        if ($id_colaborador === null) {
+            $faltantes[] = $esSalida ? 'el colaborador que entrega' : 'el colaborador que recibe';
+        }
+
+        if (empty($faltantes)) {
+            return null;
+        }
+
+        return 'Falta ' . implode(', ', $faltantes);
     }
 
     /**
