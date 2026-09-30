@@ -72,7 +72,8 @@ class Galerias
                    g.id_tarea_x_sprint,
                    aa.titulo AS titulo_actividad,
                    ts.fecha_ejecucion AS fecha_ejecucion_actividad,
-                   gr.nombre AS nombre_grupo_actividad,
+                   -- En las actividades de cursos extra va el nombre del curso
+                   COALESCE(gr.nombre, ce.nombre) AS nombre_grupo_actividad,
                    ar.nombre AS nombre_area_actividad
             FROM galerias g
             LEFT JOIN tareas_x_sprints ts
@@ -80,7 +81,8 @@ class Galerias
                   AND ts.id_tenant = g.id_tenant
             LEFT JOIN actividades_academicas aa ON aa.id = ts.id_actividad_academica
             LEFT JOIN grupos gr ON gr.id = ts.id_grupo
-            LEFT JOIN areas_academicas ar ON ar.id = ts.id_area_academica
+            LEFT JOIN cursos_extra ce ON ce.id = ts.id_curso_extra
+            LEFT JOIN areas_academicas ar ON ar.id = COALESCE(ts.id_area_academica, ce.id_area_academica)
             WHERE g.id = :id AND g.id_tenant = :id_tenant
         ");
         $sentence->bindParam(':id', $id);
@@ -369,7 +371,8 @@ class Galerias
         $activo = isset($data['activo']) ? $data['activo'] : 1;
         $orden = isset($data['orden']) ? $data['orden'] : 0;
         // Actividad ejecutada de la que sale la galeria. Es opcional: una
-        // galeria se puede crear sin actividad. Solo se fija al crear.
+        // galeria se puede crear sin actividad. Al editar solo se puede poner
+        // si la galeria aun no tiene una (ver replace).
         $id_tarea_x_sprint = !empty($data['id_tarea_x_sprint']) ? $data['id_tarea_x_sprint'] : null;
 
         if ($id_tarea_x_sprint !== null) {
@@ -423,6 +426,23 @@ class Galerias
         $es_publica = isset($data['es_publica']) ? $data['es_publica'] : 1;
         $activo = isset($data['activo']) ? $data['activo'] : 1;
         $orden = isset($data['orden']) ? $data['orden'] : 0;
+        // Una galeria sin actividad se puede asociar al editarla. Si ya tiene
+        // una, se conserva: el COALESCE del UPDATE no la cambia.
+        $id_tarea_x_sprint = !empty($data['id_tarea_x_sprint']) ? $data['id_tarea_x_sprint'] : null;
+
+        if ($id_tarea_x_sprint !== null) {
+            $check = $db->prepare("
+                SELECT id FROM tareas_x_sprints
+                WHERE id = :id AND id_tenant = :id_tenant
+            ");
+            $check->bindParam(':id', $id_tarea_x_sprint);
+            $check->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $check->execute();
+            if (!$check->fetch()) {
+                Flight::json(['error' => 'La actividad seleccionada no existe'], 400);
+                return;
+            }
+        }
         
         $sentence = $db->prepare("
             UPDATE galerias 
@@ -432,9 +452,11 @@ class Galerias
                 fecha = :fecha, 
                 es_publica = :es_publica, 
                 activo = :activo, 
-                orden = :orden 
+                orden = :orden,
+                id_tarea_x_sprint = COALESCE(id_tarea_x_sprint, :id_tarea_x_sprint)
             WHERE id = :id AND id_tenant = :id_tenant
         ");
+        $sentence->bindValue(':id_tarea_x_sprint', $id_tarea_x_sprint);
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);

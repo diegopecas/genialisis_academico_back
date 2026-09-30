@@ -1044,8 +1044,10 @@ class TareasXSprints
     /**
      * Ultimas actividades ejecutadas del jardin, de la mas reciente a la mas
      * antigua. Las usa la creacion de galerias para tomar de la actividad el
-     * nombre, la descripcion, la fecha y el grupo. Solo las de grupo: las de
-     * cursos extra no tienen grupo al cual asignar la galeria.
+     * nombre, la descripcion, la fecha y el grupo. Trae las de grupo y las de
+     * cursos extra; estas no tienen grupo, asi que se devuelve el nombre del
+     * curso y, en ids_grupos_curso, los grupos donde estan hoy los ninos
+     * inscritos activos, para que la galeria quede asignada a esos grupos.
      *
      * Se traen todas de una vez; el front filtra por grupo, area y texto
      * sobre esta lista sin volver a consultar.
@@ -1068,12 +1070,26 @@ class TareasXSprints
                 SELECT
                     txs.id,
                     txs.id_grupo,
-                    txs.id_area_academica,
+                    txs.id_curso_extra,
+                    COALESCE(txs.id_area_academica, ce.id_area_academica) AS id_area_academica,
                     txs.fecha_ejecucion,
                     aa.titulo AS titulo_actividad,
                     aa.descripcion AS descripcion_actividad,
                     g.nombre AS nombre_grupo,
+                    ce.nombre AS nombre_curso,
                     ar.nombre AS nombre_area,
+                    (
+                        SELECT GROUP_CONCAT(DISTINCT exg.id_grupo)
+                        FROM estudiantes_x_cursos_extra exce
+                        INNER JOIN estudiantes e ON e.id = exce.id_estudiante AND e.activo = 1
+                        INNER JOIN estudiantes_x_grupos exg
+                                ON exg.id_estudiante = exce.id_estudiante
+                               AND exg.id_tenant = exce.id_tenant
+                               AND exg.activo = 1
+                        WHERE exce.id_curso_extra = txs.id_curso_extra
+                          AND exce.id_tenant = txs.id_tenant
+                          AND exce.activo = 1
+                    ) AS ids_grupos_curso,
                     TRIM(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido)) AS nombre_docente,
                     EXISTS (
                         SELECT 1 FROM galerias ga
@@ -1082,13 +1098,15 @@ class TareasXSprints
                     ) AS tiene_galeria
                 FROM tareas_x_sprints txs
                 INNER JOIN actividades_academicas aa ON aa.id = txs.id_actividad_academica
-                INNER JOIN grupos g ON g.id = txs.id_grupo
-                LEFT JOIN areas_academicas ar ON ar.id = txs.id_area_academica
+                LEFT JOIN grupos g ON g.id = txs.id_grupo
+                LEFT JOIN cursos_extra ce ON ce.id = txs.id_curso_extra
+                LEFT JOIN areas_academicas ar ON ar.id = COALESCE(txs.id_area_academica, ce.id_area_academica)
                 LEFT JOIN docentes d ON d.id = txs.id_docente
                 LEFT JOIN personas p ON p.id = d.id_persona
                 WHERE txs.id_tenant = :id_tenant
                   AND txs.id_estado_tarea = :estado
                   AND txs.fecha_ejecucion IS NOT NULL
+                  AND (txs.id_grupo IS NOT NULL OR txs.id_curso_extra IS NOT NULL)
                 ORDER BY txs.fecha_ejecucion DESC
                 LIMIT " . $limite . "
             ");
