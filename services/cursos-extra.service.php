@@ -210,7 +210,7 @@ class CursosExtra
     public static function getInscritos($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo,
+        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.fecha_retiro, exce.anio, exce.activo,
         e.id_persona,
         p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido,
         CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo,

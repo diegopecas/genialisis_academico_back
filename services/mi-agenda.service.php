@@ -159,6 +159,17 @@ class MiAgenda
             'permiso_padres' => 'padres.tareas.ver',
             'orden'  => 12,
         ],
+        // Las clases de los cursos extracurriculares van aparte de las
+        // actividades del salon: son otro servicio, se inscriben y se cobran
+        // aparte, y el acudiente las quiere poder mirar por su lado.
+        'extracurriculares' => [
+            'nombre' => 'Clases extracurriculares',
+            'icono'  => '⭐',
+            'color'  => '#3498db',
+            'metodo' => 'fuenteExtracurriculares',
+            'permiso_padres' => 'padres.mi_agenda.extracurriculares',
+            'orden'  => 13,
+        ],
     ];
 
     // =====================================================================
@@ -645,6 +656,163 @@ class MiAgenda
                     // Galeria de la actividad. Solo va el id y el nombre: la
                     // ruta y el permiso los pone cada portal, porque la
                     // pantalla de galeria no es la misma en los dos.
+                    'galeria'                => self::desarmarGaleria($fila['galeria_cruda']),
+                ] + self::rutaFichaEstudiante($id_estudiante, 'actividades', 'padres.estudiante.actividades', ['fecha' => $fecha]),
+            ]);
+        }
+
+        return $eventos;
+    }
+
+    /**
+     * Clases ejecutadas de los cursos extracurriculares del estudiante.
+     *
+     * Hermana de fuenteActividades: la clase de un curso no cuelga de un
+     * grupo sino del curso (tareas_x_sprints.id_curso_extra), y el nino
+     * llega a ella por su inscripcion, no por el salon. Por eso aqui no se
+     * exige grupo: un nino sin grupo del jardin puede estar en un curso.
+     *
+     * La inscripcion se evalua por rango de fechas y no por el flag activo,
+     * igual que EstudiantesXGrupos::grupoEnFecha hace con los grupos: al
+     * papa le tienen que seguir apareciendo las clases que el nino si vio,
+     * aunque despues lo hayan retirado del curso. La diferencia con grupos
+     * es que aqui no hay un solo destino vigente: un nino puede estar en
+     * varios cursos el mismo dia y todos cuentan.
+     *
+     * Las inscripciones anuladas antes de que existiera fecha_retiro quedan
+     * sin fecha y no se pueden reconstruir. Esas no muestran nada, que es
+     * preferible a abrirle el historico completo de un curso a un nino que
+     * quiza nunca lo tomo.
+     */
+    private static function fuenteExtracurriculares($db, $id_estudiante, $fecha, $contexto)
+    {
+        // Igual que en actividades: sin esto GROUP_CONCAT corta en 1024 bytes
+        // y una clase con muchos parametros perderia los ultimos.
+        $db->exec('SET SESSION group_concat_max_len = 100000');
+
+        $sentence = $db->prepare("
+            SELECT ts.id,
+                   ts.fecha_ejecucion,
+                   ts.orden_ejecucion,
+                   ts.observaciones AS observacion_grupo,
+                   aa.titulo,
+                   aa.descripcion,
+                   aa.minutos_duracion,
+                   ta.nombre AS nombre_tipo_actividad,
+                   ta.icono AS icono_tipo_actividad,
+                   ce.nombre AS nombre_curso,
+                   ce.color AS color_curso,
+                   txe.observacion AS observacion_estudiante,
+                   TRIM(CONCAT_WS(' ', pd.primer_nombre, pd.primer_apellido)) AS nombre_docente,
+                   -- Calificaciones del estudiante en esa clase. Van en
+                   -- subconsulta y no en JOIN para no multiplicar la fila de
+                   -- la clase por cada parametro calificado.
+                   (SELECT GROUP_CONCAT(
+                               CONCAT_WS('|@|', pc.nombre, vpc.valor_cualitativo,
+                                         vpc.valor_cuantitativo, COALESCE(vpc.icono, ''))
+                               ORDER BY pc.nombre
+                               SEPARATOR '|#|')
+                    FROM calificaciones c
+                    INNER JOIN parametros_calificaciones pc ON pc.id = c.id_parametro_calificacion
+                    INNER JOIN valores_parametros_calificaciones vpc ON vpc.id = c.id_valor_parametro_calificacion
+                    WHERE c.id_tarea_x_sprint = ts.id
+                      AND c.id_estudiante = :id_estudiante_calif
+                   ) AS calificaciones_crudas,
+                   -- Galeria creada desde esta clase, con la misma regla de
+                   -- actividades: publica, o asignada al grupo del nino. Un
+                   -- nino sin grupo solo alcanza las publicas.
+                   (SELECT CONCAT_WS('|@|', ga.id, ga.nombre)
+                    FROM galerias ga
+                    WHERE ga.id_tarea_x_sprint = ts.id
+                      AND ga.id_tenant = ts.id_tenant
+                      AND ga.activo = 1
+                      AND EXISTS (SELECT 1 FROM galeria_imagenes gi WHERE gi.id_galeria = ga.id)
+                      AND (
+                            ga.es_publica = 1
+                            OR EXISTS (
+                                SELECT 1
+                                FROM galerias_x_grupos gxg
+                                WHERE gxg.id_galeria = ga.id
+                                  AND gxg.id_grupo = :id_grupo_galeria
+                            )
+                      )
+                    ORDER BY ga.created_at DESC
+                    LIMIT 1
+                   ) AS galeria_cruda
+            FROM tareas_x_sprints ts
+            INNER JOIN actividades_academicas aa ON aa.id = ts.id_actividad_academica
+            INNER JOIN cursos_extra ce ON ce.id = ts.id_curso_extra
+            INNER JOIN estudiantes_x_cursos_extra exce
+                    ON exce.id_curso_extra = ts.id_curso_extra
+                   AND exce.id_estudiante = :id_estudiante_inscrito
+                   AND exce.id_tenant = ts.id_tenant
+            LEFT JOIN tipos_actividades_academicas ta ON ta.id = aa.id_tipo_actividad_academica
+            LEFT JOIN tareas_x_sprints_x_estudiante txe
+                   ON txe.id_tarea_x_sprint = ts.id
+                  AND txe.id_estudiante = :id_estudiante
+            LEFT JOIN docentes d ON d.id = ts.id_docente
+            LEFT JOIN personas pd ON pd.id = d.id_persona
+            -- Las clases del sprint de informe son para el informe del corte,
+            -- que tiene su propio flujo de autorizacion: no salen en la
+            -- agenda, en ningun portal.
+            LEFT JOIN sprints sp ON sp.id = ts.id_sprint
+            WHERE ts.id_tenant = :id_tenant
+              AND ts.id_curso_extra IS NOT NULL
+              AND DATE(ts.fecha_ejecucion) = :fecha
+              AND ts.id_estado_tarea = :estado
+              AND COALESCE(sp.sprint_informe, 0) = 0
+              -- El nino ya estaba inscrito ese dia...
+              AND (exce.fecha_inscripcion IS NULL OR :fecha_desde >= exce.fecha_inscripcion)
+              -- ...y todavia no lo habian retirado.
+              AND (
+                    (exce.fecha_retiro IS NOT NULL AND :fecha_hasta <= exce.fecha_retiro)
+                 OR (exce.fecha_retiro IS NULL AND exce.activo = 1)
+              )
+            ORDER BY ts.fecha_ejecucion, ts.orden_ejecucion
+        ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindParam(':id_estudiante', $id_estudiante);
+        $sentence->bindParam(':id_estudiante_calif', $id_estudiante);
+        $sentence->bindParam(':id_estudiante_inscrito', $id_estudiante);
+        $sentence->bindValue(':id_grupo_galeria', $contexto['id_grupo']);
+        $sentence->bindParam(':fecha', $fecha);
+        $sentence->bindParam(':fecha_desde', $fecha);
+        $sentence->bindParam(':fecha_hasta', $fecha);
+        $sentence->bindValue(':estado', self::ESTADO_TAREA_EJECUTADA, PDO::PARAM_INT);
+        $sentence->execute();
+        $filas = $sentence->fetchAll();
+
+        $eventos = [];
+
+        foreach ($filas as $fila) {
+            // Mismo criterio que en actividades: el detalle es la descripcion
+            // de la clase en texto plano, y el HTML del editor viaja aparte en
+            // meta para pintarlo con su formato.
+            $detalle = self::textoPlano($fila['descripcion']);
+            $detalleHtml = self::tieneHtml($fila['descripcion']) && $detalle !== null
+                ? $fila['descripcion']
+                : null;
+
+            $eventos[] = self::evento('extracurriculares', 'actividad', $fila['id'], [
+                'fecha_hora' => $fila['fecha_ejecucion'],
+                'titulo'     => $fila['titulo'],
+                'detalle'    => $detalle,
+                'pie'        => $fila['nombre_docente'] ? 'Con ' . $fila['nombre_docente'] : null,
+                // La etiqueta es el curso y no el area academica: al acudiente
+                // "Natacion" le dice mas que el nombre del area de la malla.
+                'etiqueta'   => $fila['nombre_curso'],
+                'color'      => $fila['color_curso'],
+                'icono'      => $fila['icono_tipo_actividad'],
+                'orden'      => 200 + (int) $fila['orden_ejecucion'],
+                'meta'       => [
+                    'tipo_actividad'         => $fila['nombre_tipo_actividad'],
+                    'minutos_duracion'       => $fila['minutos_duracion'],
+                    'nombre_curso'           => $fila['nombre_curso'],
+                    'descripcion_actividad'  => $detalle,
+                    'descripcion_html'       => $detalleHtml,
+                    'observacion_estudiante' => $fila['observacion_estudiante'],
+                    'observacion_grupo'      => $fila['observacion_grupo'],
+                    'calificaciones'         => self::desarmarCalificaciones($fila['calificaciones_crudas']),
                     'galeria'                => self::desarmarGaleria($fila['galeria_cruda']),
                 ] + self::rutaFichaEstudiante($id_estudiante, 'actividades', 'padres.estudiante.actividades', ['fecha' => $fecha]),
             ]);

@@ -155,4 +155,33 @@ class MaterialesXActividad
         $response = $sentence->fetchAll();
         Flight::json($response);
     }
+
+    /**
+     * Todos los productos academicos activos del jardin, sin importar el
+     * grupo. Misma forma de getProductosPorGrupo para que el front los pinte
+     * igual. Lo usa crear actividad, que no siempre sabe para que grupo es.
+     */
+    public static function getProductosTodos()
+    {
+        $db = Flight::db();
+        $sentence = $db->prepare("
+            SELECT DISTINCT
+                p.id,
+                p.nombre,
+                p.descripcion,
+                p.imagen,
+                pa.es_consumible,
+                tpa.nombre AS tipo_producto_academico
+            FROM productos_academico pa
+            INNER JOIN productos p ON pa.id_producto = p.id
+            LEFT JOIN tipos_producto_academico tpa ON pa.id_tipo_producto_academico = tpa.id
+            WHERE p.activo = 1
+            AND pa.id_tenant = :id_tenant
+            ORDER BY p.nombre
+        ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $response = $sentence->fetchAll();
+        Flight::json($response);
+    }
 }

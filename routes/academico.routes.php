@@ -149,6 +149,8 @@ Flight::route('DELETE /materiales-x-actividad', [MaterialesXActividad::class, 'd
 Flight::route('DELETE /materiales-x-actividad/actividad/@id_actividad', [MaterialesXActividad::class, 'deleteByActividad']);
 Flight::route('GET /materiales-x-actividad/productos-grado/@id_grado', [MaterialesXActividad::class, 'getProductosPorGrado']);
 Flight::route('GET /materiales-x-actividad/productos-grupo/@id_grupo', [MaterialesXActividad::class, 'getProductosPorGrupo']);
+// Todos los productos academicos activos (inventario completo en crear actividad)
+Flight::route('GET /materiales-x-actividad/productos-todos', [MaterialesXActividad::class, 'getProductosTodos']);
 
 // CURSOS EXTRACURRICULARES
 Flight::route('GET /cursos-extra', [CursosExtra::class, 'getAll']);

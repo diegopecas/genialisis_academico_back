@@ -5,7 +5,7 @@ class EstudiantesXCursosExtra
     public static function getAll()
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente, exce.id_nivel, niv.nombre AS nombre_nivel,
+        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.fecha_retiro, exce.anio, exce.activo, exce.id_institucion_cliente, exce.id_nivel, niv.nombre AS nombre_nivel,
         CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo,
         ce.nombre AS nombre_curso
         FROM estudiantes_x_cursos_extra exce
@@ -24,7 +24,7 @@ class EstudiantesXCursosExtra
     public static function getById($id)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente, exce.id_nivel, niv.nombre AS nombre_nivel,
+        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.fecha_retiro, exce.anio, exce.activo, exce.id_institucion_cliente, exce.id_nivel, niv.nombre AS nombre_nivel,
         CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo,
         ce.nombre AS nombre_curso
         FROM estudiantes_x_cursos_extra exce
@@ -43,7 +43,7 @@ class EstudiantesXCursosExtra
     public static function getByCurso($id_curso_extra)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente, exce.id_nivel, niv.nombre AS nombre_nivel,
+        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.fecha_retiro, exce.anio, exce.activo, exce.id_institucion_cliente, exce.id_nivel, niv.nombre AS nombre_nivel,
         CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo,
         CASE
             WHEN pi.razon_social IS NOT NULL AND pi.razon_social != '' THEN pi.razon_social
@@ -67,7 +67,7 @@ class EstudiantesXCursosExtra
     public static function getByEstudiante($id_estudiante)
     {
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.anio, exce.activo, exce.id_institucion_cliente, exce.id_nivel, niv.nombre AS nombre_nivel,
+        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.fecha_retiro, exce.anio, exce.activo, exce.id_institucion_cliente, exce.id_nivel, niv.nombre AS nombre_nivel,
         ce.nombre AS nombre_curso
         FROM estudiantes_x_cursos_extra exce
         INNER JOIN cursos_extra ce ON exce.id_curso_extra = ce.id
@@ -246,13 +246,32 @@ class EstudiantesXCursosExtra
         return null;
     }
 
+    /**
+     * Cambia el estado de la inscripcion y deja la fecha de retiro coherente.
+     *
+     * La agenda del estudiante resuelve las clases que vio por rango de
+     * fechas, no por el flag: al desactivar se graba la fecha de retiro
+     * (la que llegue, o la de hoy si no viene) y al reactivar se limpia,
+     * para que una reinscripcion no arrastre el retiro anterior.
+     */
     public static function replace()
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
         $activo = Flight::request()->data['activo'];
 
-        $sentence = $db->prepare("UPDATE estudiantes_x_cursos_extra SET activo = :activo WHERE id = :id AND id_tenant = :id_tenant");
+        if ((int) $activo === 1) {
+            $sentence = $db->prepare("UPDATE estudiantes_x_cursos_extra SET activo = :activo, fecha_retiro = NULL WHERE id = :id AND id_tenant = :id_tenant");
+        } else {
+            $fecha_retiro = Flight::request()->data['fecha_retiro'] ?? null;
+            if (empty($fecha_retiro)) {
+                $fecha_retiro = date('Y-m-d');
+            }
+
+            $sentence = $db->prepare("UPDATE estudiantes_x_cursos_extra SET activo = :activo, fecha_retiro = :fecha_retiro WHERE id = :id AND id_tenant = :id_tenant");
+            $sentence->bindValue(':fecha_retiro', $fecha_retiro);
+        }
+
         $sentence->bindParam(':activo', $activo);
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -275,10 +294,19 @@ class EstudiantesXCursosExtra
     // anula las cuentas por cobrar asociadas que no tengan pagos aplicados, conserva las que
     // si tienen pagos (devolviendolas para informar al usuario) y marca la inscripcion como
     // inactiva. La FK con cuentas_cobrar_x_curso_extra se preserva por trazabilidad.
+    //
+    // La fecha de retiro se graba junto con la anulacion: es la que marca hasta
+    // que dia el nino estuvo en el curso, y de ella depende que la agenda le
+    // siga mostrando las clases que alcanzo a ver. Si no viene, se usa la de hoy.
     public static function anular()
     {
         $db = Flight::db();
         $id = Flight::request()->data['id'];
+
+        $fecha_retiro = Flight::request()->data['fecha_retiro'] ?? null;
+        if (empty($fecha_retiro)) {
+            $fecha_retiro = date('Y-m-d');
+        }
 
         try {
             $db->beginTransaction();
@@ -325,7 +353,8 @@ class EstudiantesXCursosExtra
                 }
             }
 
-            $stmtAnularInscripcion = $db->prepare("UPDATE estudiantes_x_cursos_extra SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
+            $stmtAnularInscripcion = $db->prepare("UPDATE estudiantes_x_cursos_extra SET activo = 0, fecha_retiro = :fecha_retiro WHERE id = :id AND id_tenant = :id_tenant");
+            $stmtAnularInscripcion->bindValue(':fecha_retiro', $fecha_retiro);
             $stmtAnularInscripcion->bindParam(':id', $id);
             $stmtAnularInscripcion->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtAnularInscripcion->execute();
