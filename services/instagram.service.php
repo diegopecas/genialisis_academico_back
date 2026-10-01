@@ -15,9 +15,11 @@
  * - Las historias tienen rate limit; se publican con pausa entre cada una y
  *   reintentos con espera.
  * - Marca de agua: en el feed y las historias se pega el logo del jardín
- *   (configuracion_portal_publico.logo) sobre la copia que sube a Meta. Las
- *   fotos originales de la galería no se tocan. Los reels no llevan marca
- *   porque el video se envía sin reprocesar.
+ *   sobre la copia que sube a Meta. Es el mismo logo de los contratos, que
+ *   vive en el front (assets/images/instituciones/{codigo}/logo.png); por eso
+ *   el front lo envía en base64 en el campo "logo" de la petición. Las fotos
+ *   originales de la galería no se tocan. Los reels no llevan marca porque
+ *   el video se envía sin reprocesar.
  *
  * Todas las llamadas a Meta usan graph.instagram.com (token IGAA...).
  */
@@ -52,9 +54,9 @@ class Instagram
     private static $marcaMargenPct = 0.03;     // 3% del ancho
     private static $marcaOpacidad = 85;        // 0..100
 
-    // Logo del jardín ya decodificado. false = aún no se ha leído;
-    // null = no hay logo o no se pudo leer (se publica sin marca).
-    private static $logoMarca = false;
+    // Logo del jardín ya decodificado, cargado desde la petición con
+    // cargarLogoMarca(). null = no llegó o no se pudo leer (se publica sin marca).
+    private static $logoMarca = null;
 
     // Conexión propia (con reconexión).
     private static $pdo = null;
@@ -176,7 +178,7 @@ class Instagram
 
     /**
      * Publica un carrusel (o imagen única) en el FEED.
-     * Body (JSON): id_galeria, ids[] (1..10), caption
+     * Body (JSON): id_galeria, ids[] (1..10), caption, logo (opcional, data URI)
      */
     public static function publicar()
     {
@@ -186,6 +188,7 @@ class Instagram
         $idGaleria = isset($data['id_galeria']) ? $data['id_galeria'] : null;
         $ids = isset($data['ids']) ? $data['ids'] : [];
         $caption = isset($data['caption']) ? trim($data['caption']) : '';
+        self::cargarLogoMarca(isset($data['logo']) ? $data['logo'] : null);
 
         if (!$idGaleria || !is_array($ids) || count($ids) === 0) {
             Flight::json(['error' => 'Se requiere id_galeria y al menos una imagen.'], 400);
@@ -258,7 +261,7 @@ class Instagram
 
     /**
      * Publica HISTORIAS: una por cada imagen seleccionada (sin tope de 10).
-     * Body (JSON): id_galeria, ids[]
+     * Body (JSON): id_galeria, ids[], logo (opcional, data URI)
      */
     public static function publicarHistoria()
     {
@@ -267,6 +270,7 @@ class Instagram
         $data = Flight::request()->data;
         $idGaleria = isset($data['id_galeria']) ? $data['id_galeria'] : null;
         $ids = isset($data['ids']) ? $data['ids'] : [];
+        self::cargarLogoMarca(isset($data['logo']) ? $data['logo'] : null);
 
         if (!$idGaleria || !is_array($ids) || count($ids) === 0) {
             Flight::json(['error' => 'Se requiere id_galeria y al menos una imagen.'], 400);
@@ -460,7 +464,7 @@ class Instagram
      * a Meta, la devuelve en base64 y borra el temporal.
      * No exige la cuenta de Instagram configurada: solo procesa la imagen.
      *
-     * Body (JSON): id_galeria, id_imagen, tipo ('feed' | 'historia')
+     * Body (JSON): id_galeria, id_imagen, tipo ('feed' | 'historia'), logo (opcional, data URI)
      * Respuesta: { imagen: "data:image/jpeg;base64,...", con_marca: bool }
      */
     public static function vistaPrevia()
@@ -469,6 +473,7 @@ class Instagram
         $idGaleria = isset($data['id_galeria']) ? $data['id_galeria'] : null;
         $idImagen = isset($data['id_imagen']) ? $data['id_imagen'] : null;
         $tipo = isset($data['tipo']) ? $data['tipo'] : 'feed';
+        self::cargarLogoMarca(isset($data['logo']) ? $data['logo'] : null);
 
         if (!$idGaleria || !$idImagen) {
             Flight::json(['error' => 'Se requiere id_galeria e id_imagen.'], 400);
@@ -1271,62 +1276,48 @@ class Instagram
     }
 
     /**
-     * Logo del jardín desde configuracion_portal_publico.logo, donde la
-     * pantalla de configuración del portal lo guarda como data URI en base64.
-     * Se lee una sola vez por petición y se reutiliza en todas las fotos.
-     * Devuelve null si no hay logo o no se puede leer (por ejemplo un SVG,
-     * que GD no abre); en ese caso se publica sin marca.
+     * Carga el logo que envía el front (data URI en base64) para usarlo como
+     * marca de agua en esta petición. Es el mismo logo de los contratos:
+     * assets/images/instituciones/{codigo}/logo.png del front.
+     * Si no llega o no se puede leer (por ejemplo un SVG, que GD no abre),
+     * queda en null y se publica sin marca.
      */
-    private static function obtenerLogoMarca()
+    private static function cargarLogoMarca($logo)
     {
-        if (self::$logoMarca !== false) {
-            return self::$logoMarca;
-        }
         self::$logoMarca = null;
 
-        try {
-            $stmt = self::db()->prepare("
-                SELECT logo
-                FROM configuracion_portal_publico
-                WHERE id_tenant = :id_tenant
-                LIMIT 1
-            ");
-            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $stmt->execute();
-            $logo = $stmt->fetchColumn();
-
-            if (empty($logo)) {
-                self::log('El jardín no tiene logo configurado; se publica sin marca de agua.');
-                return null;
-            }
-
-            // "data:image/png;base64,AAAA..." -> solo la parte en base64
-            $coma = strpos($logo, ',');
-            $base64 = (strpos($logo, 'data:') === 0 && $coma !== false) ? substr($logo, $coma + 1) : $logo;
-            $binario = base64_decode($base64, true);
-            if ($binario === false) {
-                self::log('El logo del jardín no es un base64 válido; se publica sin marca de agua.');
-                return null;
-            }
-
-            $imagen = @imagecreatefromstring($binario);
-            if (!$imagen) {
-                self::log('GD no pudo abrir el logo del jardín (¿SVG?); se publica sin marca de agua.');
-                return null;
-            }
-
-            if (!imageistruecolor($imagen)) {
-                imagepalettetotruecolor($imagen);
-            }
-            imagealphablending($imagen, false);
-            imagesavealpha($imagen, true);
-
-            self::$logoMarca = $imagen;
-        } catch (Exception $e) {
-            self::log('No se pudo leer el logo del jardín: ' . $e->getMessage());
-            self::$logoMarca = null;
+        if (empty($logo) || !is_string($logo)) {
+            self::log('No llegó el logo del jardín; se publica sin marca de agua.');
+            return;
         }
 
+        // "data:image/png;base64,AAAA..." -> solo la parte en base64
+        $coma = strpos($logo, ',');
+        $base64 = (strpos($logo, 'data:') === 0 && $coma !== false) ? substr($logo, $coma + 1) : $logo;
+        $binario = base64_decode($base64, true);
+        if ($binario === false) {
+            self::log('El logo del jardín no es un base64 válido; se publica sin marca de agua.');
+            return;
+        }
+
+        $imagen = @imagecreatefromstring($binario);
+        if (!$imagen) {
+            self::log('GD no pudo abrir el logo del jardín (¿SVG?); se publica sin marca de agua.');
+            return;
+        }
+
+        if (!imageistruecolor($imagen)) {
+            imagepalettetotruecolor($imagen);
+        }
+        imagealphablending($imagen, false);
+        imagesavealpha($imagen, true);
+
+        self::$logoMarca = $imagen;
+    }
+
+    /** Logo cargado para esta petición, o null si no hay. */
+    private static function obtenerLogoMarca()
+    {
         return self::$logoMarca;
     }
 }
