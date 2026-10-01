@@ -58,6 +58,14 @@ class Instagram
     // cargarLogoMarca(). null = no llegó o no se pudo leer (se publica sin marca).
     private static $logoMarca = null;
 
+    // Cómo se encaja la foto en el tamaño de Instagram (lo escoge el usuario
+    // en la vista previa):
+    //   difuminado: foto completa sobre la misma foto ampliada y difuminada
+    //   recortar:   la foto llena todo el cuadro y se pierden los bordes
+    //   blanco:     foto completa sobre fondo blanco
+    private static $encuadresValidos = ['difuminado', 'recortar', 'blanco'];
+    private static $encuadre = 'difuminado';
+
     // Conexión propia (con reconexión).
     private static $pdo = null;
 
@@ -178,7 +186,8 @@ class Instagram
 
     /**
      * Publica un carrusel (o imagen única) en el FEED.
-     * Body (JSON): id_galeria, ids[] (1..10), caption, logo (opcional, data URI)
+     * Body (JSON): id_galeria, ids[] (1..10), caption, logo (opcional, data URI),
+     *              encuadre (opcional: difuminado | recortar | blanco)
      */
     public static function publicar()
     {
@@ -189,6 +198,7 @@ class Instagram
         $ids = isset($data['ids']) ? $data['ids'] : [];
         $caption = isset($data['caption']) ? trim($data['caption']) : '';
         self::cargarLogoMarca(isset($data['logo']) ? $data['logo'] : null);
+        self::cargarEncuadre(isset($data['encuadre']) ? $data['encuadre'] : null);
 
         if (!$idGaleria || !is_array($ids) || count($ids) === 0) {
             Flight::json(['error' => 'Se requiere id_galeria y al menos una imagen.'], 400);
@@ -261,7 +271,8 @@ class Instagram
 
     /**
      * Publica HISTORIAS: una por cada imagen seleccionada (sin tope de 10).
-     * Body (JSON): id_galeria, ids[], logo (opcional, data URI)
+     * Body (JSON): id_galeria, ids[], logo (opcional, data URI),
+     *              encuadre (opcional: difuminado | recortar | blanco)
      */
     public static function publicarHistoria()
     {
@@ -271,6 +282,7 @@ class Instagram
         $idGaleria = isset($data['id_galeria']) ? $data['id_galeria'] : null;
         $ids = isset($data['ids']) ? $data['ids'] : [];
         self::cargarLogoMarca(isset($data['logo']) ? $data['logo'] : null);
+        self::cargarEncuadre(isset($data['encuadre']) ? $data['encuadre'] : null);
 
         if (!$idGaleria || !is_array($ids) || count($ids) === 0) {
             Flight::json(['error' => 'Se requiere id_galeria y al menos una imagen.'], 400);
@@ -464,7 +476,8 @@ class Instagram
      * a Meta, la devuelve en base64 y borra el temporal.
      * No exige la cuenta de Instagram configurada: solo procesa la imagen.
      *
-     * Body (JSON): id_galeria, id_imagen, tipo ('feed' | 'historia'), logo (opcional, data URI)
+     * Body (JSON): id_galeria, id_imagen, tipo ('feed' | 'historia'), logo (opcional, data URI),
+     *              encuadre (opcional: difuminado | recortar | blanco)
      * Respuesta: { imagen: "data:image/jpeg;base64,...", con_marca: bool }
      */
     public static function vistaPrevia()
@@ -474,6 +487,7 @@ class Instagram
         $idImagen = isset($data['id_imagen']) ? $data['id_imagen'] : null;
         $tipo = isset($data['tipo']) ? $data['tipo'] : 'feed';
         self::cargarLogoMarca(isset($data['logo']) ? $data['logo'] : null);
+        self::cargarEncuadre(isset($data['encuadre']) ? $data['encuadre'] : null);
 
         if (!$idGaleria || !$idImagen) {
             Flight::json(['error' => 'Se requiere id_galeria e id_imagen.'], 400);
@@ -1113,7 +1127,8 @@ class Instagram
     }
 
     // =====================================================================
-    // NORMALIZACIÓN DE IMAGEN (GD): fondo difuminado, foto completa sin recorte
+    // NORMALIZACIÓN DE IMAGEN (GD): encaja la foto en el tamaño de Instagram
+    // según el encuadre escogido (difuminado, recortar o blanco)
     // =====================================================================
 
     private static function normalizarImagen($origen, $destino, $wDest, $hDest)
@@ -1140,16 +1155,31 @@ class Instagram
         $anchoOrig = imagesx($src);
         $altoOrig = imagesy($src);
 
+        // Recortar: la foto llena todo el cuadro ("cover"), centrada.
+        if (self::$encuadre === 'recortar') {
+            $lienzo = self::escalarCover($src, $anchoOrig, $altoOrig, $wDest, $hDest);
+            self::aplicarMarcaAgua($lienzo, 0, 0, $wDest, $hDest, $wDest);
+            imagejpeg($lienzo, $destino, 88);
+            imagedestroy($src);
+            imagedestroy($lienzo);
+            return;
+        }
+
         $lienzo = imagecreatetruecolor($wDest, $hDest);
 
-        // Fondo: la misma imagen escalada a "cover" y difuminada.
-        $fondo = self::escalarCover($src, $anchoOrig, $altoOrig, $wDest, $hDest);
-        for ($i = 0; $i < 12; $i++) {
-            imagefilter($fondo, IMG_FILTER_GAUSSIAN_BLUR);
+        if (self::$encuadre === 'blanco') {
+            // Fondo blanco liso.
+            imagefill($lienzo, 0, 0, imagecolorallocate($lienzo, 255, 255, 255));
+        } else {
+            // Fondo: la misma imagen escalada a "cover" y difuminada.
+            $fondo = self::escalarCover($src, $anchoOrig, $altoOrig, $wDest, $hDest);
+            for ($i = 0; $i < 12; $i++) {
+                imagefilter($fondo, IMG_FILTER_GAUSSIAN_BLUR);
+            }
+            imagefilter($fondo, IMG_FILTER_BRIGHTNESS, -25);
+            imagecopy($lienzo, $fondo, 0, 0, 0, 0, $wDest, $hDest);
+            imagedestroy($fondo);
         }
-        imagefilter($fondo, IMG_FILTER_BRIGHTNESS, -25);
-        imagecopy($lienzo, $fondo, 0, 0, 0, 0, $wDest, $hDest);
-        imagedestroy($fondo);
 
         // Primer plano: imagen completa "contain", centrada.
         $ratio = min($wDest / $anchoOrig, $hDest / $altoOrig);
@@ -1313,6 +1343,12 @@ class Instagram
         imagesavealpha($imagen, true);
 
         self::$logoMarca = $imagen;
+    }
+
+    /** Encuadre pedido; si no llega o no es válido, se usa el difuminado. */
+    private static function cargarEncuadre($encuadre)
+    {
+        self::$encuadre = in_array($encuadre, self::$encuadresValidos, true) ? $encuadre : 'difuminado';
     }
 
     /** Logo cargado para esta petición, o null si no hay. */
