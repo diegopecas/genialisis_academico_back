@@ -154,7 +154,7 @@ class MiAgenda
         'tareas' => [
             'nombre' => 'Tareas',
             'icono'  => '📚',
-            'color'  => '#6610F2',
+            'color'  => '#D4AF37',
             'metodo' => 'fuenteTareas',
             'permiso_padres' => 'padres.tareas.ver',
             'orden'  => 12,

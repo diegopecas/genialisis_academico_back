@@ -17,6 +17,7 @@ Flight::route('DELETE /tareas-estudiantes', [TareasEstudiantes::class, 'delete']
 // Estado y calificacion por estudiante
 Flight::route('GET /tareas-estudiantes-x-estudiante/escala', [TareasEstudiantesXEstudiante::class, 'getEscala']);
 Flight::route('PUT /tareas-estudiantes-x-estudiante/calificar', [TareasEstudiantesXEstudiante::class, 'calificar']);
+Flight::route('PUT /tareas-estudiantes-x-estudiante/calificar-lote', [TareasEstudiantesXEstudiante::class, 'calificarLote']);
 Flight::route('POST /tareas-estudiantes-x-estudiante/marcar-enviada', [TareasEstudiantesXEstudiante::class, 'marcarEnviada']);
 
 // Responsables
