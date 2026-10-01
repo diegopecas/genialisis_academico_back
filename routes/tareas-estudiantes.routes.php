@@ -5,6 +5,7 @@ Flight::route('GET /tareas-estudiantes/estudiante/@id_estudiante', [TareasEstudi
 Flight::route('GET /tareas-estudiantes/detalle/@id/@id_estudiante', [TareasEstudiantes::class, 'getDetallePadres']);
 Flight::route('GET /tareas-estudiantes/@id/estudiantes', [TareasEstudiantes::class, 'getEstudiantes']);
 Flight::route('POST /tareas-estudiantes/publicar', [TareasEstudiantes::class, 'publicar']);
+Flight::route('GET /tareas-estudiantes/reporte', [TareasEstudiantes::class, 'getReporte']);
 
 // Tareas Estudiantes: CRUD
 Flight::route('GET /tareas-estudiantes/@id', [TareasEstudiantes::class, 'getById']);

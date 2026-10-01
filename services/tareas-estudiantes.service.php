@@ -20,6 +20,7 @@ class TareasEstudiantes
 {
     const PERMISO = 'estudiantes.tareas';
     const PERMISO_PADRES = 'padres.tareas.ver';
+    const PERMISO_REPORTE = 'reportes.tareas_estudiantes';
     const CODIGO_CATEGORIA_NOTIFICACION = 'TAREA';
 
     // =====================================================================
@@ -355,6 +356,93 @@ class TareasEstudiantes
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         Flight::json($sentence->fetchAll());
+    }
+
+    // =====================================================================
+    // REPORTE
+    // =====================================================================
+
+    /**
+     * Reporte de tareas por estudiante: una fila por niño y tarea, de las
+     * tareas publicadas cuya fecha de entrega cae en el rango. Los borradores
+     * no cuentan porque los acudientes todavia no los conocen.
+     *
+     * Grupo, area, estudiante y estado los filtra el front en memoria: el
+     * rango es lo unico que vuelve a consultar.
+     *
+     * El grupo es el activo hoy del estudiante, no el que tenia cuando se le
+     * asigno la tarea: la tarea no guarda el grupo.
+     *
+     * Query: desde=YYYY-MM-DD, hasta=YYYY-MM-DD (por defecto, el mes en curso).
+     */
+    public static function getReporte()
+    {
+        $userData = JWTService::requerirAutenticacion();
+        PermisosService::validar($userData, self::PERMISO_REPORTE);
+
+        try {
+            $db = Flight::db();
+
+            $desde = Flight::request()->query['desde'] ?? date('Y-m-01');
+            $hasta = Flight::request()->query['hasta'] ?? date('Y-m-t');
+
+            if (!self::fechaValida($desde) || !self::fechaValida($hasta)) {
+                Flight::json(array('error' => 'Las fechas deben tener el formato AAAA-MM-DD'), 400);
+                return;
+            }
+
+            if ($desde > $hasta) {
+                Flight::json(array('error' => 'La fecha inicial no puede ser mayor que la fecha final'), 400);
+                return;
+            }
+
+            $sentence = $db->prepare("
+                SELECT x.id,
+                       x.id_estudiante,
+                       TRIM(CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido)) AS nombre_estudiante,
+                       g.id     AS id_grupo,
+                       g.nombre AS nombre_grupo,
+                       t.id     AS id_tarea,
+                       t.titulo,
+                       t.id_area_academica,
+                       aa.nombre AS area_nombre,
+                       aa.color  AS area_color,
+                       t.fecha_asignacion,
+                       t.fecha_entrega,
+                       x.estado,
+                       x.fecha_envio_acudiente,
+                       x.valoracion_texto,
+                       x.valoracion_color,
+                       x.observacion,
+                       x.fecha_calificacion
+                FROM tareas_estudiantes_x_estudiante x
+                INNER JOIN tareas_estudiantes t ON t.id = x.id_tarea_estudiante AND t.id_tenant = x.id_tenant
+                INNER JOIN estudiantes e ON e.id = x.id_estudiante
+                INNER JOIN personas p ON p.id = e.id_persona
+                LEFT JOIN areas_academicas aa ON aa.id = t.id_area_academica AND aa.id_tenant = t.id_tenant
+                -- Un estudiante puede quedar con mas de un grupo activo por
+                -- error de datos: se toma uno solo para no duplicar filas.
+                LEFT JOIN (SELECT exg.id_estudiante, MIN(exg.id_grupo) AS id_grupo
+                             FROM estudiantes_x_grupos exg
+                            WHERE exg.id_tenant = :id_tenant_grupo AND exg.activo = 1
+                            GROUP BY exg.id_estudiante) eg ON eg.id_estudiante = x.id_estudiante
+                LEFT JOIN grupos g ON g.id = eg.id_grupo
+                WHERE x.id_tenant = :id_tenant
+                  AND t.activo = 1
+                  AND t.publicada = 1
+                  AND t.fecha_entrega BETWEEN :desde AND :hasta
+                ORDER BY p.primer_apellido, p.primer_nombre, t.fecha_entrega DESC, t.titulo
+            ");
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindValue(':id_tenant_grupo', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindValue(':desde', $desde);
+            $sentence->bindValue(':hasta', $hasta);
+            $sentence->execute();
+            Flight::json($sentence->fetchAll());
+        } catch (Exception $e) {
+            error_log("Error en TareasEstudiantes::getReporte: " . $e->getMessage());
+            Flight::json(array('error' => 'Error al consultar el reporte de tareas'), 500);
+        }
     }
 
     // =====================================================================
