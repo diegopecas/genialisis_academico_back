@@ -11,4 +11,5 @@ Flight::route('GET /instagram/imagenes-publicadas/@id_galeria', [Instagram::clas
 Flight::route('POST /instagram/publicar', [Instagram::class, 'publicar']);
 Flight::route('POST /instagram/publicar-historia', [Instagram::class, 'publicarHistoria']);
 Flight::route('POST /instagram/publicar-reel', [Instagram::class, 'publicarReel']);
+Flight::route('POST /instagram/vista-previa', [Instagram::class, 'vistaPrevia']);
 Flight::route('POST /instagram/refrescar-token', [Instagram::class, 'refrescarTokenManual']);

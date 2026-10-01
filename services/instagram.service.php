@@ -6,6 +6,7 @@
  * Publica imágenes de una galería en la cuenta de Instagram del tenant:
  *   - Carrusel/imagen en el feed -> publicar()
  *   - Historias (una por imagen) -> publicarHistoria()
+ *   - Vista previa sin publicar  -> vistaPrevia()
  *
  * Notas de robustez aprendidas en producción:
  * - El proceso es largo (normalización GD + subidas a Meta). MySQL cierra la
@@ -450,6 +451,68 @@ class Instagram
             self::log('ERROR REEL id=' . $idPublicacion . ': ' . $e->getMessage());
             self::actualizarPublicacion($idPublicacion, 'error', null, null, $e->getMessage());
             Flight::json(['error' => 'No se pudo publicar el Reel: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Vista previa de cómo saldría una imagen en Instagram (fondo, encuadre y
+     * marca de agua), sin publicar nada. Arma la misma imagen que se enviaría
+     * a Meta, la devuelve en base64 y borra el temporal.
+     * No exige la cuenta de Instagram configurada: solo procesa la imagen.
+     *
+     * Body (JSON): id_galeria, id_imagen, tipo ('feed' | 'historia')
+     * Respuesta: { imagen: "data:image/jpeg;base64,...", con_marca: bool }
+     */
+    public static function vistaPrevia()
+    {
+        $data = Flight::request()->data;
+        $idGaleria = isset($data['id_galeria']) ? $data['id_galeria'] : null;
+        $idImagen = isset($data['id_imagen']) ? $data['id_imagen'] : null;
+        $tipo = isset($data['tipo']) ? $data['tipo'] : 'feed';
+
+        if (!$idGaleria || !$idImagen) {
+            Flight::json(['error' => 'Se requiere id_galeria e id_imagen.'], 400);
+            return;
+        }
+        if ($tipo !== 'feed' && $tipo !== 'historia') {
+            Flight::json(['error' => 'El tipo de vista previa debe ser feed o historia.'], 400);
+            return;
+        }
+
+        $imagenes = self::cargarImagenesSeleccionadas($idGaleria, [$idImagen]);
+        if (count($imagenes) === 0) {
+            Flight::json(['error' => 'La imagen indicada no pertenece a la galería.'], 400);
+            return;
+        }
+
+        $tenant = TenantContext::codigo();
+        $ancho = $tipo === 'historia' ? self::$storyAncho : self::$feedLado;
+        $alto = $tipo === 'historia' ? self::$storyAlto : self::$feedLado;
+
+        // No se usa prepararTemporal(): esa arma la URL firmada para Meta, que
+        // aquí no hace falta. El temporal se borra siempre en el finally.
+        $origen = self::getBasePath($tenant) . str_replace(['../', '..\\', '..'], '', $imagenes[0]['url']);
+        $rutaTmp = self::getTmpPath($tenant) . bin2hex(random_bytes(16)) . '.jpg';
+
+        try {
+            if (!file_exists($origen)) {
+                throw new Exception('Archivo no encontrado: ' . $imagenes[0]['url']);
+            }
+            self::normalizarImagen($origen, $rutaTmp, $ancho, $alto);
+            $contenido = file_get_contents($rutaTmp);
+            if ($contenido === false) {
+                throw new Exception('No se pudo leer la imagen procesada.');
+            }
+
+            Flight::json([
+                'imagen' => 'data:image/jpeg;base64,' . base64_encode($contenido),
+                'con_marca' => self::obtenerLogoMarca() !== null
+            ]);
+        } catch (Exception $e) {
+            self::log('ERROR vista previa: ' . $e->getMessage());
+            Flight::json(['error' => 'No se pudo generar la vista previa: ' . $e->getMessage()], 500);
+        } finally {
+            self::limpiarTemporales([['ruta' => $rutaTmp]]);
         }
     }
 
