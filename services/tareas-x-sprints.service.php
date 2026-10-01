@@ -675,6 +675,99 @@ class TareasXSprints
     }
 
     /**
+     * Actividades que se pueden importar al calificar: las del mismo grupo y
+     * area (o del mismo curso extracurricular) en cualquier sprint del corte
+     * academico del sprint recibido.
+     *
+     * Query: id_grupo + id_area_academica, o id_curso_extra.
+     * Se quitan las que ya estan pendientes en ese sprint para el mismo
+     * destino (ya salen en el listado) y cada actividad sale una sola vez,
+     * con su sprint mas reciente. Si el sprint no tiene corte devuelve vacio.
+     */
+    public static function getParaImportarCorte($id_sprint)
+    {
+        try {
+            $db = Flight::db();
+            $id_grupo = $_GET['id_grupo'] ?? null;
+            $id_area_academica = $_GET['id_area_academica'] ?? null;
+            $id_curso_extra = $_GET['id_curso_extra'] ?? null;
+
+            if (!$id_curso_extra && (!$id_grupo || !$id_area_academica)) {
+                Flight::json(['error' => 'id_grupo e id_area_academica, o id_curso_extra, son requeridos'], 400);
+                return;
+            }
+
+            // Mismo destino en la tarea listada y en la pendiente del sprint actual
+            if ($id_curso_extra) {
+                $filtroDestino = "txs.id_curso_extra = :id_curso_extra";
+                $filtroPendiente = "p.id_curso_extra = txs.id_curso_extra";
+            } else {
+                $filtroDestino = "txs.id_grupo = :id_grupo AND txs.id_area_academica = :id_area_academica";
+                $filtroPendiente = "p.id_grupo = txs.id_grupo AND p.id_area_academica = txs.id_area_academica";
+            }
+
+            $sql = "SELECT
+                    txs.id,
+                    txs.id_actividad_academica,
+                    txs.id_estado_tarea,
+                    et.nombre AS nombre_estado,
+                    aa.titulo AS titulo_actividad,
+                    aa.descripcion AS descripcion_actividad,
+                    aa.minutos_duracion,
+                    aa.id_tipo_actividad_academica,
+                    ta.nombre AS nombre_tipo_actividad,
+                    ta.icono AS icono_tipo_actividad,
+                    s.id AS id_sprint,
+                    s.nombre_sprint,
+                    s.numero_sprint,
+                    (SELECT COUNT(*) FROM actividades_academicas_x_indicadores_logros xi
+                      WHERE xi.id_actividad_academica = aa.id AND xi.id_tenant = txs.id_tenant) AS total_indicadores
+                FROM tareas_x_sprints txs
+                INNER JOIN sprints sa ON sa.id = :id_sprint AND sa.id_tenant = txs.id_tenant
+                INNER JOIN sprints s ON s.id = txs.id_sprint AND s.id_tenant = txs.id_tenant
+                INNER JOIN actividades_academicas aa ON aa.id = txs.id_actividad_academica AND aa.id_tenant = txs.id_tenant
+                INNER JOIN estados_tareas et ON et.id = txs.id_estado_tarea
+                LEFT JOIN tipos_actividades_academicas ta ON ta.id = aa.id_tipo_actividad_academica AND ta.id_tenant = txs.id_tenant
+                WHERE txs.id_tenant = :id_tenant
+                  AND s.id_corte_academico = sa.id_corte_academico
+                  AND $filtroDestino
+                  AND NOT EXISTS (
+                      SELECT 1 FROM tareas_x_sprints p
+                       WHERE p.id_tenant = txs.id_tenant
+                         AND p.id_sprint = sa.id
+                         AND p.id_actividad_academica = txs.id_actividad_academica
+                         AND p.id_estado_tarea = 1
+                         AND $filtroPendiente
+                  )
+                ORDER BY s.fecha_inicial DESC, s.numero_sprint DESC, txs.fecha_registro DESC";
+
+            $sentence = $db->prepare($sql);
+            $sentence->bindValue(':id_sprint', $id_sprint);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            if ($id_curso_extra) {
+                $sentence->bindValue(':id_curso_extra', $id_curso_extra);
+            } else {
+                $sentence->bindValue(':id_grupo', $id_grupo);
+                $sentence->bindValue(':id_area_academica', $id_area_academica);
+            }
+            $sentence->execute();
+
+            // Una fila por actividad: la primera es la del sprint mas reciente
+            $actividades = [];
+            foreach ($sentence->fetchAll(PDO::FETCH_ASSOC) as $fila) {
+                if (!isset($actividades[$fila['id_actividad_academica']])) {
+                    $actividades[$fila['id_actividad_academica']] = $fila;
+                }
+            }
+
+            Flight::json(array_values($actividades));
+        } catch (Exception $e) {
+            error_log("Error en getParaImportarCorte: " . $e->getMessage());
+            Flight::json(['error' => 'Error al obtener las actividades del corte'], 500);
+        }
+    }
+
+    /**
      * Obtener tareas de un sprint filtradas por grupo y área, ordenadas por orden_ejecucion
      */
     /**
@@ -705,6 +798,8 @@ class TareasXSprints
             $id_area_academica = Flight::request()->data['id_area_academica'] ?? null;
             $id_curso_extra = Flight::request()->data['id_curso_extra'] ?? null;
             $id_docente = Flight::request()->data['id_docente'] ?? null;
+            // Opcional: las que se crean al momento de calificar cuentan como adicionales
+            $es_tarea_adicional = !empty(Flight::request()->data['es_tarea_adicional']) ? 1 : 0;
 
             if (empty($actividades)) {
                 Flight::json(array('error' => 'No se recibieron actividades.'), 400);
@@ -763,10 +858,12 @@ class TareasXSprints
 
             $insert = $db->prepare("INSERT INTO tareas_x_sprints (
                 id, id_tenant, id_sprint, id_actividad_academica, id_grupo, id_area_academica,
-                id_curso_extra, id_estado_tarea, id_docente, fecha_ejecucion, fecha_registro, orden_ejecucion
+                id_curso_extra, id_estado_tarea, id_docente, fecha_ejecucion, fecha_registro, orden_ejecucion,
+                es_tarea_adicional
             ) VALUES (
                 :id, :id_tenant, :id_sprint, :id_actividad, :id_grupo, :id_area,
-                :id_curso_extra, 1, :id_docente, NULL, NOW(), :orden
+                :id_curso_extra, 1, :id_docente, NULL, NOW(), :orden,
+                :es_tarea_adicional
             )");
 
             $creadas = [];
@@ -790,6 +887,7 @@ class TareasXSprints
                 $insert->bindValue(':id_curso_extra', $id_curso_extra);
                 $insert->bindValue(':id_docente', $id_docente);
                 $insert->bindValue(':orden', $orden, PDO::PARAM_INT);
+                $insert->bindValue(':es_tarea_adicional', $es_tarea_adicional, PDO::PARAM_INT);
                 $insert->execute();
 
                 $creadas[] = array(

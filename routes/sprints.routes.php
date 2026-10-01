@@ -45,6 +45,8 @@ Flight::route('GET /tareas-x-sprints/resumen-todos-grupos', [TareasXSprints::cla
 Flight::route('PUT /tareas-x-sprints/cambiar-estado', [TareasXSprints::class, 'cambiarEstado']);
 Flight::route('GET /tareas-x-sprints/importar/@id_sprint', [TareasXSprints::class, 'getTareasParaImportar']);
 Flight::route('POST /tareas-x-sprints/importar-masivo', [TareasXSprints::class, 'importarMasivo']);
+// Actividades del corte para importar al calificar (grupo+area o curso extracurricular).
+Flight::route('GET /tareas-x-sprints/importar-corte/@id_sprint', [TareasXSprints::class, 'getParaImportarCorte']);
 Flight::route('GET /tareas-x-sprints/sprint-grupo-area/@id_sprint/@id_grupo/@id_area', [TareasXSprints::class, 'getBySprintGrupoArea']);
 // Clases de un curso extracurricular dentro del sprint.
 Flight::route('GET /tareas-x-sprints/sprint-curso-extra/@id_sprint/@id_curso_extra', [TareasXSprints::class, 'getBySprintCursoExtra']);
