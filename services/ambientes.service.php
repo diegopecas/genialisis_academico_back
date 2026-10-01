@@ -95,6 +95,21 @@ class Ambientes
             $db = Flight::db();
             $id = Flight::request()->data['id'];
 
+            // Si alguna actividad usa el ambiente no se borra: la llave
+            // foranea pondria el ambiente en NULL en esas actividades sin
+            // avisar. En ese caso se pide inactivarlo, que lo saca de las
+            // listas para escoger pero lo conserva en las actividades.
+            $uso = $db->prepare("SELECT COUNT(*) FROM actividades_academicas WHERE id_ambiente = :id AND id_tenant = :id_tenant");
+            $uso->bindParam(':id', $id);
+            $uso->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $uso->execute();
+            $totalActividades = (int) $uso->fetchColumn();
+            if ($totalActividades > 0) {
+                $texto = $totalActividades === 1 ? '1 actividad lo usa' : $totalActividades . ' actividades lo usan';
+                Flight::json(array('error' => "No se puede eliminar el ambiente porque $texto. Puedes inactivarlo desde la edición."), 409);
+                return;
+            }
+
             $sentence = $db->prepare("DELETE FROM ambientes WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
