@@ -448,7 +448,9 @@ class AsistenciaEstudiantes
     {
         self::setTimeZone();
         $db = Flight::db();
-        $sentence = $db->prepare("select e.id, e.id_persona, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido, g.nombre nombre_grupo, g.icono, g.color  
+        // p.foto: la foto del nino para mostrarla en la lista de ingreso; si
+        // no tiene, el front muestra el icono del grupo.
+        $sentence = $db->prepare("select e.id, e.id_persona, p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido, p.foto, g.nombre nombre_grupo, g.icono, g.color  
         from estudiantes e
         inner join personas p on e.id_persona = p.id
         inner join estudiantes_x_grupos exg on e.id = exg.id_estudiante

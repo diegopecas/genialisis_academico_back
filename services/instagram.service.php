@@ -13,6 +13,10 @@
  *   usa su PROPIA conexión PDO con ping/reconexión (self::db()).
  * - Las historias tienen rate limit; se publican con pausa entre cada una y
  *   reintentos con espera.
+ * - Marca de agua: en el feed y las historias se pega el logo del jardín
+ *   (configuracion_portal_publico.logo) sobre la copia que sube a Meta. Las
+ *   fotos originales de la galería no se tocan. Los reels no llevan marca
+ *   porque el video se envía sin reprocesar.
  *
  * Todas las llamadas a Meta usan graph.instagram.com (token IGAA...).
  */
@@ -38,6 +42,18 @@ class Instagram
     private static $pausaEntreHistorias = 5;   // segundos
     private static $reintentosPublish = 3;
     private static $esperaReintento = 6;        // segundos (se multiplica por intento)
+
+    // Marca de agua: el logo cabe en un recuadro proporcional al ancho de la
+    // imagen de salida (el logo sugerido es horizontal), en la esquina
+    // inferior derecha de la foto, con margen y algo de transparencia.
+    private static $marcaAnchoMaxPct = 0.20;   // 20% del ancho
+    private static $marcaAltoMaxPct = 0.10;    // 10% del ancho
+    private static $marcaMargenPct = 0.03;     // 3% del ancho
+    private static $marcaOpacidad = 85;        // 0..100
+
+    // Logo del jardín ya decodificado. false = aún no se ha leído;
+    // null = no hay logo o no se pudo leer (se publica sin marca).
+    private static $logoMarca = false;
 
     // Conexión propia (con reconexión).
     private static $pdo = null;
@@ -1081,6 +1097,9 @@ class Instagram
             $anchoOrig, $altoOrig
         );
 
+        // Logo del jardín sobre la foto (si el jardín lo tiene configurado).
+        self::aplicarMarcaAgua($lienzo, $dstX, $dstY, $nuevoAncho, $nuevoAlto, $wDest);
+
         imagejpeg($lienzo, $destino, 88);
 
         imagedestroy($src);
@@ -1119,5 +1138,132 @@ class Instagram
 
         imagedestroy($temp);
         return $rect;
+    }
+
+    // =====================================================================
+    // MARCA DE AGUA (logo del jardín)
+    // =====================================================================
+
+    /**
+     * Pega el logo en la esquina inferior derecha de la foto (no del lienzo,
+     * para que en las historias no quede sobre el fondo difuminado).
+     * Si no hay logo, no hace nada: la publicación sigue sin marca.
+     */
+    private static function aplicarMarcaAgua($lienzo, $fotoX, $fotoY, $fotoAncho, $fotoAlto, $wDest)
+    {
+        $logo = self::obtenerLogoMarca();
+        if (!$logo) {
+            return;
+        }
+
+        $logoAncho = imagesx($logo);
+        $logoAlto = imagesy($logo);
+
+        // El logo se ajusta al recuadro máximo sin deformarse.
+        $escala = min(
+            ($wDest * self::$marcaAnchoMaxPct) / $logoAncho,
+            ($wDest * self::$marcaAltoMaxPct) / $logoAlto
+        );
+        $ancho = max(1, (int)round($logoAncho * $escala));
+        $alto = max(1, (int)round($logoAlto * $escala));
+        $margen = (int)round($wDest * self::$marcaMargenPct);
+
+        // Copia escalada que conserva la transparencia del PNG.
+        $marca = imagecreatetruecolor($ancho, $alto);
+        imagealphablending($marca, false);
+        imagesavealpha($marca, true);
+        imagefill($marca, 0, 0, imagecolorallocatealpha($marca, 0, 0, 0, 127));
+        imagecopyresampled($marca, $logo, 0, 0, 0, 0, $ancho, $alto, $logoAncho, $logoAlto);
+
+        // Opacidad: imagecopymerge ignora el canal alfa, así que se baja
+        // pixel por pixel. El logo ya escalado es pequeño, el costo es mínimo.
+        if (self::$marcaOpacidad < 100) {
+            $factor = self::$marcaOpacidad / 100;
+            for ($x = 0; $x < $ancho; $x++) {
+                for ($y = 0; $y < $alto; $y++) {
+                    $rgba = imagecolorat($marca, $x, $y);
+                    $alfa = ($rgba >> 24) & 0x7F;
+                    if ($alfa === 127) {
+                        continue;
+                    }
+                    $nuevoAlfa = 127 - (int)round((127 - $alfa) * $factor);
+                    $color = imagecolorallocatealpha(
+                        $marca,
+                        ($rgba >> 16) & 0xFF,
+                        ($rgba >> 8) & 0xFF,
+                        $rgba & 0xFF,
+                        $nuevoAlfa
+                    );
+                    imagesetpixel($marca, $x, $y, $color);
+                }
+            }
+        }
+
+        $x = max($fotoX, $fotoX + $fotoAncho - $ancho - $margen);
+        $y = max($fotoY, $fotoY + $fotoAlto - $alto - $margen);
+
+        imagealphablending($lienzo, true);
+        imagecopy($lienzo, $marca, $x, $y, 0, 0, $ancho, $alto);
+        imagedestroy($marca);
+    }
+
+    /**
+     * Logo del jardín desde configuracion_portal_publico.logo, donde la
+     * pantalla de configuración del portal lo guarda como data URI en base64.
+     * Se lee una sola vez por petición y se reutiliza en todas las fotos.
+     * Devuelve null si no hay logo o no se puede leer (por ejemplo un SVG,
+     * que GD no abre); en ese caso se publica sin marca.
+     */
+    private static function obtenerLogoMarca()
+    {
+        if (self::$logoMarca !== false) {
+            return self::$logoMarca;
+        }
+        self::$logoMarca = null;
+
+        try {
+            $stmt = self::db()->prepare("
+                SELECT logo
+                FROM configuracion_portal_publico
+                WHERE id_tenant = :id_tenant
+                LIMIT 1
+            ");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmt->execute();
+            $logo = $stmt->fetchColumn();
+
+            if (empty($logo)) {
+                self::log('El jardín no tiene logo configurado; se publica sin marca de agua.');
+                return null;
+            }
+
+            // "data:image/png;base64,AAAA..." -> solo la parte en base64
+            $coma = strpos($logo, ',');
+            $base64 = (strpos($logo, 'data:') === 0 && $coma !== false) ? substr($logo, $coma + 1) : $logo;
+            $binario = base64_decode($base64, true);
+            if ($binario === false) {
+                self::log('El logo del jardín no es un base64 válido; se publica sin marca de agua.');
+                return null;
+            }
+
+            $imagen = @imagecreatefromstring($binario);
+            if (!$imagen) {
+                self::log('GD no pudo abrir el logo del jardín (¿SVG?); se publica sin marca de agua.');
+                return null;
+            }
+
+            if (!imageistruecolor($imagen)) {
+                imagepalettetotruecolor($imagen);
+            }
+            imagealphablending($imagen, false);
+            imagesavealpha($imagen, true);
+
+            self::$logoMarca = $imagen;
+        } catch (Exception $e) {
+            self::log('No se pudo leer el logo del jardín: ' . $e->getMessage());
+            self::$logoMarca = null;
+        }
+
+        return self::$logoMarca;
     }
 }
