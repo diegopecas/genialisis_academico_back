@@ -768,7 +768,25 @@ PROMPT;
     }
 
     /**
-     * Sugiere campos faltantes para una actividad individual.
+     * Convierte el HTML del editor enriquecido en texto plano para el prompt:
+     * los cierres de parrafo y los saltos se vuelven espacios.
+     */
+    private static function textoPlano($html)
+    {
+        $texto = preg_replace('/<\s*br\s*\/?>|<\/\s*(p|div|li|h[1-6])\s*>/i', ' ', (string) $html);
+        $texto = html_entity_decode(strip_tags($texto), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        return trim(preg_replace('/\s+/u', ' ', $texto));
+    }
+
+    /**
+     * Sugiere campos para una actividad individual.
+     *
+     * modo (opcional):
+     * - 'completar' (por defecto): respeta lo escrito y solo llena lo vacio.
+     * - 'reescribir': toma el titulo y la descripcion como la idea del docente,
+     *   redacta la descripcion y propone el titulo; el front reemplaza ambos.
+     * Los demas campos (tipo, ambiente, duracion, materiales, indicadores) se
+     * sugieren igual en los dos modos y el front decide si los aplica.
      */
     public static function sugerirIndividual()
     {
@@ -776,8 +794,10 @@ PROMPT;
             $db = Flight::db();
             $data = json_decode(Flight::request()->getBody(), true);
 
-            $titulo = $data['titulo'] ?? '';
-            $descripcion = $data['descripcion'] ?? '';
+            $modo = ($data['modo'] ?? '') === 'reescribir' ? 'reescribir' : 'completar';
+            $titulo = trim((string) ($data['titulo'] ?? ''));
+            // La descripcion llega del editor enriquecido: al prompt va como texto plano.
+            $descripcion = self::textoPlano($data['descripcion'] ?? '');
             $id_grupo = $data['id_grupo'] ?? null;
             $id_area = $data['id_area'] ?? null;
             $id_sprint = $data['id_sprint'] ?? null;
@@ -797,8 +817,8 @@ PROMPT;
                 $id_grupo = null;
             }
 
-            if (!$titulo || !$id_area || !$id_sprint || (!$id_grupo && !$id_curso_extra)) {
-                Flight::json(["error" => "titulo, id_area, id_sprint y uno de id_grupo o id_curso_extra son requeridos"], 400);
+            if (($titulo === '' && $descripcion === '') || !$id_area || !$id_sprint || (!$id_grupo && !$id_curso_extra)) {
+                Flight::json(["error" => "titulo o descripcion, id_area, id_sprint y uno de id_grupo o id_curso_extra son requeridos"], 400);
                 return;
             }
 
@@ -895,8 +915,29 @@ PROMPT;
             // un curso extracurricular no es un grupo de la malla regular.
             $etiquetaDestino = $id_curso_extra ? 'curso extracurricular' : 'grupo';
 
+            if ($modo === 'reescribir') {
+                $encabezado = "Redacta esta actividad del {$etiquetaDestino} \"{$nombre_grupo}\" (Grado: {$gradosTexto}) en el área \"{$nombre_area}\" a partir de la idea que escribió el docente.";
+                $instrucciones = <<<INSTR
+- El título y la descripción son la idea base del docente (pueden venir incompletos o solo uno de los dos). Respeta su intención, el enfoque y lo que quiere lograr.
+- Redacta una descripción nueva, clara y concreta en texto plano (sin markdown ni viñetas), que explique qué hacen los niños y cómo se desarrolla la actividad.
+- Propón un título corto y atractivo, coherente con la descripción.
+- Responde ÚNICAMENTE con JSON válido (sin markdown, sin backticks):
+
+{"titulo":"título propuesto","descripcion":"descripción redactada","materiales_sugeridos":["materiales de la lista disponible"],"indicadores_ids":[IDs de indicadores relevantes],"id_ambiente":ID del ambiente apropiado o null,"id_tipo_actividad_academica":ID del tipo apropiado,"minutos_duracion":45}
+INSTR;
+            } else {
+                $encabezado = "Completa los campos faltantes para esta actividad del {$etiquetaDestino} \"{$nombre_grupo}\" (Grado: {$gradosTexto}) en el área \"{$nombre_area}\".";
+                $instrucciones = <<<INSTR
+- Solo genera contenido para los campos que estén vacíos ("").
+- Si un campo ya tiene contenido, NO lo modifiques, devuélvelo exactamente igual.
+- Responde ÚNICAMENTE con JSON válido (sin markdown, sin backticks):
+
+{"titulo":"solo si estaba vacío","descripcion":"solo si estaba vacío","materiales_sugeridos":["materiales de la lista disponible"],"indicadores_ids":[IDs de indicadores relevantes],"id_ambiente":ID del ambiente apropiado o null,"id_tipo_actividad_academica":ID del tipo apropiado,"minutos_duracion":45}
+INSTR;
+            }
+
             $prompt = <<<PROMPT
-Eres un experto pedagógico en educación preescolar colombiana. Completa los campos faltantes para esta actividad del {$etiquetaDestino} "{$nombre_grupo}" (Grado: {$gradosTexto}) en el área "{$nombre_area}".
+Eres un experto pedagógico en educación preescolar colombiana. {$encabezado}
 
 ACTIVIDAD:
 - Título: "{$titulo}"
@@ -910,11 +951,7 @@ INDICADORES DE LOGRO DISPONIBLES:
 {$indicadoresTexto}
 
 INSTRUCCIONES:
-- Solo genera contenido para los campos que estén vacíos ("").
-- Si un campo ya tiene contenido, NO lo modifiques, devuélvelo exactamente igual.
-- Responde ÚNICAMENTE con JSON válido (sin markdown, sin backticks):
-
-{"descripcion":"solo si estaba vacío","materiales_sugeridos":["materiales de la lista disponible"],"indicadores_ids":[IDs de indicadores relevantes],"id_ambiente":ID del ambiente apropiado o null,"id_tipo_actividad_academica":ID del tipo apropiado,"minutos_duracion":45}
+{$instrucciones}
 
 Usa materiales disponibles cuando sea posible. Selecciona indicadores usando sus IDs exactos. Para id_ambiente e id_tipo_actividad_academica usa los IDs exactos. Sé conciso.
 PROMPT;
@@ -974,6 +1011,9 @@ PROMPT;
             // id_ambiente e id_tipo_actividad_academica tambien son llaves foraneas.
             $sugerencia['id_ambiente'] = self::idValidoEnLista($sugerencia['id_ambiente'] ?? null, $idsAmbientes);
             $sugerencia['id_tipo_actividad_academica'] = self::idValidoEnLista($sugerencia['id_tipo_actividad_academica'] ?? null, $idsTiposActividad);
+            // Titulo y descripcion siempre como texto: el front decide si reemplaza.
+            $sugerencia['titulo'] = trim((string) ($sugerencia['titulo'] ?? ''));
+            $sugerencia['descripcion'] = trim((string) ($sugerencia['descripcion'] ?? ''));
 
             Flight::json([
                 "success" => true,
@@ -1557,4 +1597,4 @@ PROMPT;
             Flight::json(["error" => "Error al grabar actividades de evaluación: " . $e->getMessage()], 500);
         }
     }
-}
+}
