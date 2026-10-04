@@ -48,6 +48,21 @@ class MiAgenda
     const COLOR_RESTRINGIDO = '#B2BEC3';
 
     /**
+     * Orden de los eventos del calendario. El de todo el dia va antes de la
+     * llegada (10) para que abra la jornada. El que tiene hora va despues de
+     * todo: asi nunca sirve de ancla a los eventos sin hora de otras fuentes,
+     * que se ubican segun el evento con hora que les queda por debajo.
+     */
+    const ORDEN_CALENDARIO_TODO_EL_DIA = 5;
+    /**
+     * Los cumpleanos no tienen hora: abren el dia, antes del calendario. El
+     * del estudiante va antes que el de sus acudientes.
+     */
+    const ORDEN_CUMPLEANOS_ESTUDIANTE  = 3;
+    const ORDEN_CUMPLEANOS_ACUDIENTE   = 4;
+    const ORDEN_CALENDARIO_CON_HORA    = 950;
+
+    /**
      * Catalogo de fuentes. La clave es la que viaja al front y la que se
      * puede pedir en el parametro `fuentes` del endpoint.
      *
@@ -169,6 +184,28 @@ class MiAgenda
             'metodo' => 'fuenteExtracurriculares',
             'permiso_padres' => 'padres.mi_agenda.extracurriculares',
             'orden'  => 13,
+        ],
+        // Eventos del calendario del jardin (reuniones, salidas, fechas
+        // patrias). Son generales del tenant: le salen a todos los
+        // estudiantes. El permiso es el mismo del calendario en el portal.
+        'calendario' => [
+            'nombre' => 'Eventos del calendario',
+            'icono'  => '📅',
+            'color'  => '#E6B566',
+            'metodo' => 'fuenteCalendario',
+            'permiso_padres' => 'padres.info.calendario',
+            'orden'  => 14,
+        ],
+        // Cumpleanos del estudiante y de sus acudientes. Se cuentan desde el
+        // nino ("mi cumpleaños", "el de mi mamá") y usan el permiso del
+        // calendario, que es donde tambien salen.
+        'cumpleanos' => [
+            'nombre' => 'Cumpleaños',
+            'icono'  => '🎂',
+            'color'  => '#F4A6B7',
+            'metodo' => 'fuenteCumpleanos',
+            'permiso_padres' => 'padres.info.calendario',
+            'orden'  => 15,
         ],
     ];
 
@@ -1430,6 +1467,122 @@ class MiAgenda
         }
 
         return $eventos;
+    }
+
+    /**
+     * Eventos del calendario del jardin en la fecha.
+     *
+     * Con hora_inicio el evento cae en su hora real dentro del dia; si
+     * ademas tiene hora_fin, el rango va en el pie porque las vistas solo
+     * pintan la hora de inicio. Sin hora es un evento de todo el dia y abre
+     * la jornada.
+     */
+    private static function fuenteCalendario($db, $id_estudiante, $fecha, $contexto)
+    {
+        $sentence = $db->prepare("
+            SELECT ce.id,
+                   ce.hora_inicio,
+                   ce.hora_fin,
+                   ce.descripcion,
+                   tec.nombre AS tipo_evento_nombre,
+                   tec.icono AS tipo_evento_icono,
+                   tec.color AS tipo_evento_color
+            FROM calendarios_eventos ce
+            LEFT JOIN tipos_evento_calendario tec
+                   ON tec.id = ce.id_tipo_evento_calendario
+                  AND tec.id_tenant = ce.id_tenant
+            WHERE ce.id_tenant = :id_tenant
+              AND ce.fecha = :fecha
+            ORDER BY ce.hora_inicio IS NOT NULL, ce.hora_inicio, ce.descripcion
+        ");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindParam(':fecha', $fecha);
+        $sentence->execute();
+        $filas = $sentence->fetchAll();
+
+        $eventos = [];
+
+        foreach ($filas as $fila) {
+            $conHora = !empty($fila['hora_inicio']);
+
+            $eventos[] = self::evento('calendario', $conHora ? 'evento' : 'todo_el_dia', $fila['id'], [
+                'fecha_hora' => $conHora ? $fecha . ' ' . $fila['hora_inicio'] : null,
+                'titulo'     => $fila['descripcion'],
+                'pie'        => self::pieHorario($fila['hora_inicio'], $fila['hora_fin']),
+                'etiqueta'   => $fila['tipo_evento_nombre'],
+                'orden'      => $conHora ? self::ORDEN_CALENDARIO_CON_HORA : self::ORDEN_CALENDARIO_TODO_EL_DIA,
+                'meta'       => [
+                    'hora_inicio'   => $fila['hora_inicio'],
+                    'hora_fin'      => $fila['hora_fin'],
+                    'tipo_evento'   => $fila['tipo_evento_nombre'],
+                    'icono_tipo'    => $fila['tipo_evento_icono'],
+                    'color_tipo'    => $fila['tipo_evento_color'],
+                    'ruta'          => '/info-padres/calendario',
+                    'ruta_permisos' => ['padres.info.calendario'],
+                ],
+            ]);
+        }
+
+        return $eventos;
+    }
+
+    /**
+     * Cumpleanos del dia: el del estudiante y el de sus acudientes activos.
+     * La consulta vive en el servicio del calendario
+     * (Calendarios::cumpleanosDelEstudiante), que es donde se arman los
+     * cumpleanos. Si el acudiente no tiene parentesco definido se nombra.
+     */
+    private static function fuenteCumpleanos($db, $id_estudiante, $fecha, $contexto)
+    {
+        $filas = Calendarios::cumpleanosDelEstudiante($db, $id_estudiante, $fecha);
+        $eventos = [];
+
+        foreach ($filas as $fila) {
+            $esEstudiante = $fila['tipo_persona'] === 'estudiante';
+
+            if ($esEstudiante) {
+                $titulo  = '¡Celebramos mi cumpleaños!';
+                $detalle = 'Cumplo ' . $fila['edad'] . ' ' . ((int) $fila['edad'] === 1 ? 'año' : 'años');
+            } else {
+                $titulo  = 'Celebramos el cumpleaños de ' . (!empty($fila['parentesco'])
+                    ? 'mi ' . $fila['parentesco']
+                    : $fila['nombre_corto']);
+                $detalle = $fila['nombre'];
+            }
+
+            $eventos[] = self::evento('cumpleanos', $fila['tipo_persona'], $fila['id_persona'], [
+                'fecha_hora' => null,
+                'titulo'     => $titulo,
+                'detalle'    => $detalle,
+                'orden'      => $esEstudiante ? self::ORDEN_CUMPLEANOS_ESTUDIANTE : self::ORDEN_CUMPLEANOS_ACUDIENTE,
+                'meta'       => [
+                    'tipo_persona'  => $fila['tipo_persona'],
+                    'parentesco'    => $fila['parentesco'],
+                    'ruta'          => '/info-padres/calendario',
+                    'ruta_permisos' => ['padres.info.calendario'],
+                ],
+            ]);
+        }
+
+        return $eventos;
+    }
+
+    /**
+     * Pie con el horario de un evento del calendario: "De 08:00 a 10:30",
+     * "Todo el día" si no tiene hora, o null si solo tiene inicio (esa hora
+     * ya la pinta la tarjeta).
+     */
+    private static function pieHorario($horaInicio, $horaFin)
+    {
+        if (empty($horaInicio)) {
+            return 'Todo el día';
+        }
+
+        if (empty($horaFin)) {
+            return null;
+        }
+
+        return 'De ' . substr($horaInicio, 0, 5) . ' a ' . substr($horaFin, 0, 5);
     }
 
     // =====================================================================

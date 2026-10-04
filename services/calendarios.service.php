@@ -323,6 +323,98 @@ class Calendarios
     }
 
     /**
+     * Cumpleaños que se celebran en una fecha para un estudiante: el suyo y
+     * el de sus acudientes activos. Lo usa la agenda (MiAgenda); no es
+     * endpoint.
+     *
+     * Se trae al estudiante y a todos sus acudientes y se filtra en PHP con
+     * armarCumpleanos, para respetar la misma regla del 29 de febrero del
+     * calendario. Son pocas filas por estudiante.
+     *
+     * @param PDO    $db
+     * @param string $id_estudiante
+     * @param string $fecha Y-m-d
+     * @return array Registros de armarCumpleanos; el del estudiante trae
+     *               ademas 'edad'
+     */
+    public static function cumpleanosDelEstudiante(PDO $db, $id_estudiante, $fecha)
+    {
+        $anio = (int) substr($fecha, 0, 4);
+
+        $stmtEstudiante = $db->prepare("
+            SELECT 
+                p.id AS id_persona,
+                p.primer_nombre,
+                p.primer_apellido,
+                p.fecha_nacimiento,
+                p.id_genero
+            FROM estudiantes e
+            INNER JOIN personas p ON p.id = e.id_persona AND p.id_tenant = e.id_tenant
+            WHERE e.id = :id_estudiante
+            AND e.id_tenant = :id_tenant
+            AND p.fecha_nacimiento IS NOT NULL
+        ");
+        $stmtEstudiante->bindParam(':id_estudiante', $id_estudiante);
+        $stmtEstudiante->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmtEstudiante->execute();
+
+        // tipos_acudiente es global: no lleva filtro de tenant
+        $stmtAcudientes = $db->prepare("
+            SELECT 
+                p.id AS id_persona,
+                p.primer_nombre,
+                p.primer_apellido,
+                p.fecha_nacimiento,
+                p.id_genero,
+                ta.nombre_femenino,
+                ta.nombre_masculino
+            FROM acudientes a
+            INNER JOIN personas p ON p.id = a.id_persona AND p.id_tenant = a.id_tenant
+            LEFT JOIN tipos_acudiente ta ON ta.id = a.id_tipo_acudiente
+            WHERE a.id_estudiante = :id_estudiante
+            AND a.activo = 1
+            AND a.id_tenant = :id_tenant
+            AND p.fecha_nacimiento IS NOT NULL
+        ");
+        $stmtAcudientes->bindParam(':id_estudiante', $id_estudiante);
+        $stmtAcudientes->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmtAcudientes->execute();
+
+        $cumpleanos = [];
+
+        foreach ($stmtEstudiante->fetchAll() as $c) {
+            $registro = self::armarCumpleanos($c, $anio, 'estudiante', [
+                'nombre' => trim($c['primer_nombre'] . ' ' . $c['primer_apellido']),
+                'nombre_corto' => trim((string) $c['primer_nombre']),
+                'edad' => $anio - (int) substr($c['fecha_nacimiento'], 0, 4)
+            ]);
+            if ($registro['fecha'] === $fecha && $registro['edad'] > 0) {
+                $cumpleanos[] = $registro;
+            }
+        }
+
+        // Una persona puede venir repetida si quedo dos veces como acudiente
+        $vistos = [];
+        foreach ($stmtAcudientes->fetchAll() as $c) {
+            if (isset($vistos[$c['id_persona']])) {
+                continue;
+            }
+            $vistos[$c['id_persona']] = true;
+
+            $registro = self::armarCumpleanos($c, $anio, 'acudiente', [
+                'nombre' => trim($c['primer_nombre'] . ' ' . $c['primer_apellido']),
+                'nombre_corto' => trim((string) $c['primer_nombre']),
+                'parentesco' => self::parentesco($c['id_genero'], $c['nombre_femenino'], $c['nombre_masculino'])
+            ]);
+            if ($registro['fecha'] === $fecha && $fecha > $c['fecha_nacimiento']) {
+                $cumpleanos[] = $registro;
+            }
+        }
+
+        return $cumpleanos;
+    }
+
+    /**
      * Arma el registro de cumpleaños con los campos comunes a todos los tipos.
      * El 29 de febrero se muestra el 28 en los años que no son bisiestos.
      */
