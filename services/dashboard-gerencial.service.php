@@ -1961,4 +1961,604 @@ class DashboardGerencial
             ] : null
         ];
     }
+
+    // =========================================================
+    // ACADÉMICO: EJECUCIÓN SEGÚN HORARIO
+    // =========================================================
+    // El tab Académico y el tab Extracurricular comparten la lógica; cambia
+    // de dónde salen las franjas y cómo se cruza la clase con su franja:
+    //   - grupos: franjas de `horarios` (grupo + área). La clase guarda la
+    //     franja con la que se inició (tareas_x_sprints.id_horario).
+    //   - cursos: sesiones de `horarios_cursos_extra`. La clase del curso no
+    //     guarda franja, así que se cruza por curso, día de la semana y hora
+    //     de inicio.
+    // Una actividad está "en horario" si se inició dentro de la ventana
+    // [hora_inicial, hora_final] de su franja ese mismo día. Todo lo demás va
+    // a la sección "Por fuera del horario" con su motivo.
+    const MODO_ACADEMICO_GRUPOS = 'grupos';
+    const MODO_ACADEMICO_CURSOS = 'cursos';
+
+    /** Estados de tareas_x_sprints usados por el tab académico. */
+    const ESTADO_TAREA_EJECUTADA = 2;
+    const ESTADO_TAREA_CANCELADA = 3;
+
+    /** Textos de los motivos por los que una actividad queda fuera del horario. */
+    const MOTIVOS_FUERA_HORARIO = [
+        'fuera_hora'      => 'Fuera de la hora de la franja',
+        'sin_franja'      => 'Sin franja asociada',
+        'franja_otro_dia' => 'Franja de otro día',
+        'sin_sesion'      => 'El curso no tenía sesión ese día',
+        'sin_inicio'      => 'Finalizada sin registrar inicio'
+    ];
+
+    /**
+     * Resumen del tab: contadores generales y por grupo/curso.
+     * Params: fecha (Y-m-d), modo (grupos|cursos; default grupos).
+     */
+    public static function getAcademicoResumen()
+    {
+        try {
+            $userData = JWTService::requerirAutenticacion();
+            PermisosService::validar($userData, 'dashboard.gerencial.listado');
+
+            self::setTimeZone();
+            $db = Flight::db();
+
+            $fecha = isset($_GET['fecha']) && !empty($_GET['fecha']) ? $_GET['fecha'] : date('Y-m-d');
+            $modo = self::modoAcademico();
+
+            $resultado = self::calcularEjecucionAcademica($db, $fecha, $modo);
+
+            // El resumen solo lleva contadores; las listas van en el detalle.
+            unset($resultado['franjas'], $resultado['fuera_horario']);
+
+            Flight::json($resultado);
+        } catch (Exception $e) {
+            Flight::json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Detalle del tab: lo mismo del resumen más las franjas del día con sus
+     * actividades y la lista de actividades por fuera del horario.
+     * Params: fecha (Y-m-d), modo (grupos|cursos; default grupos).
+     */
+    public static function getAcademicoDetalle()
+    {
+        try {
+            $userData = JWTService::requerirAutenticacion();
+            PermisosService::validar($userData, 'dashboard.gerencial.listado');
+
+            self::setTimeZone();
+            $db = Flight::db();
+
+            $fecha = isset($_GET['fecha']) && !empty($_GET['fecha']) ? $_GET['fecha'] : date('Y-m-d');
+            $modo = self::modoAcademico();
+
+            Flight::json(self::calcularEjecucionAcademica($db, $fecha, $modo));
+        } catch (Exception $e) {
+            Flight::json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /** Modo pedido en el query string; cualquier valor desconocido es 'grupos'. */
+    private static function modoAcademico()
+    {
+        $modo = isset($_GET['modo']) ? $_GET['modo'] : self::MODO_ACADEMICO_GRUPOS;
+        return $modo === self::MODO_ACADEMICO_CURSOS ? self::MODO_ACADEMICO_CURSOS : self::MODO_ACADEMICO_GRUPOS;
+    }
+
+    /**
+     * Cruza las franjas programadas del día con las actividades iniciadas ese
+     * día y arma contadores, franjas con su estado y actividades fuera de horario.
+     *
+     * Estados de la franja (en este orden de prioridad):
+     *   ejecutada   → tiene una actividad ejecutada iniciada dentro de la franja
+     *   en_curso    → tiene una actividad iniciada dentro de la franja sin finalizar
+     *   fuera_hora  → tiene actividad asociada pero iniciada fuera de la ventana
+     *   por_venir   → fecha futura, o es hoy y la franja todavía no termina
+     *   sin_ejecutar
+     */
+    private static function calcularEjecucionAcademica($db, $fecha, $modo)
+    {
+        $diaSemana = (int)date('N', strtotime($fecha));
+        $hoy = date('Y-m-d');
+        $esHoy = ($fecha === $hoy);
+        $esFuturo = ($fecha > $hoy);
+        $horaActual = date('H:i:s');
+
+        // Día hábil según el calendario global. Si la fecha no está cargada se
+        // toma como hábil de lunes a viernes.
+        $stmtCal = $db->prepare("SELECT dia_habil FROM calendarios WHERE fecha = :fecha LIMIT 1");
+        $stmtCal->bindValue(':fecha', $fecha);
+        $stmtCal->execute();
+        $rowCal = $stmtCal->fetch(PDO::FETCH_ASSOC);
+        $diaHabil = $rowCal ? ((int)$rowCal['dia_habil'] === 1) : ($diaSemana <= 5);
+
+        $stmtDia = $db->prepare("SELECT nombre FROM dias_semana WHERE id = :id");
+        $stmtDia->bindValue(':id', $diaSemana, PDO::PARAM_INT);
+        $stmtDia->execute();
+        $rowDia = $stmtDia->fetch(PDO::FETCH_ASSOC);
+        $nombreDia = $rowDia ? $rowDia['nombre'] : '';
+
+        // En día no hábil no hay franjas que cumplir; las actividades que se
+        // hayan ejecutado igual se listan.
+        $franjas = [];
+        if ($diaHabil) {
+            $franjas = $modo === self::MODO_ACADEMICO_CURSOS
+                ? self::franjasCursosDelDia($db, $fecha, $diaSemana)
+                : self::franjasGruposDelDia($db, $diaSemana);
+        }
+
+        $actividades = self::actividadesAcademicasDelDia($db, $fecha, $modo);
+
+        // Índices para ubicar las actividades en sus franjas
+        $posFranja = [];
+        $franjasPorDestino = [];
+        foreach ($franjas as $i => $f) {
+            $posFranja[$f['id_franja']] = $i;
+            $franjasPorDestino[$f['id_destino']][] = $i;
+            $franjas[$i]['actividades'] = [];
+        }
+
+        $fueraHorario = [];
+        foreach ($actividades as $a) {
+            $ubicacion = $modo === self::MODO_ACADEMICO_CURSOS
+                ? self::ubicarActividadCurso($a, $franjas, $franjasPorDestino)
+                : self::ubicarActividadGrupo($a, $diaSemana);
+
+            $actividad = [
+                'id' => $a['id'],
+                'id_destino' => $a['id_destino'],
+                'nombre_destino' => $a['nombre_destino'],
+                'color_destino' => $a['color_destino'],
+                'icono_destino' => $a['icono_destino'],
+                'orden_destino' => $a['orden_destino'] !== null ? (int)$a['orden_destino'] : null,
+                'nombre_area' => $a['nombre_area'],
+                'color_area' => $a['color_area'],
+                'titulo_actividad' => $a['titulo_actividad'],
+                'docente' => $a['docente'] ?: 'Sin docente',
+                'hora_inicio' => $a['hora_inicio_real'] !== null ? substr($a['hora_inicio_real'], 0, 5) : null,
+                'hora_fin' => $a['hora_fin_real'] !== null ? substr($a['hora_fin_real'], 0, 5) : null,
+                'id_estado_tarea' => (int)$a['id_estado_tarea'],
+                'nombre_estado' => $a['nombre_estado'],
+                'es_tarea_adicional' => (int)$a['es_tarea_adicional'],
+                'en_horario' => $ubicacion['en_horario'],
+                'motivo' => $ubicacion['motivo'],
+                'texto_motivo' => $ubicacion['motivo'] !== null ? self::MOTIVOS_FUERA_HORARIO[$ubicacion['motivo']] : null,
+                'minutos_diferencia' => $ubicacion['minutos_diferencia'],
+                'franja_texto' => $ubicacion['franja_texto']
+            ];
+
+            // Se cuelga de la franja si la franja es de hoy (en horario o fuera de hora)
+            if ($ubicacion['id_franja'] !== null && isset($posFranja[$ubicacion['id_franja']])) {
+                $franjas[$posFranja[$ubicacion['id_franja']]]['actividades'][] = $actividad;
+            }
+
+            if (!$ubicacion['en_horario']) {
+                $fueraHorario[] = $actividad;
+            }
+        }
+
+        // Estado de cada franja
+        foreach ($franjas as &$f) {
+            $ejecutada = false;
+            $enCurso = false;
+            $fueraHora = false;
+            foreach ($f['actividades'] as $act) {
+                if ($act['en_horario']) {
+                    if ($act['id_estado_tarea'] === self::ESTADO_TAREA_EJECUTADA) {
+                        $ejecutada = true;
+                    } else {
+                        $enCurso = true;
+                    }
+                } else {
+                    $fueraHora = true;
+                }
+            }
+
+            if ($ejecutada) {
+                $f['estado'] = 'ejecutada';
+            } elseif ($enCurso) {
+                $f['estado'] = 'en_curso';
+            } elseif ($fueraHora) {
+                $f['estado'] = 'fuera_hora';
+            } elseif ($esFuturo || ($esHoy && $horaActual < $f['hora_final'])) {
+                $f['estado'] = 'por_venir';
+            } else {
+                $f['estado'] = 'sin_ejecutar';
+            }
+
+            $f['hora_inicial'] = substr($f['hora_inicial'], 0, 5);
+            $f['hora_final'] = substr($f['hora_final'], 0, 5);
+        }
+        unset($f);
+
+        // Contadores generales y por destino (grupo o curso)
+        $contadorVacio = [
+            'total_franjas' => 0,
+            'ejecutadas' => 0,
+            'en_curso' => 0,
+            'fuera_hora' => 0,
+            'sin_ejecutar' => 0,
+            'por_venir' => 0,
+            'actividades_fuera_horario' => 0
+        ];
+        $kpis = $contadorVacio;
+        $porDestino = [];
+
+        $registrarDestino = function (&$porDestino, $item) use ($contadorVacio) {
+            if (!isset($porDestino[$item['id_destino']])) {
+                $porDestino[$item['id_destino']] = array_merge([
+                    'id_destino' => $item['id_destino'],
+                    'nombre_destino' => $item['nombre_destino'],
+                    'color_destino' => $item['color_destino'],
+                    'icono_destino' => $item['icono_destino'],
+                    'orden_destino' => $item['orden_destino']
+                ], $contadorVacio);
+            }
+        };
+
+        foreach ($franjas as $f) {
+            $registrarDestino($porDestino, $f);
+            $porDestino[$f['id_destino']]['total_franjas']++;
+            $porDestino[$f['id_destino']][$f['estado'] === 'ejecutada' ? 'ejecutadas' : $f['estado']]++;
+            $kpis['total_franjas']++;
+            $kpis[$f['estado'] === 'ejecutada' ? 'ejecutadas' : $f['estado']]++;
+        }
+
+        $fueraPorMotivo = [];
+        foreach ($fueraHorario as $act) {
+            $registrarDestino($porDestino, $act);
+            $porDestino[$act['id_destino']]['actividades_fuera_horario']++;
+            $kpis['actividades_fuera_horario']++;
+            if (!isset($fueraPorMotivo[$act['motivo']])) {
+                $fueraPorMotivo[$act['motivo']] = [
+                    'motivo' => $act['motivo'],
+                    'texto_motivo' => $act['texto_motivo'],
+                    'cantidad' => 0
+                ];
+            }
+            $fueraPorMotivo[$act['motivo']]['cantidad']++;
+        }
+
+        // % de cumplimiento: ejecutadas sobre las franjas que ya debían cumplirse
+        $porcentaje = function ($c) {
+            $evaluables = $c['total_franjas'] - $c['por_venir'];
+            return $evaluables > 0 ? round(($c['ejecutadas'] / $evaluables) * 100, 2) : 0;
+        };
+
+        $kpis['franjas_evaluables'] = $kpis['total_franjas'] - $kpis['por_venir'];
+        $kpis['porcentaje_cumplimiento'] = $porcentaje($kpis);
+        $kpis['total_actividades'] = count($actividades);
+        $kpis['actividades_en_horario'] = count($actividades) - count($fueraHorario);
+        $kpis['fuera_por_motivo'] = array_values($fueraPorMotivo);
+
+        foreach ($porDestino as &$d) {
+            $d['franjas_evaluables'] = $d['total_franjas'] - $d['por_venir'];
+            $d['porcentaje_cumplimiento'] = $porcentaje($d);
+        }
+        unset($d);
+
+        $porDestino = array_values($porDestino);
+        usort($porDestino, function ($a, $b) {
+            $oa = $a['orden_destino'] !== null ? $a['orden_destino'] : 9999;
+            $ob = $b['orden_destino'] !== null ? $b['orden_destino'] : 9999;
+            if ($oa !== $ob) return $oa - $ob;
+            return strcmp((string)$a['nombre_destino'], (string)$b['nombre_destino']);
+        });
+
+        return [
+            'fecha' => $fecha,
+            'modo' => $modo,
+            'es_hoy' => $esHoy,
+            'dia_habil' => $diaHabil,
+            'dia_semana' => $diaSemana,
+            'nombre_dia' => $nombreDia,
+            'kpis' => $kpis,
+            'por_destino' => $porDestino,
+            'franjas' => $franjas,
+            'fuera_horario' => $fueraHorario
+        ];
+    }
+
+    /**
+     * Franjas del día para los grupos. Solo grupos con al menos un estudiante
+     * activo, para no contar franjas de grupos que hoy no tienen niños.
+     */
+    private static function franjasGruposDelDia($db, $diaSemana)
+    {
+        $sql = "SELECT
+                h.id AS id_franja,
+                h.id_grupo AS id_destino,
+                g.nombre AS nombre_destino,
+                g.color AS color_destino,
+                g.icono AS icono_destino,
+                g.orden AS orden_destino,
+                h.id_area_academica,
+                a.nombre AS nombre_area,
+                a.color AS color_area,
+                h.nombre_franja,
+                h.hora_inicial,
+                h.hora_final,
+                (
+                    SELECT TRIM(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido))
+                    FROM area_academica_x_grupo axg
+                    INNER JOIN docentes d ON d.id = axg.id_docente
+                    INNER JOIN personas p ON p.id = d.id_persona
+                    WHERE axg.id_grupo = h.id_grupo
+                      AND axg.id_area_academica = h.id_area_academica
+                      AND axg.id_tenant = h.id_tenant
+                    LIMIT 1
+                ) AS docente_asignado,
+                NULL AS lugar
+            FROM horarios h
+            INNER JOIN grupos g ON g.id = h.id_grupo AND g.id_tenant = h.id_tenant
+            LEFT JOIN areas_academicas a ON a.id = h.id_area_academica
+            WHERE h.id_tenant = :id_tenant
+              AND h.id_dia_semana = :dia
+              AND EXISTS (
+                  SELECT 1
+                  FROM estudiantes_x_grupos exg
+                  INNER JOIN estudiantes e ON e.id = exg.id_estudiante AND e.activo = 1
+                  WHERE exg.id_grupo = h.id_grupo
+                    AND exg.activo = 1
+                    AND exg.id_tenant = h.id_tenant
+              )
+            ORDER BY g.orden, g.nombre, h.hora_inicial";
+
+        $stmt = $db->prepare($sql);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->bindValue(':dia', $diaSemana, PDO::PARAM_INT);
+        $stmt->execute();
+        return self::normalizarFranjas($stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    /**
+     * Sesiones del día de los cursos extracurriculares activos y vigentes en
+     * la fecha. El docente es el titular del curso (o el primero activo).
+     */
+    private static function franjasCursosDelDia($db, $fecha, $diaSemana)
+    {
+        $sql = "SELECT
+                hce.id AS id_franja,
+                ce.id AS id_destino,
+                ce.nombre AS nombre_destino,
+                ce.color AS color_destino,
+                ce.icono AS icono_destino,
+                NULL AS orden_destino,
+                ce.id_area_academica,
+                a.nombre AS nombre_area,
+                a.color AS color_area,
+                NULL AS nombre_franja,
+                hce.hora_inicial,
+                hce.hora_final,
+                (
+                    SELECT TRIM(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido))
+                    FROM docentes_x_cursos_extra dxc
+                    INNER JOIN docentes d ON d.id = dxc.id_docente
+                    INNER JOIN personas p ON p.id = d.id_persona
+                    WHERE dxc.id_curso_extra = ce.id
+                      AND dxc.id_tenant = ce.id_tenant
+                      AND dxc.activo = 1
+                    ORDER BY dxc.es_titular DESC
+                    LIMIT 1
+                ) AS docente_asignado,
+                l.nombre AS lugar
+            FROM horarios_cursos_extra hce
+            INNER JOIN cursos_extra ce ON ce.id = hce.id_curso_extra AND ce.id_tenant = hce.id_tenant
+            LEFT JOIN areas_academicas a ON a.id = ce.id_area_academica
+            LEFT JOIN lugares_cursos_extra l ON l.id = ce.id_lugar_curso_extra
+            WHERE hce.id_tenant = :id_tenant
+              AND hce.id_dia_semana = :dia
+              AND ce.activo = 1
+              AND :fecha BETWEEN ce.fecha_inicio AND ce.fecha_fin
+            ORDER BY ce.nombre, hce.hora_inicial";
+
+        $stmt = $db->prepare($sql);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->bindValue(':dia', $diaSemana, PDO::PARAM_INT);
+        $stmt->bindValue(':fecha', $fecha);
+        $stmt->execute();
+        return self::normalizarFranjas($stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    private static function normalizarFranjas($filas)
+    {
+        foreach ($filas as &$f) {
+            $f['orden_destino'] = $f['orden_destino'] !== null ? (int)$f['orden_destino'] : null;
+            $f['docente_asignado'] = $f['docente_asignado'] ?: 'Sin docente asignado';
+        }
+        unset($f);
+        return $filas;
+    }
+
+    /**
+     * Actividades (clases) iniciadas en la fecha, de grupos o de cursos.
+     * No entran las canceladas. Una ejecutada sin hora de inicio registrada
+     * se toma por su fecha de finalización.
+     * Las pendientes sin iniciar no entran: en los cursos, fecha_ejecucion de
+     * una pendiente es la fecha planeada, no una ejecución.
+     */
+    private static function actividadesAcademicasDelDia($db, $fecha, $modo)
+    {
+        $filtroDestino = $modo === self::MODO_ACADEMICO_CURSOS
+            ? "t.id_curso_extra IS NOT NULL"
+            : "t.id_grupo IS NOT NULL AND t.id_curso_extra IS NULL";
+
+        $sql = "SELECT
+                t.id,
+                t.id_horario,
+                t.id_estado_tarea,
+                et.nombre AS nombre_estado,
+                t.es_tarea_adicional,
+                IFNULL(t.id_curso_extra, t.id_grupo) AS id_destino,
+                IFNULL(ce.nombre, g.nombre) AS nombre_destino,
+                IFNULL(ce.color, g.color) AS color_destino,
+                IFNULL(ce.icono, g.icono) AS icono_destino,
+                g.orden AS orden_destino,
+                aa.titulo AS titulo_actividad,
+                ar.nombre AS nombre_area,
+                ar.color AS color_area,
+                CASE
+                    WHEN pi.id IS NOT NULL THEN TRIM(CONCAT_WS(' ', pi.primer_nombre, pi.primer_apellido))
+                    ELSE TRIM(CONCAT_WS(' ', pf.primer_nombre, pf.primer_apellido))
+                END AS docente,
+                TIME(t.fecha_ejecucion_inicia) AS hora_inicio_real,
+                CASE WHEN t.id_estado_tarea = :estado_ejecutada THEN TIME(t.fecha_ejecucion) ELSE NULL END AS hora_fin_real,
+                -- Franja guardada: la vigente en horarios; si se borró, la copia
+                -- que quedó en la tarea al iniciarla.
+                COALESCE(h.id_dia_semana, t.dia_semana_horario) AS dia_franja,
+                COALESCE(h.hora_inicial, t.hora_inicial_horario) AS hora_inicial_franja,
+                COALESCE(h.hora_final, t.hora_final_horario) AS hora_final_franja
+            FROM tareas_x_sprints t
+            INNER JOIN actividades_academicas aa ON aa.id = t.id_actividad_academica
+            INNER JOIN estados_tareas et ON et.id = t.id_estado_tarea
+            LEFT JOIN grupos g ON g.id = t.id_grupo
+            LEFT JOIN cursos_extra ce ON ce.id = t.id_curso_extra
+            LEFT JOIN areas_academicas ar ON ar.id = COALESCE(t.id_area_academica, ce.id_area_academica)
+            LEFT JOIN docentes di ON di.id = t.id_docente_inicia
+            LEFT JOIN personas pi ON pi.id = di.id_persona
+            LEFT JOIN docentes df ON df.id = t.id_docente
+            LEFT JOIN personas pf ON pf.id = df.id_persona
+            LEFT JOIN horarios h ON h.id = t.id_horario
+            WHERE t.id_tenant = :id_tenant
+              AND t.id_estado_tarea <> :estado_cancelada
+              AND $filtroDestino
+              AND (
+                    (t.fecha_ejecucion_inicia IS NOT NULL AND DATE(t.fecha_ejecucion_inicia) = :fecha_inicio)
+                 OR (t.fecha_ejecucion_inicia IS NULL AND t.id_estado_tarea = :estado_ejecutada_2 AND DATE(t.fecha_ejecucion) = :fecha_fin)
+              )
+            ORDER BY COALESCE(t.fecha_ejecucion_inicia, t.fecha_ejecucion), t.id";
+
+        $stmt = $db->prepare($sql);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->bindValue(':estado_ejecutada', self::ESTADO_TAREA_EJECUTADA, PDO::PARAM_INT);
+        $stmt->bindValue(':estado_ejecutada_2', self::ESTADO_TAREA_EJECUTADA, PDO::PARAM_INT);
+        $stmt->bindValue(':estado_cancelada', self::ESTADO_TAREA_CANCELADA, PDO::PARAM_INT);
+        $stmt->bindValue(':fecha_inicio', $fecha);
+        $stmt->bindValue(':fecha_fin', $fecha);
+        $stmt->execute();
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * Ubica una clase de grupo según la franja con la que se inició.
+     * Devuelve: id_franja, en_horario, motivo, minutos_diferencia, franja_texto.
+     */
+    private static function ubicarActividadGrupo($a, $diaSemana)
+    {
+        $res = [
+            'id_franja' => null,
+            'en_horario' => false,
+            'motivo' => null,
+            'minutos_diferencia' => null,
+            'franja_texto' => null
+        ];
+
+        if (empty($a['id_horario']) || $a['hora_inicial_franja'] === null || $a['hora_final_franja'] === null) {
+            $res['motivo'] = $a['hora_inicio_real'] === null ? 'sin_inicio' : 'sin_franja';
+            return $res;
+        }
+
+        $res['id_franja'] = $a['id_horario'];
+        $res['franja_texto'] = substr($a['hora_inicial_franja'], 0, 5) . ' - ' . substr($a['hora_final_franja'], 0, 5);
+
+        if ($a['hora_inicio_real'] === null) {
+            $res['motivo'] = 'sin_inicio';
+            return $res;
+        }
+
+        if ((int)$a['dia_franja'] !== $diaSemana) {
+            // La franja escogida es de otro día: no se cuelga de las franjas de hoy
+            $res['id_franja'] = null;
+            $res['motivo'] = 'franja_otro_dia';
+            return $res;
+        }
+
+        $diferencia = self::minutosFueraDeVentana($a['hora_inicio_real'], $a['hora_inicial_franja'], $a['hora_final_franja']);
+        if ($diferencia === 0) {
+            $res['en_horario'] = true;
+        } else {
+            $res['motivo'] = 'fuera_hora';
+            $res['minutos_diferencia'] = $diferencia;
+        }
+        return $res;
+    }
+
+    /**
+     * Ubica una clase de curso extracurricular buscando la sesión del curso
+     * que contiene la hora de inicio. Si ninguna la contiene, se toma la
+     * sesión más cercana para indicar la diferencia en minutos.
+     */
+    private static function ubicarActividadCurso($a, $franjas, $franjasPorDestino)
+    {
+        $res = [
+            'id_franja' => null,
+            'en_horario' => false,
+            'motivo' => null,
+            'minutos_diferencia' => null,
+            'franja_texto' => null
+        ];
+
+        $sesiones = isset($franjasPorDestino[$a['id_destino']]) ? $franjasPorDestino[$a['id_destino']] : [];
+
+        if ($a['hora_inicio_real'] === null) {
+            $res['motivo'] = 'sin_inicio';
+            return $res;
+        }
+
+        if (count($sesiones) === 0) {
+            $res['motivo'] = 'sin_sesion';
+            return $res;
+        }
+
+        $mejor = null;
+        $mejorDiferencia = null;
+        foreach ($sesiones as $pos) {
+            $s = $franjas[$pos];
+            $diferencia = self::minutosFueraDeVentana($a['hora_inicio_real'], $s['hora_inicial'], $s['hora_final']);
+            if ($mejorDiferencia === null || abs($diferencia) < abs($mejorDiferencia)) {
+                $mejor = $s;
+                $mejorDiferencia = $diferencia;
+            }
+            if ($diferencia === 0) {
+                break;
+            }
+        }
+
+        $res['id_franja'] = $mejor['id_franja'];
+        $res['franja_texto'] = substr($mejor['hora_inicial'], 0, 5) . ' - ' . substr($mejor['hora_final'], 0, 5);
+
+        if ($mejorDiferencia === 0) {
+            $res['en_horario'] = true;
+        } else {
+            $res['motivo'] = 'fuera_hora';
+            $res['minutos_diferencia'] = $mejorDiferencia;
+        }
+        return $res;
+    }
+
+    /**
+     * Minutos por fuera de la ventana [inicio, fin]: 0 si la hora cae dentro,
+     * negativo si fue antes del inicio, positivo si fue después del fin.
+     */
+    private static function minutosFueraDeVentana($hora, $inicio, $fin)
+    {
+        $m = self::minutosDelDia($hora);
+        $mi = self::minutosDelDia($inicio);
+        $mf = self::minutosDelDia($fin);
+        if ($m < $mi) return $m - $mi;
+        if ($m > $mf) return $m - $mf;
+        return 0;
+    }
+
+    /** 'HH:MM[:SS]' → minutos desde la medianoche. */
+    private static function minutosDelDia($hora)
+    {
+        $partes = explode(':', (string)$hora);
+        $h = isset($partes[0]) ? (int)$partes[0] : 0;
+        $min = isset($partes[1]) ? (int)$partes[1] : 0;
+        return $h * 60 + $min;
+    }
 }

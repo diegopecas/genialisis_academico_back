@@ -9,3 +9,5 @@ Flight::route('GET /dashboard-gerencial/recaudo-resumen', [DashboardGerencial::c
 Flight::route('GET /dashboard-gerencial/recaudo-detalle', [DashboardGerencial::class, 'getRecaudoDetalle']);
 Flight::route('GET /dashboard-gerencial/movimientos-resumen', [DashboardGerencial::class, 'getMovimientosResumen']);
 Flight::route('GET /dashboard-gerencial/movimientos-detalle', [DashboardGerencial::class, 'getMovimientosDetalle']);
+Flight::route('GET /dashboard-gerencial/academico-resumen', [DashboardGerencial::class, 'getAcademicoResumen']);
+Flight::route('GET /dashboard-gerencial/academico-detalle', [DashboardGerencial::class, 'getAcademicoDetalle']);
