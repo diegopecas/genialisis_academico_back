@@ -152,6 +152,15 @@ Flight::route('GET /materiales-x-actividad/productos-grupo/@id_grupo', [Material
 // Todos los productos academicos activos (inventario completo en crear actividad)
 Flight::route('GET /materiales-x-actividad/productos-todos', [MaterialesXActividad::class, 'getProductosTodos']);
 
+// MODALIDADES DE CURSOS EXTRA (catalogo global: grupal, personalizado)
+Flight::route('GET /modalidades-cursos-extra', [ModalidadesCursosExtra::class, 'getAll']);
+Flight::route('GET /modalidades-cursos-extra/activos', [ModalidadesCursosExtra::class, 'getActivos']);
+Flight::route('GET /modalidades-cursos-extra/codigo/@codigo', [ModalidadesCursosExtra::class, 'getByCodigo']);
+Flight::route('GET /modalidades-cursos-extra/@id', [ModalidadesCursosExtra::class, 'getById']);
+Flight::route('POST /modalidades-cursos-extra', [ModalidadesCursosExtra::class, 'new']);
+Flight::route('PUT /modalidades-cursos-extra', [ModalidadesCursosExtra::class, 'replace']);
+Flight::route('DELETE /modalidades-cursos-extra', [ModalidadesCursosExtra::class, 'delete']);
+
 // CURSOS EXTRACURRICULARES
 Flight::route('GET /cursos-extra', [CursosExtra::class, 'getAll']);
 Flight::route('GET /cursos-extra-activos', [CursosExtra::class, 'getActivos']);
@@ -215,6 +224,15 @@ Flight::route('GET /tarifas-cursos-extra/curso/@id_curso_extra', [TarifasCursosE
 Flight::route('POST /tarifas-cursos-extra', [TarifasCursosExtra::class, 'new']);
 Flight::route('PUT /tarifas-cursos-extra', [TarifasCursosExtra::class, 'replace']);
 Flight::route('DELETE /tarifas-cursos-extra', [TarifasCursosExtra::class, 'delete']);
+
+// DETALLE DE TARIFAS CURSOS EXTRA
+// La pantalla de tarifas guarda el detalle junto con la cabecera (POST y PUT
+// de /tarifas-cursos-extra). Estas rutas sirven para tocar una fila suelta.
+Flight::route('GET /tarifas-cursos-extra-detalle/tarifa/@id_tarifa_curso_extra', [TarifasCursosExtraDetalle::class, 'getByTarifa']);
+Flight::route('GET /tarifas-cursos-extra-detalle/@id', [TarifasCursosExtraDetalle::class, 'getById']);
+Flight::route('POST /tarifas-cursos-extra-detalle', [TarifasCursosExtraDetalle::class, 'new']);
+Flight::route('PUT /tarifas-cursos-extra-detalle', [TarifasCursosExtraDetalle::class, 'replace']);
+Flight::route('DELETE /tarifas-cursos-extra-detalle', [TarifasCursosExtraDetalle::class, 'delete']);
 
 // CUENTAS COBRAR X CURSO EXTRA
 Flight::route('GET /cuentas-cobrar-x-curso-extra', [CuentasCobrarXCursoExtra::class, 'getAll']);

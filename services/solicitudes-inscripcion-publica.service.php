@@ -146,6 +146,12 @@ class SolicitudesInscripcionPublica
             // del convenio si existe, y si no la interna.
             $tarifa = TarifasCursosExtra::resolverTarifa($db, $curso['id'], $curso['anio'], $id_institucion_cliente);
 
+            // Los valores salen del detalle de la tarifa. Se siguen
+            // entregando matricula, pension y valor unico con los mismos
+            // nombres de siempre, y los paquetes de sesiones van aparte para
+            // que la pagina muestre las opciones.
+            $valores = self::resumirDetalle($tarifa ? $tarifa['detalle'] : array());
+
             // El cupo descuenta los ya inscritos y las solicitudes pendientes:
             // una solicitud sin resolver esta ocupando un lugar aunque todavia
             // no exista la inscripcion.
@@ -184,16 +190,56 @@ class SolicitudesInscripcionPublica
                 'permite_sobrecupo' => (int) $curso['permite_sobrecupo'],
                 'cerrado' => $cerrado,
                 'motivo_cierre' => $motivoCierre,
-                'valor_matricula' => $tarifa ? (float) $tarifa['valor_matricula'] : 0,
-                'cuotas_matricula' => $tarifa ? (int) $tarifa['cuotas_matricula'] : 1,
-                'valor_pension' => $tarifa ? (float) $tarifa['valor_pension'] : 0,
-                'valor_unico' => $tarifa ? (float) $tarifa['valor_unico'] : 0,
-                'cuotas_unico' => $tarifa ? (int) $tarifa['cuotas_unico'] : 1,
+                'valor_matricula' => $valores['valor_matricula'],
+                'cuotas_matricula' => $valores['cuotas_matricula'],
+                'valor_pension' => $valores['valor_pension'],
+                'valor_unico' => $valores['valor_unico'],
+                'cuotas_unico' => $valores['cuotas_unico'],
+                'paquetes' => $valores['paquetes'],
                 'tiene_tarifa' => $tarifa ? true : false
             );
         }
 
         Flight::json($response);
+    }
+
+    /**
+     * Resume el detalle de una tarifa en lo que muestra la pagina publica:
+     * el total de matricula, de pension y de valor unico, y la lista de
+     * paquetes de sesiones con su valor y vigencia. No devuelve ids de
+     * productos: la pagina es publica y no los necesita.
+     */
+    private static function resumirDetalle($detalle)
+    {
+        $resumen = array(
+            'valor_matricula' => 0,
+            'cuotas_matricula' => 1,
+            'valor_pension' => 0,
+            'valor_unico' => 0,
+            'cuotas_unico' => 1,
+            'paquetes' => array()
+        );
+
+        foreach ($detalle as $fila) {
+            if ($fila['tipo'] === 'paquete') {
+                $resumen['paquetes'][] = array(
+                    'nombre' => $fila['nombre_producto'],
+                    'numero_sesiones' => (int) $fila['numero_sesiones'],
+                    'vigencia_dias' => $fila['vigencia_dias'] !== null ? (int) $fila['vigencia_dias'] : null,
+                    'valor' => (float) $fila['valor']
+                );
+            } elseif ($fila['tipo'] === 'matricula') {
+                $resumen['valor_matricula'] += (float) $fila['valor'];
+                $resumen['cuotas_matricula'] = (int) $fila['cuotas'];
+            } elseif ($fila['tipo'] === 'pension') {
+                $resumen['valor_pension'] += (float) $fila['valor'];
+            } else {
+                $resumen['valor_unico'] += (float) $fila['valor'];
+                $resumen['cuotas_unico'] = (int) $fila['cuotas'];
+            }
+        }
+
+        return $resumen;
     }
 
     /**

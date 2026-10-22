@@ -249,7 +249,19 @@ class CursosExtraXInstitucionesCliente
             }
 
             // La tarifa del convenio si se borra con el, porque sin convenio no
-            // tiene a quien aplicarse.
+            // tiene a quien aplicarse. Primero su detalle: la llave foranea no
+            // deja borrar la cabecera con filas colgando.
+            $stmtDetalle = $db->prepare("DELETE d FROM tarifas_cursos_extra_detalle d
+                                         INNER JOIN tarifas_cursos_extra t
+                                                 ON t.id = d.id_tarifa_curso_extra AND t.id_tenant = d.id_tenant
+                                         WHERE t.id_curso_extra = :id_curso_extra
+                                           AND t.id_institucion_cliente = :id_institucion_cliente
+                                           AND t.id_tenant = :id_tenant");
+            $stmtDetalle->bindParam(':id_curso_extra', $convenio['id_curso_extra']);
+            $stmtDetalle->bindParam(':id_institucion_cliente', $convenio['id_institucion_cliente']);
+            $stmtDetalle->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtDetalle->execute();
+
             $stmtTarifas = $db->prepare("DELETE FROM tarifas_cursos_extra
                                          WHERE id_curso_extra = :id_curso_extra
                                            AND id_institucion_cliente = :id_institucion_cliente

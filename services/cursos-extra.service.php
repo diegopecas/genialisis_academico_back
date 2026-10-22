@@ -9,9 +9,11 @@ class CursosExtra
         ce.permite_sobrecupo, ce.cupo_minimo, ce.fecha_inicio, ce.fecha_fin, ce.fecha_limite_inscripcion,
         ce.edad_minima_meses, ce.edad_maxima_meses, ce.anio, ce.activo, ce.fecha_registro,
         ce.id_tipo_curso_extracurricular, ce.id_lugar_curso_extra, ce.id_area_academica,
-        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar, aa.nombre AS nombre_area_academica
+        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar, aa.nombre AS nombre_area_academica,
+        ce.id_modalidad_curso_extra, mce.codigo AS codigo_modalidad, mce.nombre AS nombre_modalidad
         FROM cursos_extra ce
         LEFT JOIN tipos_cursos_extracurriculares tce ON ce.id_tipo_curso_extracurricular = tce.id
+        LEFT JOIN modalidades_cursos_extra mce ON ce.id_modalidad_curso_extra = mce.id
         LEFT JOIN lugares_cursos_extra lce ON ce.id_lugar_curso_extra = lce.id
         LEFT JOIN areas_academicas aa ON ce.id_area_academica = aa.id
         WHERE ce.id_tenant = :id_tenant
@@ -29,9 +31,11 @@ class CursosExtra
         ce.permite_sobrecupo, ce.cupo_minimo, ce.fecha_inicio, ce.fecha_fin, ce.fecha_limite_inscripcion,
         ce.edad_minima_meses, ce.edad_maxima_meses, ce.anio, ce.activo, ce.fecha_registro,
         ce.id_tipo_curso_extracurricular, ce.id_lugar_curso_extra, ce.id_area_academica,
-        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar, aa.nombre AS nombre_area_academica
+        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar, aa.nombre AS nombre_area_academica,
+        ce.id_modalidad_curso_extra, mce.codigo AS codigo_modalidad, mce.nombre AS nombre_modalidad
         FROM cursos_extra ce
         LEFT JOIN tipos_cursos_extracurriculares tce ON ce.id_tipo_curso_extracurricular = tce.id
+        LEFT JOIN modalidades_cursos_extra mce ON ce.id_modalidad_curso_extra = mce.id
         LEFT JOIN lugares_cursos_extra lce ON ce.id_lugar_curso_extra = lce.id
         LEFT JOIN areas_academicas aa ON ce.id_area_academica = aa.id
         WHERE ce.activo = 1
@@ -50,9 +54,11 @@ class CursosExtra
         ce.permite_sobrecupo, ce.cupo_minimo, ce.fecha_inicio, ce.fecha_fin, ce.fecha_limite_inscripcion,
         ce.edad_minima_meses, ce.edad_maxima_meses, ce.anio, ce.activo, ce.fecha_registro,
         ce.id_tipo_curso_extracurricular, ce.id_lugar_curso_extra, ce.id_area_academica,
-        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar, aa.nombre AS nombre_area_academica
+        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar, aa.nombre AS nombre_area_academica,
+        ce.id_modalidad_curso_extra, mce.codigo AS codigo_modalidad, mce.nombre AS nombre_modalidad
         FROM cursos_extra ce
         LEFT JOIN tipos_cursos_extracurriculares tce ON ce.id_tipo_curso_extracurricular = tce.id
+        LEFT JOIN modalidades_cursos_extra mce ON ce.id_modalidad_curso_extra = mce.id
         LEFT JOIN lugares_cursos_extra lce ON ce.id_lugar_curso_extra = lce.id
         LEFT JOIN areas_academicas aa ON ce.id_area_academica = aa.id
         WHERE ce.id = :id AND ce.id_tenant = :id_tenant");
@@ -70,9 +76,11 @@ class CursosExtra
         ce.permite_sobrecupo, ce.cupo_minimo, ce.fecha_inicio, ce.fecha_fin, ce.fecha_limite_inscripcion,
         ce.edad_minima_meses, ce.edad_maxima_meses, ce.anio, ce.activo, ce.fecha_registro,
         ce.id_tipo_curso_extracurricular, ce.id_lugar_curso_extra, ce.id_area_academica,
-        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar, aa.nombre AS nombre_area_academica
+        tce.nombre AS nombre_tipo_curso, lce.nombre AS nombre_lugar, aa.nombre AS nombre_area_academica,
+        ce.id_modalidad_curso_extra, mce.codigo AS codigo_modalidad, mce.nombre AS nombre_modalidad
         FROM cursos_extra ce
         LEFT JOIN tipos_cursos_extracurriculares tce ON ce.id_tipo_curso_extracurricular = tce.id
+        LEFT JOIN modalidades_cursos_extra mce ON ce.id_modalidad_curso_extra = mce.id
         LEFT JOIN lugares_cursos_extra lce ON ce.id_lugar_curso_extra = lce.id
         LEFT JOIN areas_academicas aa ON ce.id_area_academica = aa.id
         WHERE ce.anio = :anio AND ce.id_tenant = :id_tenant
@@ -106,12 +114,19 @@ class CursosExtra
         $fecha_limite = isset(Flight::request()->data['fecha_limite_inscripcion']) ? Flight::request()->data['fecha_limite_inscripcion'] : null;
         $edad_minima = isset(Flight::request()->data['edad_minima_meses']) ? Flight::request()->data['edad_minima_meses'] : null;
         $edad_maxima = isset(Flight::request()->data['edad_maxima_meses']) ? Flight::request()->data['edad_maxima_meses'] : null;
+        // Modalidad: como funciona el curso. Si no llega, el curso es grupal,
+        // que es como funcionaban todos antes de existir la modalidad.
+        $id_modalidad = !empty(Flight::request()->data['id_modalidad_curso_extra'])
+            ? Flight::request()->data['id_modalidad_curso_extra']
+            : ModalidadesCursosExtra::idPorCodigo($db, 'GRUPAL');
 
         $idNew = Uuid::generar();
         $sentence = $db->prepare("INSERT INTO cursos_extra(id, id_tenant, nombre, descripcion, icono, color, cupo_maximo, fecha_inicio, fecha_fin, anio, activo, fecha_registro,
-        id_tipo_curso_extracurricular, id_lugar_curso_extra, id_area_academica, permite_sobrecupo, cupo_minimo, fecha_limite_inscripcion, edad_minima_meses, edad_maxima_meses) 
+        id_tipo_curso_extracurricular, id_lugar_curso_extra, id_area_academica, permite_sobrecupo, cupo_minimo, fecha_limite_inscripcion, edad_minima_meses, edad_maxima_meses,
+        id_modalidad_curso_extra) 
         VALUES (:id, :id_tenant, :nombre, :descripcion, :icono, :color, :cupo_maximo, :fecha_inicio, :fecha_fin, :anio, 1, NOW(),
-        :id_tipo, :id_lugar, :id_area, :permite_sobrecupo, :cupo_minimo, :fecha_limite, :edad_minima, :edad_maxima)");
+        :id_tipo, :id_lugar, :id_area, :permite_sobrecupo, :cupo_minimo, :fecha_limite, :edad_minima, :edad_maxima,
+        :id_modalidad)");
         $sentence->bindValue(':id', $idNew);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindParam(':nombre', $nombre);
@@ -130,6 +145,7 @@ class CursosExtra
         $sentence->bindValue(':fecha_limite', $fecha_limite);
         $sentence->bindValue(':edad_minima', $edad_minima);
         $sentence->bindValue(':edad_maxima', $edad_maxima);
+        $sentence->bindValue(':id_modalidad', $id_modalidad);
         $sentence->execute();
         $id = $idNew;
         Flight::json(array('id' => $id));
@@ -159,13 +175,16 @@ class CursosExtra
         $fecha_limite = isset(Flight::request()->data['fecha_limite_inscripcion']) ? Flight::request()->data['fecha_limite_inscripcion'] : null;
         $edad_minima = isset(Flight::request()->data['edad_minima_meses']) ? Flight::request()->data['edad_minima_meses'] : null;
         $edad_maxima = isset(Flight::request()->data['edad_maxima_meses']) ? Flight::request()->data['edad_maxima_meses'] : null;
+        // Si no llega la modalidad (formularios viejos), el curso conserva la que tiene.
+        $id_modalidad = !empty(Flight::request()->data['id_modalidad_curso_extra']) ? Flight::request()->data['id_modalidad_curso_extra'] : null;
 
         $sentence = $db->prepare("UPDATE cursos_extra SET nombre = :nombre, descripcion = :descripcion, icono = :icono, color = :color, 
         cupo_maximo = :cupo_maximo, fecha_inicio = :fecha_inicio, fecha_fin = :fecha_fin, 
         anio = :anio, activo = :activo,
         id_tipo_curso_extracurricular = :id_tipo, id_lugar_curso_extra = :id_lugar, id_area_academica = :id_area,
         permite_sobrecupo = :permite_sobrecupo, cupo_minimo = :cupo_minimo,
-        fecha_limite_inscripcion = :fecha_limite, edad_minima_meses = :edad_minima, edad_maxima_meses = :edad_maxima
+        fecha_limite_inscripcion = :fecha_limite, edad_minima_meses = :edad_minima, edad_maxima_meses = :edad_maxima,
+        id_modalidad_curso_extra = COALESCE(:id_modalidad, id_modalidad_curso_extra)
         WHERE id = :id AND id_tenant = :id_tenant");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindValue(':id_tipo', $id_tipo);
@@ -176,6 +195,7 @@ class CursosExtra
         $sentence->bindValue(':fecha_limite', $fecha_limite);
         $sentence->bindValue(':edad_minima', $edad_minima);
         $sentence->bindValue(':edad_maxima', $edad_maxima);
+        $sentence->bindValue(':id_modalidad', $id_modalidad);
         $sentence->bindParam(':nombre', $nombre);
         $sentence->bindParam(':descripcion', $descripcion);
         $sentence->bindParam(':icono', $icono);
