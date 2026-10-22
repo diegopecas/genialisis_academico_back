@@ -172,6 +172,31 @@ class ConfiguracionGlobal
         }
     }
 
+    /**
+     * Lee un parametro tipo interruptor del tenant. Esta prendido si
+     * valor_texto es 'true' o '1', o si valor_numero es 1. Si la clave no
+     * existe se toma como apagado. Es para usarlo desde otros servicios del
+     * back; no tiene ruta.
+     */
+    public static function interruptorActivo($clave)
+    {
+        $db = Flight::db();
+        $sentence = $db->prepare("SELECT valor_texto, valor_numero
+                                  FROM configuracion_global
+                                  WHERE clave = :clave
+                                  AND id_tenant = :id_tenant
+                                  LIMIT 1");
+        $sentence->bindValue(':clave', $clave);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $fila = $sentence->fetch(PDO::FETCH_ASSOC);
+        if (!$fila) {
+            return false;
+        }
+        $texto = strtolower(trim((string) ($fila['valor_texto'] ?? '')));
+        return $texto === 'true' || $texto === '1' || (int) ($fila['valor_numero'] ?? 0) === 1;
+    }
+
     public static function delete()
     {
         $db = Flight::db();

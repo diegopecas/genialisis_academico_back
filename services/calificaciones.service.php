@@ -189,7 +189,26 @@ class Calificaciones
             $db = Flight::db();
             $db->exec("SET time_zone = '-05:00'");
 
-            // 1. Estudiantes activos del grupo + asistencia hoy + observación de la tarea
+            // Con el interruptor calificacion_horario_vencido_activo, si la tarea
+            // se inicio hoy con una franja que ya termino, cuentan como presentes
+            // todos los que tuvieron asistencia hoy, aunque ya hayan salido.
+            // Sin el interruptor solo cuentan los que siguen en el jardin.
+            $stmtTarea = $db->prepare("SELECT hora_final_horario, fecha_ejecucion_inicia
+                FROM tareas_x_sprints WHERE id = :id AND id_tenant = :id_tenant");
+            $stmtTarea->bindValue(':id', $id_tarea_sprint);
+            $stmtTarea->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtTarea->execute();
+            $tarea = $stmtTarea->fetch(PDO::FETCH_ASSOC);
+
+            $incluirSalidas = $tarea
+                && TareasXSprints::franjaVencida($tarea['hora_final_horario'])
+                && substr((string) $tarea['fecha_ejecucion_inicia'], 0, 10) === date('Y-m-d')
+                && ConfiguracionGlobal::interruptorActivo('calificacion_horario_vencido_activo');
+            $condicionSalida = $incluirSalidas ? '' : 'AND ae.fecha_salida IS NULL';
+
+            // 1. Estudiantes activos del grupo + asistencia hoy + observación de la tarea.
+            // La asistencia va con EXISTS: un niño que salió y volvió a entrar
+            // tiene dos registros y con un JOIN saldría repetido.
             $sqlEstudiantes = "SELECT 
                 e.id as id_estudiante,
                 p.primer_nombre,
@@ -197,7 +216,10 @@ class Calificaciones
                 p.primer_apellido,
                 p.segundo_apellido,
                 CASE 
-                    WHEN ae.id IS NOT NULL THEN 1
+                    WHEN EXISTS (SELECT 1 FROM asistencia_estudiantes ae
+                                  WHERE ae.id_estudiante = e.id
+                                    AND DATE(ae.fecha_ingreso) = CURDATE()
+                                    $condicionSalida) THEN 1
                     ELSE 0
                 END as presente,
                 txse.id as id_tarea_estudiante,
@@ -205,10 +227,6 @@ class Calificaciones
             FROM estudiantes_x_grupos exg
             INNER JOIN estudiantes e ON exg.id_estudiante = e.id
             INNER JOIN personas p ON e.id_persona = p.id
-            LEFT JOIN asistencia_estudiantes ae 
-                ON ae.id_estudiante = e.id 
-                AND DATE(ae.fecha_ingreso) = CURDATE() 
-                AND ae.fecha_salida IS NULL
             LEFT JOIN tareas_x_sprints_x_estudiante txse
                 ON txse.id_estudiante = e.id
                 AND txse.id_tarea_x_sprint = :id_tarea_sprint

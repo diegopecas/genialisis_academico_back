@@ -254,7 +254,7 @@ class TareasXSprints
         // Obtener grupo de la tarea para calcular estudiantes
         // Se trae tambien id_curso_extra: una clase de curso extracurricular no
         // tiene grupo, sus estudiantes salen de la inscripcion al curso.
-        $stmtTarea = $db->prepare("SELECT id_grupo, id_curso_extra FROM tareas_x_sprints WHERE id = :id AND id_tenant = :id_tenant");
+        $stmtTarea = $db->prepare("SELECT id_grupo, id_curso_extra, hora_final_horario, fecha_ejecucion_inicia FROM tareas_x_sprints WHERE id = :id AND id_tenant = :id_tenant");
         $stmtTarea->bindParam(':id', $id);
         $stmtTarea->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmtTarea->execute();
@@ -307,9 +307,19 @@ class TareasXSprints
             $totalCalificados = $resCal['total'] ?? 0;
         }
 
+        // Con el interruptor calificacion_horario_vencido_activo, si la tarea se
+        // inicio hoy con una franja que ya termino, queda ejecutada a la hora
+        // final de la franja y no a la hora en que se termino de calificar.
+        $fechaEjecucionFranja = null;
+        if ($tarea && self::franjaVencida($tarea['hora_final_horario'])
+            && substr((string) $tarea['fecha_ejecucion_inicia'], 0, 10) === date('Y-m-d')
+            && ConfiguracionGlobal::interruptorActivo('calificacion_horario_vencido_activo')) {
+            $fechaEjecucionFranja = date('Y-m-d') . ' ' . self::horaCompleta($tarea['hora_final_horario']);
+        }
+
         $sentence = $db->prepare("UPDATE tareas_x_sprints SET 
             id_docente = :id_docente, 
-            fecha_ejecucion = CONVERT_TZ(NOW(), '+00:00', '+02:00'), 
+            fecha_ejecucion = COALESCE(:fecha_ejecucion_franja, CONVERT_TZ(NOW(), '+00:00', '+02:00')), 
             fecha_registro = CONVERT_TZ(current_timestamp(), '+00:00', '+02:00'), 
             id_estado_tarea = 2,
             total_estudiantes_grupo = :total_grupo,
@@ -317,6 +327,7 @@ class TareasXSprints
             WHERE id = :id AND id_tenant = :id_tenant");
 
         $sentence->bindParam(':id_docente', $id_docente);
+        $sentence->bindValue(':fecha_ejecucion_franja', $fechaEjecucionFranja);
         $sentence->bindParam(':total_grupo', $totalGrupo);
         $sentence->bindParam(':total_calificados', $totalCalificados);
         $sentence->bindParam(':id', $id);
@@ -337,9 +348,18 @@ class TareasXSprints
         $user_agent = Flight::request()->data['user_agent'] ?? null;
         $huella_dispositivo = Flight::request()->data['huella_dispositivo'] ?? null;
 
+        // Con el interruptor calificacion_horario_vencido_activo, si la franja
+        // escogida ya termino, la tarea queda iniciada a la hora inicial de la
+        // franja y no a la hora en que se oprimio Iniciar.
+        $fechaInicioFranja = null;
+        if ($hora_inicial_horario && self::franjaVencida($hora_final_horario)
+            && ConfiguracionGlobal::interruptorActivo('calificacion_horario_vencido_activo')) {
+            $fechaInicioFranja = date('Y-m-d') . ' ' . self::horaCompleta($hora_inicial_horario);
+        }
+
         $sentence = $db->prepare("UPDATE tareas_x_sprints SET 
             id_docente_inicia = :id_docente, 
-            fecha_ejecucion_inicia = CONVERT_TZ(NOW(), '+00:00', '+02:00'),
+            fecha_ejecucion_inicia = COALESCE(:fecha_inicio_franja, CONVERT_TZ(NOW(), '+00:00', '+02:00')),
             id_horario = :id_horario,
             dia_semana_horario = :dia_semana_horario,
             hora_inicial_horario = :hora_inicial_horario,
@@ -349,6 +369,7 @@ class TareasXSprints
             WHERE id = :id AND id_tenant = :id_tenant");
 
         $sentence->bindParam(':id_docente', $id_docente);
+        $sentence->bindValue(':fecha_inicio_franja', $fechaInicioFranja);
         $sentence->bindParam(':id_horario', $id_horario);
         $sentence->bindParam(':dia_semana_horario', $dia_semana_horario);
         $sentence->bindParam(':hora_inicial_horario', $hora_inicial_horario);
@@ -359,6 +380,25 @@ class TareasXSprints
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         self::getById($id);
+    }
+
+    /**
+     * La franja ya termino hoy: su hora final es anterior a la hora actual
+     * (Bogota, la zona del back). Sin hora final no hay franja que comparar.
+     */
+    public static function franjaVencida($horaFinal)
+    {
+        $hora = self::horaCompleta($horaFinal);
+        return $hora !== null && $hora < date('H:i:s');
+    }
+
+    /** "7:30" o "07:30" -> "07:30:00"; null si no es una hora. */
+    private static function horaCompleta($hora)
+    {
+        if (!preg_match('/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/', trim((string) $hora), $m)) {
+            return null;
+        }
+        return sprintf('%02d:%02d:%02d', (int) $m[1], (int) $m[2], isset($m[3]) ? (int) $m[3] : 0);
     }
 
     public static function delete()
