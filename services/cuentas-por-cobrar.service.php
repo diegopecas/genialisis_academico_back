@@ -183,6 +183,80 @@ class CuentasPorCobrar
         }
     }
 
+    /**
+     * Detalle de lo aplicado a las cuentas por cobrar de una persona: cada
+     * fila es un registro de cuenta_pagada con los datos del pago que lo
+     * cubrio (fecha, recibo, tipo de pago, quien lo registro).
+     *
+     * Lo usa la Vista por mes del estado de cuenta para separar lo pagado con
+     * dinero de lo cubierto con descuentos o castigos (tipos_pagos.es_ingreso)
+     * y para mostrar el detalle al tocar cada valor. No incluye pagos ni
+     * cuentas anulados, igual que getByPersona.
+     */
+    public static function getAplicacionesByPersona($id)
+    {
+        $userData = JWTService::requerirAutenticacion();
+
+        try {
+            $db = Flight::db();
+            $sentence = $db->prepare("
+                SELECT
+                    cp.id,
+                    cp.id_cuenta_por_cobrar,
+                    cp.valor_aplicado,
+                    cp.fecha AS fecha_aplicacion,
+                    pr.id AS id_pago_recibido,
+                    pr.fecha AS fecha_pago,
+                    pr.anio,
+                    pr.numero,
+                    pr.observaciones,
+                    pr.referencia_bancaria,
+                    tp.nombre AS tipo_pago,
+                    COALESCE(tp.es_ingreso, 1) AS es_ingreso,
+                    TRIM(CONCAT_WS(' ', p_ur.primer_nombre, p_ur.primer_apellido)) AS usuario_registro,
+                    TRIM(CONCAT_WS(' ', p_ac.primer_nombre, p_ac.primer_apellido)) AS nombre_acudiente
+                FROM cuenta_pagada cp
+                INNER JOIN cuentas_por_cobrar cpc ON cpc.id = cp.id_cuenta_por_cobrar
+                INNER JOIN pagos_recibidos pr ON pr.id = cp.id_pago_recibido
+                LEFT JOIN tipos_pagos tp ON tp.id = pr.id_tipo_pago
+                LEFT JOIN usuarios u ON u.id = pr.id_usuario_registro
+                LEFT JOIN personas p_ur ON p_ur.id = u.id_persona
+                LEFT JOIN acudientes a ON a.id = pr.id_acudiente
+                LEFT JOIN personas p_ac ON p_ac.id = a.id_persona
+                WHERE cpc.id_persona = :id
+                  AND cpc.id_tenant = :id_tenant
+                  AND (cpc.anulado = 0 OR cpc.anulado IS NULL)
+                  AND (pr.anulado = 0 OR pr.anulado IS NULL)
+                ORDER BY pr.fecha, cp.fecha
+            ");
+            $sentence->bindParam(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->execute();
+            $filas = $sentence->fetchAll(PDO::FETCH_ASSOC);
+
+            // Numero de recibo con el formato del tenant, una vez por pago
+            $numeros = [];
+            foreach ($filas as &$fila) {
+                $idPago = $fila['id_pago_recibido'];
+                if (!array_key_exists($idPago, $numeros)) {
+                    $numeros[$idPago] = PagosRecibidos::formatearNumeroRecibo($db, $fila['anio'], $fila['numero']);
+                }
+                $fila['numero_comprobante'] = $numeros[$idPago];
+                $fila['es_ingreso'] = (int) $fila['es_ingreso'];
+            }
+            unset($fila);
+
+            Flight::json($filas);
+        } catch (Exception $e) {
+            error_log('Error en getAplicacionesByPersona cuentas_por_cobrar: ' . $e->getMessage());
+            Flight::json([
+                'error' => true,
+                'message' => 'Error al obtener el detalle de pagos aplicados',
+                'detalles' => $e->getMessage()
+            ], 500);
+        }
+    }
+
     public static function new()
     {
         $userData = JWTService::requerirAutenticacion();

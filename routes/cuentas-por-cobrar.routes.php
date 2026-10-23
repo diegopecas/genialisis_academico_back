@@ -8,6 +8,8 @@ Flight::route('DELETE /categoria-productos-servicios', [CategoriaProductosServic
 
 Flight::route('GET /cuentas-por-cobrar', [CuentasPorCobrar::class, 'getAll']);
 Flight::route('GET /cuentas-por-cobrar/persona/@id', [CuentasPorCobrar::class, 'getByPersona']);
+// Detalle de lo aplicado a las cuentas de la persona (Vista por mes del estado de cuenta)
+Flight::route('GET /cuentas-por-cobrar/persona/@id/aplicaciones', [CuentasPorCobrar::class, 'getAplicacionesByPersona']);
 Flight::route('GET /cuentas-por-cobrar/reporte-anual/@anio', [CuentasPorCobrar::class, 'getReporteAnual']);
 Flight::route('GET /cuentas-por-cobrar/reporte-cobros-anual/@anio', [CuentasPorCobrar::class, 'getReporteCobrosAnual']);
 Flight::route('GET /cuentas-por-cobrar/reporte-cartera-estudiantes/@anio', [CuentasPorCobrar::class, 'getReporteCarteraEstudiantes']);
