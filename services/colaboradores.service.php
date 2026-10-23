@@ -323,13 +323,15 @@ class Colaboradores
             if ($rolCodRow && $rolCodRow['codigo'] === 'DOCENTE') {
                 error_log("Creando registro de docente para colaborador $id_colaborador");
 
-                $insertDocente = $db->prepare("INSERT INTO docentes(id, id_tenant, id_persona, id_colaborador, activo, id_casa_docente) VALUES (:id, :id_tenant, :id_persona, :id_colaborador, :activo, :id_casa_docente)");
+                // La casa del docente solo se guarda si existe en casas_docentes del tenant (evita error 1452)
+                $insertDocente = $db->prepare("INSERT INTO docentes(id, id_tenant, id_persona, id_colaborador, activo, id_casa_docente) VALUES (:id, :id_tenant, :id_persona, :id_colaborador, :activo, (SELECT cd.id FROM casas_docentes cd WHERE cd.id = :id_casa_docente AND cd.id_tenant = :id_tenant_casa))");
                 $idDocente = Uuid::generar();
                 $insertDocente->bindValue(':id', $idDocente);
                 $insertDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $insertDocente->bindParam(':id_persona', $id_persona);
                 $insertDocente->bindParam(':id_colaborador', $id_colaborador);
                 $insertDocente->bindParam(':id_casa_docente', $id_casa_colaborador);
+                $insertDocente->bindValue(':id_tenant_casa', TenantContext::id(), PDO::PARAM_INT);
                 $insertDocente->bindParam(':activo', $activo);
                 $insertDocente->execute();
 
@@ -516,13 +518,15 @@ class Colaboradores
                 } else {
                     error_log("Creando nuevo docente directamente");
 
-                    $insertDocente = $db->prepare("INSERT INTO docentes(id, id_tenant, id_persona, id_colaborador, activo, id_casa_docente) VALUES (:id, :id_tenant, :id_persona, :id_colaborador, :activo, :id_casa_docente)");
+                    // La casa del docente solo se guarda si existe en casas_docentes del tenant (evita error 1452)
+                    $insertDocente = $db->prepare("INSERT INTO docentes(id, id_tenant, id_persona, id_colaborador, activo, id_casa_docente) VALUES (:id, :id_tenant, :id_persona, :id_colaborador, :activo, (SELECT cd.id FROM casas_docentes cd WHERE cd.id = :id_casa_docente AND cd.id_tenant = :id_tenant_casa))");
                     $idDocente2 = Uuid::generar();
                     $insertDocente->bindValue(':id', $idDocente2);
                     $insertDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $insertDocente->bindParam(':id_persona', $id_persona);
                     $insertDocente->bindParam(':id_colaborador', $id);
                     $insertDocente->bindParam(':id_casa_docente', $id_casa_colaborador);
+                    $insertDocente->bindValue(':id_tenant_casa', TenantContext::id(), PDO::PARAM_INT);
                     $insertDocente->bindParam(':activo', $activo);
                     $insertDocente->execute();
 
@@ -539,8 +543,10 @@ class Colaboradores
                 $getDocente->execute();
                 $docente = $getDocente->fetch();
                 if ($docente) {
-                    $actualizarDocente = $db->prepare("UPDATE docentes SET id_casa_docente = :id_casa_docente, activo = :activo WHERE id = :id AND id_tenant = :id_tenant");
+                    // La casa del docente solo se guarda si existe en casas_docentes del tenant (evita error 1452)
+                    $actualizarDocente = $db->prepare("UPDATE docentes SET id_casa_docente = COALESCE((SELECT cd.id FROM casas_docentes cd WHERE cd.id = :id_casa_docente AND cd.id_tenant = :id_tenant_casa), id_casa_docente), activo = :activo WHERE id = :id AND id_tenant = :id_tenant");
                     $actualizarDocente->bindParam(':id_casa_docente', $id_casa_colaborador);
+                    $actualizarDocente->bindValue(':id_tenant_casa', TenantContext::id(), PDO::PARAM_INT);
                     $actualizarDocente->bindParam(':activo', $activo);
                     $actualizarDocente->bindParam(':id', $docente['id']);
                     $actualizarDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -550,13 +556,15 @@ class Colaboradores
                     // Colaboradores que quedaron con rol Docente pero sin registro en docentes
                     error_log("Colaborador con rol Docente sin registro en docentes, creando");
 
-                    $insertDocente = $db->prepare("INSERT INTO docentes(id, id_tenant, id_persona, id_colaborador, activo, id_casa_docente) VALUES (:id, :id_tenant, :id_persona, :id_colaborador, :activo, :id_casa_docente)");
+                    // La casa del docente solo se guarda si existe en casas_docentes del tenant (evita error 1452)
+                    $insertDocente = $db->prepare("INSERT INTO docentes(id, id_tenant, id_persona, id_colaborador, activo, id_casa_docente) VALUES (:id, :id_tenant, :id_persona, :id_colaborador, :activo, (SELECT cd.id FROM casas_docentes cd WHERE cd.id = :id_casa_docente AND cd.id_tenant = :id_tenant_casa))");
                     $idDocente3 = Uuid::generar();
                     $insertDocente->bindValue(':id', $idDocente3);
                     $insertDocente->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                     $insertDocente->bindParam(':id_persona', $id_persona);
                     $insertDocente->bindParam(':id_colaborador', $id);
                     $insertDocente->bindParam(':id_casa_docente', $id_casa_colaborador);
+                    $insertDocente->bindValue(':id_tenant_casa', TenantContext::id(), PDO::PARAM_INT);
                     $insertDocente->bindParam(':activo', $activo);
                     $insertDocente->execute();
 
