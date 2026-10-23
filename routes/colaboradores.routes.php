@@ -47,6 +47,11 @@ Flight::route('GET /tipos-actividades-colaboradores/categoria/@id_categoria', [T
 Flight::route('GET /motivos-retiro', [MotivosRetiro::class, 'getAll']);
 Flight::route('GET /motivos-retiro/@id', [MotivosRetiro::class, 'getById']);
 
+// SEGURIDAD SOCIAL (catalogos globales)
+Flight::route('GET /entidades-seguridad-social', [EntidadesSeguridadSocial::class, 'getAll']);
+Flight::route('GET /entidades-seguridad-social/tipo/@codigo', [EntidadesSeguridadSocial::class, 'getByTipo']);
+Flight::route('GET /tipos-afiliacion-seguridad-social', [TiposAfiliacionSeguridadSocial::class, 'getAll']);
+
 // CATEGORÍAS DE ACTIVIDADES
 Flight::route('GET /categorias-actividades', [CategoriasActividades::class, 'getAll']);
 Flight::route('GET /categorias-actividades/@id', [CategoriasActividades::class, 'getById']);

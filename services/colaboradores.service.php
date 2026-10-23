@@ -18,6 +18,8 @@ class Colaboradores
         return $row ? $row['codigo'] : null;
     }
 
+    // Nivel de escolaridad y genero van con LEFT JOIN en los listados y consultas:
+    // los colaboradores cargados por script sin esos datos tambien deben aparecer.
     public static function getAll()
     {
         $db = Flight::db();
@@ -26,6 +28,8 @@ class Colaboradores
         c.correo_electronico, c.sobrenombre, c.fecha_ingreso, c.fecha_retiro, c.id_motivo_retiro, mr.nombre nombre_motivo_retiro,
         c.id_cargo, car.nombre nombre_cargo, c.salario_mensual, c.id_tipo_contrato, tc.nombre nombre_tipo_contrato, tc.aplica_nomina,
         c.id_jefe_directo, c.activo, c.valida_ingreso_jornada, c.valida_ingreso_descanso,
+        c.id_tipo_afiliacion_ss, tas.nombre nombre_tipo_afiliacion_ss, c.id_afp, afp.nombre nombre_afp, c.id_eps, eps.nombre nombre_eps,
+        c.id_arl, arl.nombre nombre_arl, c.id_caja_compensacion, ccf.nombre nombre_caja_compensacion,
         p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido, p.foto,
         p.id_tipo_identificacion, ti.nombre tipo_identificacion, p.numero_identificacion, 
         p.fecha_nacimiento, p.id_genero, g.nombre nombre_genero, p.direccion, p.telefono, p.id_ciudad,
@@ -33,14 +37,19 @@ class Colaboradores
         CONCAT(IFNULL(pj.primer_nombre, ''), ' ', IFNULL(pj.segundo_nombre, ''), ' ', IFNULL(pj.primer_apellido, ''), ' ', IFNULL(pj.segundo_apellido, '')) AS nombre_jefe_directo
         FROM colaboradores c 
         INNER JOIN roles_colaborador rc ON c.id_rol_colaborador = rc.id
-        INNER JOIN niveles_escolaridad ne ON c.id_nivel_escolaridad = ne.id 
+        LEFT OUTER JOIN niveles_escolaridad ne ON c.id_nivel_escolaridad = ne.id 
         INNER JOIN personas p ON c.id_persona = p.id
         INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
-        INNER JOIN generos g ON p.id_genero = g.id
+        LEFT OUTER JOIN generos g ON p.id_genero = g.id
         LEFT OUTER JOIN casas_colaboradores cc ON c.id_casa_colaborador = cc.id
         LEFT OUTER JOIN motivos_retiro mr ON c.id_motivo_retiro = mr.id
         LEFT OUTER JOIN cargos car ON c.id_cargo = car.id
         LEFT OUTER JOIN tipos_contrato tc ON c.id_tipo_contrato = tc.id
+        LEFT OUTER JOIN tipos_afiliacion_seguridad_social tas ON c.id_tipo_afiliacion_ss = tas.id
+        LEFT OUTER JOIN entidades_seguridad_social afp ON c.id_afp = afp.id
+        LEFT OUTER JOIN entidades_seguridad_social eps ON c.id_eps = eps.id
+        LEFT OUTER JOIN entidades_seguridad_social arl ON c.id_arl = arl.id
+        LEFT OUTER JOIN entidades_seguridad_social ccf ON c.id_caja_compensacion = ccf.id
         LEFT OUTER JOIN colaboradores cj ON c.id_jefe_directo = cj.id
         LEFT OUTER JOIN personas pj ON cj.id_persona = pj.id
         WHERE c.id_tenant = :id_tenant
@@ -77,6 +86,8 @@ class Colaboradores
         c.correo_electronico, c.sobrenombre, c.fecha_ingreso, c.fecha_retiro, c.id_motivo_retiro, mr.nombre nombre_motivo_retiro,
         c.id_cargo, car.nombre nombre_cargo, c.salario_mensual, c.id_tipo_contrato, tc.nombre nombre_tipo_contrato, tc.aplica_nomina,
         c.id_jefe_directo, c.activo, c.valida_ingreso_jornada, c.valida_ingreso_descanso,
+        c.id_tipo_afiliacion_ss, tas.nombre nombre_tipo_afiliacion_ss, c.id_afp, afp.nombre nombre_afp, c.id_eps, eps.nombre nombre_eps,
+        c.id_arl, arl.nombre nombre_arl, c.id_caja_compensacion, ccf.nombre nombre_caja_compensacion,
         p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido, p.foto,
         p.id_tipo_identificacion, ti.nombre tipo_identificacion, p.numero_identificacion, 
         p.fecha_nacimiento, p.id_genero, g.nombre nombre_genero, p.direccion, p.telefono, p.id_ciudad,
@@ -84,14 +95,19 @@ class Colaboradores
         CONCAT(IFNULL(pj.primer_nombre, ''), ' ', IFNULL(pj.segundo_nombre, ''), ' ', IFNULL(pj.primer_apellido, ''), ' ', IFNULL(pj.segundo_apellido, '')) AS nombre_jefe_directo
         FROM colaboradores c 
         INNER JOIN roles_colaborador rc ON c.id_rol_colaborador = rc.id
-        INNER JOIN niveles_escolaridad ne ON c.id_nivel_escolaridad = ne.id 
+        LEFT OUTER JOIN niveles_escolaridad ne ON c.id_nivel_escolaridad = ne.id 
         INNER JOIN personas p ON c.id_persona = p.id
         INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
-        INNER JOIN generos g ON p.id_genero = g.id
+        LEFT OUTER JOIN generos g ON p.id_genero = g.id
         LEFT OUTER JOIN casas_colaboradores cc ON c.id_casa_colaborador = cc.id
         LEFT OUTER JOIN motivos_retiro mr ON c.id_motivo_retiro = mr.id
         LEFT OUTER JOIN cargos car ON c.id_cargo = car.id
         LEFT OUTER JOIN tipos_contrato tc ON c.id_tipo_contrato = tc.id
+        LEFT OUTER JOIN tipos_afiliacion_seguridad_social tas ON c.id_tipo_afiliacion_ss = tas.id
+        LEFT OUTER JOIN entidades_seguridad_social afp ON c.id_afp = afp.id
+        LEFT OUTER JOIN entidades_seguridad_social eps ON c.id_eps = eps.id
+        LEFT OUTER JOIN entidades_seguridad_social arl ON c.id_arl = arl.id
+        LEFT OUTER JOIN entidades_seguridad_social ccf ON c.id_caja_compensacion = ccf.id
         LEFT OUTER JOIN colaboradores cj ON c.id_jefe_directo = cj.id
         LEFT OUTER JOIN personas pj ON cj.id_persona = pj.id
         WHERE c.id_tenant = :id_tenant";
@@ -140,6 +156,8 @@ class Colaboradores
         c.correo_electronico, c.sobrenombre, c.fecha_ingreso, c.fecha_retiro, c.id_motivo_retiro, mr.nombre nombre_motivo_retiro,
         c.id_cargo, car.nombre nombre_cargo, c.salario_mensual, c.id_tipo_contrato, tc.nombre nombre_tipo_contrato, tc.aplica_nomina,
         c.id_jefe_directo, c.activo, c.valida_ingreso_jornada, c.valida_ingreso_descanso,
+        c.id_tipo_afiliacion_ss, tas.nombre nombre_tipo_afiliacion_ss, c.id_afp, afp.nombre nombre_afp, c.id_eps, eps.nombre nombre_eps,
+        c.id_arl, arl.nombre nombre_arl, c.id_caja_compensacion, ccf.nombre nombre_caja_compensacion,
         d.id id_docente,
         p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido, 
         p.id_tipo_identificacion, ti.nombre tipo_identificacion, p.numero_identificacion, 
@@ -149,14 +167,19 @@ class Colaboradores
         CONCAT(IFNULL(pj.primer_nombre, ''), ' ', IFNULL(pj.segundo_nombre, ''), ' ', IFNULL(pj.primer_apellido, ''), ' ', IFNULL(pj.segundo_apellido, '')) AS nombre_jefe_directo
         FROM colaboradores c 
         INNER JOIN roles_colaborador rc ON c.id_rol_colaborador = rc.id
-        INNER JOIN niveles_escolaridad ne ON c.id_nivel_escolaridad = ne.id 
+        LEFT OUTER JOIN niveles_escolaridad ne ON c.id_nivel_escolaridad = ne.id 
         INNER JOIN personas p ON c.id_persona = p.id
         INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
-        INNER JOIN generos g ON p.id_genero = g.id
+        LEFT OUTER JOIN generos g ON p.id_genero = g.id
         LEFT OUTER JOIN casas_colaboradores cc ON c.id_casa_colaborador = cc.id
         LEFT OUTER JOIN motivos_retiro mr ON c.id_motivo_retiro = mr.id
         LEFT OUTER JOIN cargos car ON c.id_cargo = car.id
         LEFT OUTER JOIN tipos_contrato tc ON c.id_tipo_contrato = tc.id
+        LEFT OUTER JOIN tipos_afiliacion_seguridad_social tas ON c.id_tipo_afiliacion_ss = tas.id
+        LEFT OUTER JOIN entidades_seguridad_social afp ON c.id_afp = afp.id
+        LEFT OUTER JOIN entidades_seguridad_social eps ON c.id_eps = eps.id
+        LEFT OUTER JOIN entidades_seguridad_social arl ON c.id_arl = arl.id
+        LEFT OUTER JOIN entidades_seguridad_social ccf ON c.id_caja_compensacion = ccf.id
         LEFT OUTER JOIN colaboradores cj ON c.id_jefe_directo = cj.id
         LEFT OUTER JOIN personas pj ON cj.id_persona = pj.id
         LEFT OUTER JOIN docentes d ON c.id = d.id_colaborador
@@ -182,19 +205,26 @@ class Colaboradores
         c.correo_electronico, c.sobrenombre, c.fecha_ingreso, c.fecha_retiro, c.id_motivo_retiro, mr.nombre nombre_motivo_retiro,
         c.id_cargo, car.nombre nombre_cargo, c.salario_mensual, c.id_tipo_contrato, tc.nombre nombre_tipo_contrato, tc.aplica_nomina,
         c.id_jefe_directo, c.activo, c.valida_ingreso_jornada, c.valida_ingreso_descanso,
+        c.id_tipo_afiliacion_ss, tas.nombre nombre_tipo_afiliacion_ss, c.id_afp, afp.nombre nombre_afp, c.id_eps, eps.nombre nombre_eps,
+        c.id_arl, arl.nombre nombre_arl, c.id_caja_compensacion, ccf.nombre nombre_caja_compensacion,
         p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido, 
         p.id_tipo_identificacion, ti.nombre tipo_identificacion, p.numero_identificacion, 
         p.fecha_nacimiento, p.id_genero, g.nombre nombre_genero, p.direccion, p.telefono, p.id_ciudad
         FROM colaboradores c 
         INNER JOIN roles_colaborador rc ON c.id_rol_colaborador = rc.id
-        INNER JOIN niveles_escolaridad ne ON c.id_nivel_escolaridad = ne.id 
+        LEFT OUTER JOIN niveles_escolaridad ne ON c.id_nivel_escolaridad = ne.id 
         INNER JOIN personas p ON c.id_persona = p.id
         INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
-        INNER JOIN generos g ON p.id_genero = g.id
+        LEFT OUTER JOIN generos g ON p.id_genero = g.id
         LEFT OUTER JOIN casas_colaboradores cc ON c.id_casa_colaborador = cc.id
         LEFT OUTER JOIN motivos_retiro mr ON c.id_motivo_retiro = mr.id
         LEFT OUTER JOIN cargos car ON c.id_cargo = car.id
         LEFT OUTER JOIN tipos_contrato tc ON c.id_tipo_contrato = tc.id
+        LEFT OUTER JOIN tipos_afiliacion_seguridad_social tas ON c.id_tipo_afiliacion_ss = tas.id
+        LEFT OUTER JOIN entidades_seguridad_social afp ON c.id_afp = afp.id
+        LEFT OUTER JOIN entidades_seguridad_social eps ON c.id_eps = eps.id
+        LEFT OUTER JOIN entidades_seguridad_social arl ON c.id_arl = arl.id
+        LEFT OUTER JOIN entidades_seguridad_social ccf ON c.id_caja_compensacion = ccf.id
         WHERE c.id_persona = :id_persona AND c.id_tenant = :id_tenant");
         $sentence->bindParam(':id_persona', $id_persona);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -224,6 +254,12 @@ class Colaboradores
             $activo = isset(Flight::request()->data['activo']) ? Flight::request()->data['activo'] : 1;
             $valida_ingreso_jornada = isset(Flight::request()->data['valida_ingreso_jornada']) ? Flight::request()->data['valida_ingreso_jornada'] : 1;
             $valida_ingreso_descanso = isset(Flight::request()->data['valida_ingreso_descanso']) ? Flight::request()->data['valida_ingreso_descanso'] : 0;
+            // Seguridad social: tipo de afiliacion y entidades (AFP, EPS, ARL, caja)
+            $id_tipo_afiliacion_ss = isset(Flight::request()->data['id_tipo_afiliacion_ss']) ? Flight::request()->data['id_tipo_afiliacion_ss'] : null;
+            $id_afp = isset(Flight::request()->data['id_afp']) ? Flight::request()->data['id_afp'] : null;
+            $id_eps = isset(Flight::request()->data['id_eps']) ? Flight::request()->data['id_eps'] : null;
+            $id_arl = isset(Flight::request()->data['id_arl']) ? Flight::request()->data['id_arl'] : null;
+            $id_caja_compensacion = isset(Flight::request()->data['id_caja_compensacion']) ? Flight::request()->data['id_caja_compensacion'] : null;
 
             error_log("Datos recibidos para crear colaborador: id_persona=$id_persona, id_rol_colaborador=$id_rol_colaborador");
 
@@ -237,7 +273,7 @@ class Colaboradores
                 return;
             }
 
-            $sentence = $db->prepare("INSERT INTO colaboradores(id, id_tenant, id_persona, id_rol_colaborador, id_nivel_escolaridad, id_casa_colaborador, correo_electronico, sobrenombre, fecha_ingreso, fecha_retiro, id_motivo_retiro, id_cargo, salario_mensual, id_tipo_contrato, id_jefe_directo, activo, valida_ingreso_jornada, valida_ingreso_descanso) VALUES (:id, :id_tenant, :id_persona, :id_rol_colaborador, :id_nivel_escolaridad, :id_casa_colaborador, :correo_electronico, :sobrenombre, :fecha_ingreso, :fecha_retiro, :id_motivo_retiro, :id_cargo, :salario_mensual, :id_tipo_contrato, :id_jefe_directo, :activo, :valida_ingreso_jornada, :valida_ingreso_descanso)");
+            $sentence = $db->prepare("INSERT INTO colaboradores(id, id_tenant, id_persona, id_rol_colaborador, id_nivel_escolaridad, id_casa_colaborador, correo_electronico, sobrenombre, fecha_ingreso, fecha_retiro, id_motivo_retiro, id_cargo, salario_mensual, id_tipo_contrato, id_jefe_directo, activo, valida_ingreso_jornada, valida_ingreso_descanso, id_tipo_afiliacion_ss, id_afp, id_eps, id_arl, id_caja_compensacion) VALUES (:id, :id_tenant, :id_persona, :id_rol_colaborador, :id_nivel_escolaridad, :id_casa_colaborador, :correo_electronico, :sobrenombre, :fecha_ingreso, :fecha_retiro, :id_motivo_retiro, :id_cargo, :salario_mensual, :id_tipo_contrato, :id_jefe_directo, :activo, :valida_ingreso_jornada, :valida_ingreso_descanso, :id_tipo_afiliacion_ss, :id_afp, :id_eps, :id_arl, :id_caja_compensacion)");
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindParam(':id_rol_colaborador', $id_rol_colaborador);
             $sentence->bindParam(':id_nivel_escolaridad', $id_nivel_escolaridad);
@@ -254,6 +290,11 @@ class Colaboradores
             $sentence->bindParam(':activo', $activo);
             $sentence->bindParam(':valida_ingreso_jornada', $valida_ingreso_jornada);
             $sentence->bindParam(':valida_ingreso_descanso', $valida_ingreso_descanso);
+            $sentence->bindParam(':id_tipo_afiliacion_ss', $id_tipo_afiliacion_ss);
+            $sentence->bindParam(':id_afp', $id_afp);
+            $sentence->bindParam(':id_eps', $id_eps);
+            $sentence->bindParam(':id_arl', $id_arl);
+            $sentence->bindParam(':id_caja_compensacion', $id_caja_compensacion);
             $idColab = Uuid::generar();
             $sentence->bindValue(':id', $idColab);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -328,6 +369,12 @@ class Colaboradores
             $activo = isset(Flight::request()->data['activo']) ? Flight::request()->data['activo'] : 1;
             $valida_ingreso_jornada = isset(Flight::request()->data['valida_ingreso_jornada']) ? Flight::request()->data['valida_ingreso_jornada'] : 1;
             $valida_ingreso_descanso = isset(Flight::request()->data['valida_ingreso_descanso']) ? Flight::request()->data['valida_ingreso_descanso'] : 0;
+            // Seguridad social: tipo de afiliacion y entidades (AFP, EPS, ARL, caja)
+            $id_tipo_afiliacion_ss = isset(Flight::request()->data['id_tipo_afiliacion_ss']) ? Flight::request()->data['id_tipo_afiliacion_ss'] : null;
+            $id_afp = isset(Flight::request()->data['id_afp']) ? Flight::request()->data['id_afp'] : null;
+            $id_eps = isset(Flight::request()->data['id_eps']) ? Flight::request()->data['id_eps'] : null;
+            $id_arl = isset(Flight::request()->data['id_arl']) ? Flight::request()->data['id_arl'] : null;
+            $id_caja_compensacion = isset(Flight::request()->data['id_caja_compensacion']) ? Flight::request()->data['id_caja_compensacion'] : null;
 
             error_log("Actualizando colaborador id=$id, rol=$id_rol_colaborador");
 
@@ -411,7 +458,7 @@ class Colaboradores
                 }
             }
 
-            $sentence = $db->prepare("UPDATE colaboradores SET id_persona = :id_persona, id_rol_colaborador = :id_rol_colaborador, id_nivel_escolaridad = :id_nivel_escolaridad, id_casa_colaborador = :id_casa_colaborador, correo_electronico = :correo_electronico, sobrenombre = :sobrenombre, fecha_ingreso = :fecha_ingreso, fecha_retiro = :fecha_retiro, id_motivo_retiro = :id_motivo_retiro, id_cargo = :id_cargo, salario_mensual = :salario_mensual, id_tipo_contrato = :id_tipo_contrato, id_jefe_directo = :id_jefe_directo, activo = :activo, valida_ingreso_jornada = :valida_ingreso_jornada, valida_ingreso_descanso = :valida_ingreso_descanso WHERE id = :id AND id_tenant = :id_tenant");
+            $sentence = $db->prepare("UPDATE colaboradores SET id_persona = :id_persona, id_rol_colaborador = :id_rol_colaborador, id_nivel_escolaridad = :id_nivel_escolaridad, id_casa_colaborador = :id_casa_colaborador, correo_electronico = :correo_electronico, sobrenombre = :sobrenombre, fecha_ingreso = :fecha_ingreso, fecha_retiro = :fecha_retiro, id_motivo_retiro = :id_motivo_retiro, id_cargo = :id_cargo, salario_mensual = :salario_mensual, id_tipo_contrato = :id_tipo_contrato, id_jefe_directo = :id_jefe_directo, activo = :activo, valida_ingreso_jornada = :valida_ingreso_jornada, valida_ingreso_descanso = :valida_ingreso_descanso, id_tipo_afiliacion_ss = :id_tipo_afiliacion_ss, id_afp = :id_afp, id_eps = :id_eps, id_arl = :id_arl, id_caja_compensacion = :id_caja_compensacion WHERE id = :id AND id_tenant = :id_tenant");
             $sentence->bindParam(':id_persona', $id_persona);
             $sentence->bindParam(':id_rol_colaborador', $id_rol_colaborador);
             $sentence->bindParam(':id_nivel_escolaridad', $id_nivel_escolaridad);
@@ -428,6 +475,11 @@ class Colaboradores
             $sentence->bindParam(':activo', $activo);
             $sentence->bindParam(':valida_ingreso_jornada', $valida_ingreso_jornada);
             $sentence->bindParam(':valida_ingreso_descanso', $valida_ingreso_descanso);
+            $sentence->bindParam(':id_tipo_afiliacion_ss', $id_tipo_afiliacion_ss);
+            $sentence->bindParam(':id_afp', $id_afp);
+            $sentence->bindParam(':id_eps', $id_eps);
+            $sentence->bindParam(':id_arl', $id_arl);
+            $sentence->bindParam(':id_caja_compensacion', $id_caja_compensacion);
             $sentence->bindParam(':id', $id);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();
