@@ -16,13 +16,7 @@ class TarifasCursosExtra
     {
         $db = Flight::db();
         $sentence = $db->prepare("SELECT tce.id, tce.id_curso_extra, tce.id_institucion_cliente,
-        tce.id_producto_matricula, tce.valor_matricula, tce.cuotas_matricula,
-        tce.id_producto_pension, tce.valor_pension,
-        tce.id_producto_unico, tce.valor_unico, tce.cuotas_unico,
         tce.anio,
-        pm.nombre AS nombre_producto_matricula,
-        pp.nombre AS nombre_producto_pension,
-        pu.nombre AS nombre_producto_unico,
         ce.nombre AS nombre_curso,
         CASE
             WHEN pi.razon_social IS NOT NULL AND pi.razon_social != '' THEN pi.razon_social
@@ -30,9 +24,6 @@ class TarifasCursosExtra
         END AS nombre_institucion
         FROM tarifas_cursos_extra tce
         INNER JOIN cursos_extra ce ON tce.id_curso_extra = ce.id
-        LEFT JOIN productos_servicios pm ON tce.id_producto_matricula = pm.id
-        LEFT JOIN productos_servicios pp ON tce.id_producto_pension = pp.id
-        LEFT JOIN productos_servicios pu ON tce.id_producto_unico = pu.id
         LEFT JOIN instituciones_cliente ic ON tce.id_institucion_cliente = ic.id
         LEFT JOIN personas pi ON ic.id_persona = pi.id AND pi.id_tenant = ic.id_tenant
         WHERE tce.id_tenant = :id_tenant
@@ -47,21 +38,12 @@ class TarifasCursosExtra
     {
         $db = Flight::db();
         $sentence = $db->prepare("SELECT tce.id, tce.id_curso_extra, tce.id_institucion_cliente,
-        tce.id_producto_matricula, tce.valor_matricula, tce.cuotas_matricula,
-        tce.id_producto_pension, tce.valor_pension,
-        tce.id_producto_unico, tce.valor_unico, tce.cuotas_unico,
         tce.anio,
-        pm.nombre AS nombre_producto_matricula,
-        pp.nombre AS nombre_producto_pension,
-        pu.nombre AS nombre_producto_unico,
         CASE
             WHEN pi.razon_social IS NOT NULL AND pi.razon_social != '' THEN pi.razon_social
             ELSE CONCAT(IFNULL(pi.primer_nombre, ''), ' ', IFNULL(pi.primer_apellido, ''))
         END AS nombre_institucion
         FROM tarifas_cursos_extra tce
-        LEFT JOIN productos_servicios pm ON tce.id_producto_matricula = pm.id
-        LEFT JOIN productos_servicios pp ON tce.id_producto_pension = pp.id
-        LEFT JOIN productos_servicios pu ON tce.id_producto_unico = pu.id
         LEFT JOIN instituciones_cliente ic ON tce.id_institucion_cliente = ic.id
         LEFT JOIN personas pi ON ic.id_persona = pi.id AND pi.id_tenant = ic.id_tenant
         WHERE tce.id = :id AND tce.id_tenant = :id_tenant");
@@ -82,21 +64,12 @@ class TarifasCursosExtra
     {
         $db = Flight::db();
         $sentence = $db->prepare("SELECT tce.id, tce.id_curso_extra, tce.id_institucion_cliente,
-        tce.id_producto_matricula, tce.valor_matricula, tce.cuotas_matricula,
-        tce.id_producto_pension, tce.valor_pension,
-        tce.id_producto_unico, tce.valor_unico, tce.cuotas_unico,
         tce.anio,
-        pm.nombre AS nombre_producto_matricula,
-        pp.nombre AS nombre_producto_pension,
-        pu.nombre AS nombre_producto_unico,
         CASE
             WHEN pi.razon_social IS NOT NULL AND pi.razon_social != '' THEN pi.razon_social
             ELSE CONCAT(IFNULL(pi.primer_nombre, ''), ' ', IFNULL(pi.primer_apellido, ''))
         END AS nombre_institucion
         FROM tarifas_cursos_extra tce
-        LEFT JOIN productos_servicios pm ON tce.id_producto_matricula = pm.id
-        LEFT JOIN productos_servicios pp ON tce.id_producto_pension = pp.id
-        LEFT JOIN productos_servicios pu ON tce.id_producto_unico = pu.id
         LEFT JOIN instituciones_cliente ic ON tce.id_institucion_cliente = ic.id
         LEFT JOIN personas pi ON ic.id_persona = pi.id AND pi.id_tenant = ic.id_tenant
         WHERE tce.id_curso_extra = :id_curso_extra AND tce.id_tenant = :id_tenant

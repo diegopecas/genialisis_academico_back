@@ -110,7 +110,7 @@ class PushNotificationService
             return;
         }
 
-        $this->enviarPush($suscripciones, $titulo, $cuerpo, $datosExtra);
+        $this->enviarPush($suscripciones, $titulo, $cuerpo, $datosExtra, JWTService::PORTAL_INSTITUCIONAL);
     }
 
     /**
@@ -154,17 +154,24 @@ class PushNotificationService
 
         $suscripciones = $this->obtenerSuscripcionesPorUsuarios($idsUsuarios, $portal);
 
-        if (empty($suscripciones)) {
-            $reporteVacio['sin_suscripcion'] = count($idsUsuarios);
-            return $reporteVacio;
-        }
-
         $usuariosConSuscripcion = [];
         foreach ($suscripciones as $suscripcion) {
             $usuariosConSuscripcion[$suscripcion['id_usuario']] = true;
         }
 
-        $reporte = $this->enviarPushConReporte($suscripciones, $titulo, $cuerpo, $datosExtra);
+        // Quien no tenia a donde recibir el aviso tambien queda en push_envios:
+        // es la primera pregunta cuando un acudiente dice que no le llego
+        $usuariosSinSuscripcion = array_values(array_filter($idsUsuarios, function ($idUsuario) use ($usuariosConSuscripcion) {
+            return !isset($usuariosConSuscripcion[$idUsuario]);
+        }));
+        $this->registrarSinSuscripcion($usuariosSinSuscripcion, $portal, $titulo, $datosExtra);
+
+        if (empty($suscripciones)) {
+            $reporteVacio['sin_suscripcion'] = count($idsUsuarios);
+            return $reporteVacio;
+        }
+
+        $reporte = $this->enviarPushConReporte($suscripciones, $titulo, $cuerpo, $datosExtra, $portal);
         $reporte['sin_suscripcion'] = count($idsUsuarios) - count($usuariosConSuscripcion);
 
         return $reporte;
@@ -230,19 +237,29 @@ class PushNotificationService
     /**
      * Envía las notificaciones push usando la librería web-push
      */
-    private function enviarPush(array $suscripciones, string $titulo, string $cuerpo, array $datosExtra): void
+    private function enviarPush(array $suscripciones, string $titulo, string $cuerpo, array $datosExtra, string $portal = ''): void
     {
-        $this->enviarPushConReporte($suscripciones, $titulo, $cuerpo, $datosExtra);
+        $this->enviarPushConReporte($suscripciones, $titulo, $cuerpo, $datosExtra, $portal);
     }
 
     /**
      * Envía las notificaciones push y devuelve el conteo de resultados.
      *
+     * Cada intento queda en push_envios con la respuesta del proveedor
+     * (Apple, Google...). $portal solo se usa para ese registro.
+     *
      * @return array ['enviadas' => int, 'fallidas' => int]
      */
-    private function enviarPushConReporte(array $suscripciones, string $titulo, string $cuerpo, array $datosExtra): array
+    private function enviarPushConReporte(array $suscripciones, string $titulo, string $cuerpo, array $datosExtra, string $portal = ''): array
     {
         $reporte = ['enviadas' => 0, 'fallidas' => 0];
+
+        // endpoint -> suscripcion, para saber de quien es cada respuesta
+        $suscripcionesPorEndpoint = [];
+        foreach ($suscripciones as $sub) {
+            $suscripcionesPorEndpoint[$sub['endpoint']] = $sub;
+        }
+        $registros = [];
 
         try {
             $auth = [
@@ -287,25 +304,135 @@ class PushNotificationService
             // Enviar todas y procesar resultados
             foreach ($webPush->flush() as $report) {
                 $endpoint = $report->getRequest()->getUri()->__toString();
+                // getEndpoint() devuelve el endpoint tal como se encolo; la URI
+                // de la peticion puede variar segun el proveedor
+                $endpointOriginal = method_exists($report, 'getEndpoint') ? $report->getEndpoint() : $endpoint;
+                $sub = $suscripcionesPorEndpoint[$endpointOriginal] ?? $suscripcionesPorEndpoint[$endpoint] ?? null;
+                $respuesta = $report->getResponse();
+                $codigoHttp = $respuesta ? $respuesta->getStatusCode() : null;
 
                 if ($report->isSuccess()) {
                     $reporte['enviadas']++;
+                    $registros[] = $this->armarRegistro($sub, $endpointOriginal, $portal, $titulo, $datosExtra, 'enviado', $codigoHttp, null, false);
                 } else {
                     $reporte['fallidas']++;
                     $reason = $report->getReason();
                     error_log("[Push] Error enviando a endpoint: {$reason}");
 
+                    $vencida = $report->isSubscriptionExpired();
+                    $registros[] = $this->armarRegistro($sub, $endpointOriginal, $portal, $titulo, $datosExtra, 'fallido', $codigoHttp, $reason, $vencida);
+
                     // Si el endpoint ya no es válido (410 Gone o 404), desactivarlo
-                    if ($report->isSubscriptionExpired()) {
+                    if ($vencida) {
                         $this->desactivarSuscripcion($endpoint);
                     }
                 }
             }
         } catch (Exception $e) {
             error_log('[Push] Error general enviando push: ' . $e->getMessage());
+
+            // Lo que no alcanzo a tener respuesta queda como fallido con el motivo
+            $endpointsConRespuesta = [];
+            foreach ($registros as $registro) {
+                $endpointsConRespuesta[$registro['endpoint']] = true;
+            }
+            foreach ($suscripciones as $sub) {
+                if (!isset($endpointsConRespuesta[$sub['endpoint']])) {
+                    $registros[] = $this->armarRegistro($sub, $sub['endpoint'], $portal, $titulo, $datosExtra, 'fallido', null, $e->getMessage(), false);
+                }
+            }
         }
 
+        $this->registrarEnvios($registros);
+
         return $reporte;
+    }
+
+    /**
+     * Deja en push_envios a los destinatarios que no tenian ninguna
+     * suscripcion activa en el portal al momento del envio.
+     */
+    private function registrarSinSuscripcion(array $idsUsuarios, string $portal, string $titulo, array $datosExtra): void
+    {
+        $registros = [];
+        foreach ($idsUsuarios as $idUsuario) {
+            $registros[] = $this->armarRegistro(
+                ['id' => null, 'id_usuario' => $idUsuario],
+                null, $portal, $titulo, $datosExtra, 'sin_suscripcion', null, null, false
+            );
+        }
+        $this->registrarEnvios($registros);
+    }
+
+    /**
+     * Arma una fila de push_envios.
+     *
+     * @param array|null  $sub        Suscripcion (id, id_usuario); null si no se reconoce el endpoint
+     * @param string|null $resultado  enviado | fallido | sin_suscripcion
+     */
+    private function armarRegistro(?array $sub, ?string $endpoint, string $portal, string $titulo, array $datosExtra, string $resultado, ?int $codigoHttp, ?string $motivo, bool $vencida): array
+    {
+        $referencia = $datosExtra['id_notificacion'] ?? $datosExtra['id_conversacion'] ?? null;
+
+        return [
+            'id_usuario'          => $sub['id_usuario'] ?? null,
+            'id_suscripcion'      => $sub['id'] ?? null,
+            'portal'              => $portal !== '' ? $portal : JWTService::PORTAL_INSTITUCIONAL,
+            'proveedor'           => $this->detectarProveedor($endpoint),
+            'endpoint'            => $endpoint,
+            'titulo'              => mb_substr($titulo, 0, 255),
+            'tipo'                => isset($datosExtra['tipo']) ? mb_substr((string)$datosExtra['tipo'], 0, 50) : null,
+            'id_referencia'       => $referencia !== null ? mb_substr((string)$referencia, 0, 64) : null,
+            'resultado'           => $resultado,
+            'codigo_http'         => $codigoHttp,
+            'motivo'              => $motivo !== null ? mb_substr($motivo, 0, 500) : null,
+            'suscripcion_vencida' => $vencida ? 1 : 0,
+        ];
+    }
+
+    /** Servicio de push segun el endpoint: apple, google, mozilla, microsoft u otro. */
+    private function detectarProveedor(?string $endpoint): ?string
+    {
+        if ($endpoint === null || $endpoint === '') {
+            return null;
+        }
+        $host = (string)parse_url($endpoint, PHP_URL_HOST);
+        if (strpos($host, 'push.apple.com') !== false) return 'apple';
+        if (strpos($host, 'googleapis.com') !== false) return 'google';
+        if (strpos($host, 'mozilla') !== false) return 'mozilla';
+        if (strpos($host, 'windows.com') !== false) return 'microsoft';
+        return 'otro';
+    }
+
+    /**
+     * Guarda los intentos de envio. Si falla solo se deja en el log: el
+     * registro nunca debe frenar ni tumbar el envio de los avisos.
+     */
+    private function registrarEnvios(array $registros): void
+    {
+        if (empty($registros)) {
+            return;
+        }
+
+        try {
+            $stmt = $this->db->prepare("
+                INSERT INTO push_envios
+                    (id, id_tenant, id_usuario, id_suscripcion, portal, proveedor, endpoint, titulo, tipo,
+                     id_referencia, resultado, codigo_http, motivo, suscripcion_vencida)
+                VALUES
+                    (:id, :id_tenant, :id_usuario, :id_suscripcion, :portal, :proveedor, :endpoint, :titulo, :tipo,
+                     :id_referencia, :resultado, :codigo_http, :motivo, :suscripcion_vencida)
+            ");
+
+            foreach ($registros as $registro) {
+                $stmt->execute(array_merge($registro, [
+                    'id'        => Uuid::generar(),
+                    'id_tenant' => TenantContext::id(),
+                ]));
+            }
+        } catch (Exception $e) {
+            error_log('[Push] Error registrando envios en push_envios: ' . $e->getMessage());
+        }
     }
 
     /**
