@@ -10,6 +10,10 @@
  * Una solicitud no crea nada en el sistema. Al aprobarla se crean la
  * persona, el estudiante, el acudiente y la inscripcion, y de ahi sale
  * el cobro por el flujo normal.
+ *
+ * Las solicitudes tambien llegan de los portales web de los clientes
+ * (registrarDesdePortal): el back del portal las reenvia con una API key
+ * del tenant y quedan con origen 'portal'.
  */
 class SolicitudesInscripcionPublica
 {
@@ -469,6 +473,188 @@ class SolicitudesInscripcionPublica
         }
     }
 
+    // ==================== INTEGRACION CON LOS PORTALES WEB ====================
+
+    /**
+     * POST /integracion-portal/solicitudes
+     * Recibe una solicitud que llego por el portal web del cliente. La manda
+     * el back del portal, no una pagina: se autentica con la API key del
+     * tenant (INTEGRACION_PORTAL_API_KEY en el .env.php del tenant) en el
+     * header X-API-KEY.
+     *
+     * Queda pendiente como cualquier otra solicitud. No se valida cupo ni
+     * fecha limite: a la persona el portal ya le confirmo que la recibio, y
+     * el cupo se valida al aprobar.
+     *
+     * Si llega dos veces la misma solicitud del portal (el portal reintenta
+     * cuando no recibe respuesta) devuelve la que ya existe.
+     *
+     * Responde {id} o {error, codigo}. El portal reintenta los 401, 5xx y
+     * sin respuesta; los 400, 409 y 422 los deja en error.
+     */
+    public static function registrarDesdePortal()
+    {
+        if (!defined('INTEGRACION_PORTAL_API_KEY') || INTEGRACION_PORTAL_API_KEY === '') {
+            Flight::json(array('error' => 'La integración con el portal no está configurada para esta institución.', 'codigo' => 'INTEGRACION_NO_CONFIGURADA'), 503);
+            return;
+        }
+
+        $clave = isset($_SERVER['HTTP_X_API_KEY']) ? (string) $_SERVER['HTTP_X_API_KEY'] : '';
+        if ($clave === '' || !hash_equals(INTEGRACION_PORTAL_API_KEY, $clave)) {
+            Flight::json(array('error' => 'API key inválida.', 'codigo' => 'CLAVE_INVALIDA'), 401);
+            return;
+        }
+
+        try {
+            $db = Flight::db();
+
+            // El cuerpo se lee crudo y no de Flight::request()->data: el
+            // middleware de index.php convierte a numero los textos numericos,
+            // y un documento que empieza por cero perderia el cero.
+            $data = json_decode((string) Flight::request()->getBody(), true);
+            if (!is_array($data)) {
+                Flight::json(array('error' => 'El cuerpo no es un JSON válido.', 'codigo' => 'DATOS_INVALIDOS'), 400);
+                return;
+            }
+
+            $id_solicitud_portal = self::textoPortal($data, 'id_solicitud_portal', 36);
+            $id_curso_extra = self::textoPortal($data, 'id_curso_extra', 36);
+            $est_numero = self::textoPortal($data, 'est_numero_identificacion', 50);
+            $est_nombre = self::textoPortal($data, 'est_primer_nombre', 100);
+            $est_apellido = self::textoPortal($data, 'est_primer_apellido', 100);
+
+            if (!$id_solicitud_portal || !$id_curso_extra || !$est_numero || !$est_nombre || !$est_apellido) {
+                Flight::json(array('error' => 'Faltan datos obligatorios.', 'codigo' => 'FALTAN_DATOS'), 400);
+                return;
+            }
+
+            // La misma solicitud del portal ya habia llegado: se devuelve esa
+            $stmtExiste = $db->prepare("SELECT id FROM solicitudes_inscripcion_publica
+                WHERE id_solicitud_portal = :id_solicitud_portal AND id_tenant = :id_tenant LIMIT 1");
+            $stmtExiste->bindParam(':id_solicitud_portal', $id_solicitud_portal);
+            $stmtExiste->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtExiste->execute();
+            $existente = $stmtExiste->fetch(PDO::FETCH_ASSOC);
+            if ($existente) {
+                Flight::json(array('id' => $existente['id']));
+                return;
+            }
+
+            $stmtCurso = $db->prepare("SELECT id FROM cursos_extra
+                WHERE id = :id_curso_extra AND activo = 1 AND id_tenant = :id_tenant");
+            $stmtCurso->bindParam(':id_curso_extra', $id_curso_extra);
+            $stmtCurso->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtCurso->execute();
+            if (!$stmtCurso->fetch()) {
+                Flight::json(array('error' => 'El curso no existe o no está activo.', 'codigo' => 'CURSO_NO_DISPONIBLE'), 422);
+                return;
+            }
+
+            // Misma regla del formulario publico: una solicitud pendiente por
+            // documento y curso, venga de donde venga
+            $stmtDup = $db->prepare("SELECT id FROM solicitudes_inscripcion_publica
+                WHERE est_numero_identificacion = :est_numero
+                  AND id_curso_extra = :id_curso_extra
+                  AND estado = 'pendiente'
+                  AND id_tenant = :id_tenant LIMIT 1");
+            $stmtDup->bindParam(':est_numero', $est_numero);
+            $stmtDup->bindParam(':id_curso_extra', $id_curso_extra);
+            $stmtDup->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtDup->execute();
+            if ($stmtDup->fetch()) {
+                Flight::json(array('error' => 'Ya hay una solicitud pendiente para este documento en ese curso.', 'codigo' => 'SOLICITUD_PENDIENTE'), 409);
+                return;
+            }
+
+            $datosPortal = isset($data['datos_portal']) && is_array($data['datos_portal']) ? $data['datos_portal'] : null;
+            $fechaAceptacion = self::textoPortal($data, 'fecha_aceptacion', 19);
+            if ($fechaAceptacion && !preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $fechaAceptacion)) {
+                $fechaAceptacion = null;
+            }
+            $fechaNacimiento = self::textoPortal($data, 'est_fecha_nacimiento', 10);
+            if ($fechaNacimiento && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaNacimiento)) {
+                $fechaNacimiento = null;
+            }
+
+            $id = Uuid::generar();
+
+            $sentence = $db->prepare("INSERT INTO solicitudes_inscripcion_publica (
+                id, id_tenant, id_curso_extra, id_institucion_cliente,
+                est_tipo_identificacion, est_numero_identificacion,
+                est_primer_nombre, est_segundo_nombre, est_primer_apellido, est_segundo_apellido,
+                est_fecha_nacimiento, est_id_genero, est_correo, est_telefono, est_direccion,
+                acu_tipo_identificacion, acu_numero_identificacion,
+                acu_primer_nombre, acu_primer_apellido, acu_telefono, acu_correo, acu_id_tipo_acudiente,
+                observaciones, estado, ip_origen, fecha_registro,
+                acepto_terminos, fecha_aceptacion,
+                origen, id_solicitud_portal, datos_portal
+            ) VALUES (
+                :id, :id_tenant, :id_curso_extra, NULL,
+                :est_tipo, :est_numero,
+                :est_primer_nombre, :est_segundo_nombre, :est_primer_apellido, :est_segundo_apellido,
+                :est_fecha_nacimiento, :est_genero, :est_correo, :est_telefono, :est_direccion,
+                :acu_tipo, :acu_numero,
+                :acu_primer_nombre, :acu_primer_apellido, :acu_telefono, :acu_correo, :acu_tipo_acudiente,
+                :observaciones, 'pendiente', :ip, NOW(),
+                1, IFNULL(:fecha_aceptacion, NOW()),
+                'portal', :id_solicitud_portal, :datos_portal
+            )");
+
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->bindParam(':id_curso_extra', $id_curso_extra);
+            $sentence->bindValue(':est_tipo', self::enteroPortal($data, 'est_tipo_identificacion'));
+            $sentence->bindParam(':est_numero', $est_numero);
+            $sentence->bindParam(':est_primer_nombre', $est_nombre);
+            $sentence->bindValue(':est_segundo_nombre', self::textoPortal($data, 'est_segundo_nombre', 100));
+            $sentence->bindParam(':est_primer_apellido', $est_apellido);
+            $sentence->bindValue(':est_segundo_apellido', self::textoPortal($data, 'est_segundo_apellido', 100));
+            $sentence->bindValue(':est_fecha_nacimiento', $fechaNacimiento);
+            $sentence->bindValue(':est_genero', self::enteroPortal($data, 'est_id_genero'));
+            $sentence->bindValue(':est_correo', self::textoPortal($data, 'est_correo', 150));
+            $sentence->bindValue(':est_telefono', self::textoPortal($data, 'est_telefono', 50));
+            $sentence->bindValue(':est_direccion', self::textoPortal($data, 'est_direccion', 300));
+            $sentence->bindValue(':acu_tipo', self::enteroPortal($data, 'acu_tipo_identificacion'));
+            $sentence->bindValue(':acu_numero', self::textoPortal($data, 'acu_numero_identificacion', 50));
+            $sentence->bindValue(':acu_primer_nombre', self::textoPortal($data, 'acu_primer_nombre', 100));
+            $sentence->bindValue(':acu_primer_apellido', self::textoPortal($data, 'acu_primer_apellido', 100));
+            $sentence->bindValue(':acu_telefono', self::textoPortal($data, 'acu_telefono', 50));
+            $sentence->bindValue(':acu_correo', self::textoPortal($data, 'acu_correo', 150));
+            $sentence->bindValue(':acu_tipo_acudiente', self::enteroPortal($data, 'acu_id_tipo_acudiente'));
+            $sentence->bindValue(':observaciones', self::textoPortal($data, 'observaciones', 3000));
+            $sentence->bindValue(':ip', self::textoPortal($data, 'ip_origen', 45));
+            $sentence->bindValue(':fecha_aceptacion', $fechaAceptacion);
+            $sentence->bindParam(':id_solicitud_portal', $id_solicitud_portal);
+            $sentence->bindValue(':datos_portal', $datosPortal ? json_encode($datosPortal, JSON_UNESCAPED_UNICODE) : null);
+            $sentence->execute();
+
+            Flight::json(array('id' => $id));
+        } catch (Exception $e) {
+            error_log("Error en registrarDesdePortal de solicitudes de inscripcion: " . $e->getMessage());
+            Flight::json(array('error' => 'No se pudo registrar la solicitud.', 'codigo' => 'ERROR_INTERNO'), 500);
+        }
+    }
+
+    /**
+     * Texto recortado de lo que manda el portal, o null si viene vacio.
+     */
+    private static function textoPortal($data, $clave, $largo)
+    {
+        if (!isset($data[$clave]) || !is_scalar($data[$clave])) {
+            return null;
+        }
+        $valor = trim((string) $data[$clave]);
+        return $valor === '' ? null : mb_substr($valor, 0, $largo);
+    }
+
+    /**
+     * Entero positivo de lo que manda el portal (ids de catalogos), o null.
+     */
+    private static function enteroPortal($data, $clave)
+    {
+        return isset($data[$clave]) && is_numeric($data[$clave]) && (int) $data[$clave] > 0 ? (int) $data[$clave] : null;
+    }
+
     // ==================== ADMINISTRACION ====================
 
     public static function getAll()
@@ -597,6 +783,8 @@ class SolicitudesInscripcionPublica
             $db->beginTransaction();
 
             // --- Persona del estudiante: se reusa si ya existe en el tenant ---
+            // El telefono y el correo propios solo llegan de los portales web;
+            // en un adulto son el unico contacto que hay.
             $idPersonaEst = self::buscarOCrearPersona(
                 $db,
                 $sol['est_tipo_identificacion'],
@@ -607,8 +795,8 @@ class SolicitudesInscripcionPublica
                 $sol['est_segundo_apellido'],
                 $sol['est_fecha_nacimiento'],
                 $sol['est_id_genero'],
-                null,
-                null
+                $sol['est_telefono'],
+                $sol['est_correo']
             );
 
             // --- Estudiante ---
@@ -628,7 +816,9 @@ class SolicitudesInscripcionPublica
                     VALUES (:id, :id_tenant, CURDATE(), 0, 0, :telefono, 1, :anno, :id_persona)");
                 $stmtNuevoEst->bindValue(':id', $idEstudiante);
                 $stmtNuevoEst->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-                $stmtNuevoEst->bindValue(':telefono', $sol['acu_telefono'] !== null ? $sol['acu_telefono'] : '');
+                // Sin acudiente (adulto) el telefono de emergencia es el suyo
+                $telefonoEmergencia = $sol['acu_telefono'] !== null ? $sol['acu_telefono'] : $sol['est_telefono'];
+                $stmtNuevoEst->bindValue(':telefono', $telefonoEmergencia !== null ? $telefonoEmergencia : '');
                 $stmtNuevoEst->bindValue(':anno', (int) date('Y'), PDO::PARAM_INT);
                 $stmtNuevoEst->bindValue(':id_persona', $idPersonaEst);
                 $stmtNuevoEst->execute();

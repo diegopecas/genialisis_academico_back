@@ -438,6 +438,12 @@ Flight::before('start', function (&$params, &$output) {
         return;
     }
 
+    // Integracion con los portales web de los clientes: la llama el back del
+    // portal, no un usuario. El handler valida la API key del tenant.
+    if (strpos($ruta, '/integracion-portal/') === 0) {
+        return;
+    }
+
     // Resto: token valido y que el tenant del token coincida con el del request.
     $userData = JWTService::requerirTenant(TenantContext::codigo());
 

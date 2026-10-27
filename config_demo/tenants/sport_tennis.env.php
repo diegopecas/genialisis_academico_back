@@ -21,3 +21,11 @@ define('TENANT_ID', 101);
 define('VAPID_PUBLIC_KEY', '');
 define('VAPID_PRIVATE_KEY', '');
 define('VAPID_SUBJECT', 'mailto:contacto@genialisis.com');
+
+// =============================================
+// INTEGRACION CON EL PORTAL WEB (portal-back)
+// API key con la que el back del portal manda las solicitudes de
+// inscripcion (POST /integracion-portal/solicitudes). La misma va en el
+// portal como GENIALISIS_API_KEY.
+// =============================================
+define('INTEGRACION_PORTAL_API_KEY', '386a11829f3e70eb15a74b5e80f354f49252655b0bbc1dd1a9cf238def7ea0f9');
