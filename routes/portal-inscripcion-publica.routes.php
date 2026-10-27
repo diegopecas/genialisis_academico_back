@@ -6,6 +6,7 @@ Flight::route('PUT /configuracion-portal-publico', [ConfiguracionPortalPublico::
 // SOLICITUDES DE INSCRIPCION (administracion, con token)
 Flight::route('GET /solicitudes-inscripcion-publica', [SolicitudesInscripcionPublica::class, 'getAll']);
 Flight::route('GET /solicitudes-inscripcion-publica/institucion/@id_institucion_cliente', [SolicitudesInscripcionPublica::class, 'getByInstitucion']);
+Flight::route('GET /solicitudes-inscripcion-publica/horarios/@id', [SolicitudesInscripcionPublica::class, 'horariosParaAprobar']);
 Flight::route('GET /solicitudes-inscripcion-publica/@id', [SolicitudesInscripcionPublica::class, 'getById']);
 Flight::route('PUT /solicitudes-inscripcion-publica/aprobar', [SolicitudesInscripcionPublica::class, 'aprobar']);
 Flight::route('PUT /solicitudes-inscripcion-publica/rechazar', [SolicitudesInscripcionPublica::class, 'rechazar']);

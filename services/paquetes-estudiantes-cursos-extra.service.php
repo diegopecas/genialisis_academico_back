@@ -108,6 +108,43 @@ class PaquetesEstudiantesCursosExtra
         Flight::json(array('id' => $id));
     }
 
+    /**
+     * Crea el paquete de sesiones que se compro con una linea de la tarifa
+     * (numero de sesiones y vigencia en dias de esa linea). Lo usa el registro
+     * del pago de un link de Bold. No abre transaccion: la abre quien llama.
+     *
+     * @return string|null id del paquete, o null si la linea no trae sesiones
+     */
+    public static function crearDesdeTarifa($db, $id_estudiante_x_curso_extra, $numero_sesiones, $vigencia_dias, $fecha_inicio, $id_cuenta_por_cobrar, $observaciones)
+    {
+        $numero_sesiones = (int) $numero_sesiones;
+        $fecha_vencimiento = self::calcularVencimiento(array('vigencia_dias' => $vigencia_dias), $fecha_inicio);
+        if (self::validar($numero_sesiones, $fecha_inicio, $fecha_vencimiento, 0) !== null) {
+            return null;
+        }
+
+        $id = Uuid::generar();
+        $sentence = $db->prepare("
+            INSERT INTO paquetes_estudiantes_cursos_extra
+                (id, id_tenant, id_estudiante_x_curso_extra, id_cuenta_por_cobrar, numero_sesiones,
+                 fecha_inicio, fecha_vencimiento, observaciones, activo)
+            VALUES
+                (:id, :id_tenant, :id_inscripcion, :id_cuenta, :numero_sesiones,
+                 :fecha_inicio, :fecha_vencimiento, :observaciones, 1)
+        ");
+        $sentence->bindValue(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_inscripcion', $id_estudiante_x_curso_extra);
+        $sentence->bindValue(':id_cuenta', $id_cuenta_por_cobrar);
+        $sentence->bindValue(':numero_sesiones', $numero_sesiones, PDO::PARAM_INT);
+        $sentence->bindValue(':fecha_inicio', $fecha_inicio);
+        $sentence->bindValue(':fecha_vencimiento', $fecha_vencimiento);
+        $sentence->bindValue(':observaciones', $observaciones);
+        $sentence->execute();
+
+        return $id;
+    }
+
     public static function replace()
     {
         $db = Flight::db();

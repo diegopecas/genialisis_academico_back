@@ -494,14 +494,7 @@ class SolicitudesInscripcionPublica
      */
     public static function registrarDesdePortal()
     {
-        if (!defined('INTEGRACION_PORTAL_API_KEY') || INTEGRACION_PORTAL_API_KEY === '') {
-            Flight::json(array('error' => 'La integración con el portal no está configurada para esta institución.', 'codigo' => 'INTEGRACION_NO_CONFIGURADA'), 503);
-            return;
-        }
-
-        $clave = isset($_SERVER['HTTP_X_API_KEY']) ? (string) $_SERVER['HTTP_X_API_KEY'] : '';
-        if ($clave === '' || !hash_equals(INTEGRACION_PORTAL_API_KEY, $clave)) {
-            Flight::json(array('error' => 'API key inválida.', 'codigo' => 'CLAVE_INVALIDA'), 401);
+        if (!self::clavePortalValida()) {
             return;
         }
 
@@ -587,7 +580,8 @@ class SolicitudesInscripcionPublica
                 acu_primer_nombre, acu_primer_apellido, acu_telefono, acu_correo, acu_id_tipo_acudiente,
                 observaciones, estado, ip_origen, fecha_registro,
                 acepto_terminos, fecha_aceptacion,
-                origen, id_solicitud_portal, datos_portal
+                origen, id_solicitud_portal, datos_portal,
+                id_tarifa_curso_extra_detalle, ids_adicionales, ids_horarios_preferidos
             ) VALUES (
                 :id, :id_tenant, :id_curso_extra, NULL,
                 :est_tipo, :est_numero,
@@ -597,7 +591,8 @@ class SolicitudesInscripcionPublica
                 :acu_primer_nombre, :acu_primer_apellido, :acu_telefono, :acu_correo, :acu_tipo_acudiente,
                 :observaciones, 'pendiente', :ip, NOW(),
                 1, IFNULL(:fecha_aceptacion, NOW()),
-                'portal', :id_solicitud_portal, :datos_portal
+                'portal', :id_solicitud_portal, :datos_portal,
+                :id_tarifa_detalle, :ids_adicionales, :ids_horarios
             )");
 
             $sentence->bindValue(':id', $id);
@@ -626,6 +621,10 @@ class SolicitudesInscripcionPublica
             $sentence->bindValue(':fecha_aceptacion', $fechaAceptacion);
             $sentence->bindParam(':id_solicitud_portal', $id_solicitud_portal);
             $sentence->bindValue(':datos_portal', $datosPortal ? json_encode($datosPortal, JSON_UNESCAPED_UNICODE) : null);
+            $idPlan = self::textoPortal($data, 'id_tarifa_curso_extra_detalle', 36);
+            $sentence->bindValue(':id_tarifa_detalle', $idPlan && preg_match('/^[0-9a-fA-F-]{36}$/', $idPlan) ? $idPlan : null);
+            $sentence->bindValue(':ids_adicionales', self::listaIdsPortal($data, 'ids_adicionales'));
+            $sentence->bindValue(':ids_horarios', self::listaIdsPortal($data, 'ids_horarios_preferidos'));
             $sentence->execute();
 
             Flight::json(array('id' => $id));
@@ -633,6 +632,116 @@ class SolicitudesInscripcionPublica
             error_log("Error en registrarDesdePortal de solicitudes de inscripcion: " . $e->getMessage());
             Flight::json(array('error' => 'No se pudo registrar la solicitud.', 'codigo' => 'ERROR_INTERNO'), 500);
         }
+    }
+
+    /**
+     * GET /integracion-portal/catalogo
+     * Cursos activos con los planes de su tarifa vigente y sus horarios, para
+     * que el portal web sincronice su catalogo. Misma API key que el envio de
+     * solicitudes. Solo lo que el portal necesita: nada de inscritos ni cartera.
+     */
+    public static function catalogoParaPortal()
+    {
+        if (!self::clavePortalValida()) {
+            return;
+        }
+
+        try {
+            $db = Flight::db();
+
+            $stmtCursos = $db->prepare("SELECT id, nombre, fecha_inicio, fecha_fin, fecha_limite_inscripcion,
+                       edad_minima_meses, edad_maxima_meses, cupo_maximo, anio
+                FROM cursos_extra
+                WHERE activo = 1 AND id_tenant = :id_tenant
+                ORDER BY nombre");
+            $stmtCursos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtCursos->execute();
+            $cursos = $stmtCursos->fetchAll(PDO::FETCH_ASSOC);
+
+            $stmtHorarios = $db->prepare("SELECT id, id_dia_semana, hora_inicial, hora_final, cupo
+                FROM horarios_cursos_extra
+                WHERE id_curso_extra = :id_curso_extra AND id_tenant = :id_tenant
+                ORDER BY id_dia_semana, hora_inicial");
+
+            $response = array();
+            foreach ($cursos as $curso) {
+                $tarifa = TarifasCursosExtra::resolverTarifa($db, $curso['id'], $curso['anio'], null);
+                $planes = array();
+                foreach ($tarifa ? $tarifa['detalle'] : array() as $linea) {
+                    $planes[] = array(
+                        'id' => $linea['id'],
+                        'nombre' => $linea['nombre_producto'],
+                        'tipo' => $linea['tipo'],
+                        'valor' => (float) $linea['valor'],
+                        'numero_sesiones' => $linea['numero_sesiones'] !== null ? (int) $linea['numero_sesiones'] : null,
+                        'vigencia_dias' => $linea['vigencia_dias'] !== null ? (int) $linea['vigencia_dias'] : null,
+                        'orden' => (int) $linea['orden']
+                    );
+                }
+
+                $stmtHorarios->bindValue(':id_curso_extra', $curso['id']);
+                $stmtHorarios->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmtHorarios->execute();
+
+                $response[] = array(
+                    'id' => $curso['id'],
+                    'nombre' => $curso['nombre'],
+                    'fecha_inicio' => $curso['fecha_inicio'],
+                    'fecha_fin' => $curso['fecha_fin'],
+                    'fecha_limite_inscripcion' => $curso['fecha_limite_inscripcion'],
+                    'edad_minima_meses' => $curso['edad_minima_meses'] !== null ? (int) $curso['edad_minima_meses'] : null,
+                    'edad_maxima_meses' => $curso['edad_maxima_meses'] !== null ? (int) $curso['edad_maxima_meses'] : null,
+                    'cupo_maximo' => $curso['cupo_maximo'] !== null ? (int) $curso['cupo_maximo'] : null,
+                    'planes' => $planes,
+                    'horarios' => $stmtHorarios->fetchAll(PDO::FETCH_ASSOC)
+                );
+            }
+
+            Flight::json(array('cursos' => $response));
+        } catch (Exception $e) {
+            error_log("Error en catalogoParaPortal: " . $e->getMessage());
+            Flight::json(array('error' => 'No se pudo armar el catálogo.', 'codigo' => 'ERROR_INTERNO'), 500);
+        }
+    }
+
+    /**
+     * Valida la API key del portal (header X-API-KEY contra
+     * INTEGRACION_PORTAL_API_KEY del tenant). Si no sirve, ya deja la
+     * respuesta de error y devuelve false.
+     */
+    private static function clavePortalValida()
+    {
+        if (!defined('INTEGRACION_PORTAL_API_KEY') || INTEGRACION_PORTAL_API_KEY === '') {
+            Flight::json(array('error' => 'La integración con el portal no está configurada para esta institución.', 'codigo' => 'INTEGRACION_NO_CONFIGURADA'), 503);
+            return false;
+        }
+
+        $clave = isset($_SERVER['HTTP_X_API_KEY']) ? (string) $_SERVER['HTTP_X_API_KEY'] : '';
+        if ($clave === '' || !hash_equals(INTEGRACION_PORTAL_API_KEY, $clave)) {
+            Flight::json(array('error' => 'API key inválida.', 'codigo' => 'CLAVE_INVALIDA'), 401);
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Lista de ids (de la tarifa o de horarios) que manda el portal, como
+     * JSON para guardar, o null si no viene ninguno valido.
+     */
+    private static function listaIdsPortal($data, $clave)
+    {
+        if (!isset($data[$clave]) || !is_array($data[$clave])) {
+            return null;
+        }
+        $ids = array();
+        foreach ($data[$clave] as $id) {
+            if (is_string($id) && preg_match('/^[0-9a-fA-F-]{36}$/', $id)) {
+                $ids[] = $id;
+            }
+        }
+        $ids = array_values(array_unique($ids));
+        return empty($ids) ? null : json_encode($ids);
     }
 
     /**
@@ -724,7 +833,9 @@ class SolicitudesInscripcionPublica
         END AS nombre_institucion,
         tie.nombre AS tipo_identificacion_estudiante,
         tia.nombre AS tipo_identificacion_acudiente,
-        g.nombre AS nombre_genero
+        g.nombre AS nombre_genero,
+        xi.id_curso_extra AS id_curso_asignado,
+        cai.nombre AS nombre_curso_asignado
         FROM solicitudes_inscripcion_publica s
         INNER JOIN cursos_extra ce ON s.id_curso_extra = ce.id
         LEFT JOIN instituciones_cliente ic ON s.id_institucion_cliente = ic.id
@@ -732,6 +843,9 @@ class SolicitudesInscripcionPublica
         LEFT JOIN tipos_identificacion tie ON s.est_tipo_identificacion = tie.id
         LEFT JOIN tipos_identificacion tia ON s.acu_tipo_identificacion = tia.id
         LEFT JOIN generos g ON s.est_id_genero = g.id
+        -- Curso en el que quedo inscrito al aprobar (puede no ser el que pidio)
+        LEFT JOIN estudiantes_x_cursos_extra xi ON xi.id = s.id_inscripcion_creada AND xi.id_tenant = s.id_tenant
+        LEFT JOIN cursos_extra cai ON cai.id = xi.id_curso_extra AND cai.id_tenant = xi.id_tenant
         WHERE s.id = :id AND s.id_tenant = :id_tenant");
         $sentence->bindParam(':id', $id);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -747,9 +861,19 @@ class SolicitudesInscripcionPublica
      *
      * Todo en una transaccion: o queda completo o no queda nada.
      *
-     * NO genera las cuentas por cobrar. Eso se hace despues desde la
-     * pantalla de inscripcion, que es donde se revisan y ajustan los
-     * valores antes de emitir.
+     * Horarios: crea una reserva fija por cada horario marcado (ids_horarios).
+     * Si la pantalla no manda la lista, se usan los que la persona escogio en
+     * el portal. En los cursos con reserva automatica no hace falta.
+     *
+     * Cobro: si la solicitud llego del portal con plan, crea las cuentas por
+     * cobrar con los valores de la tarifa del curso y el link de pago de Bold,
+     * y le manda el correo con el link. Las demas solicitudes NO generan
+     * cuentas: eso se hace despues desde la pantalla de inscripcion.
+     *
+     * Lo que pidio es solo un punto de partida: la pantalla puede mandar otro
+     * curso (id_curso_extra) y otras lineas de la tarifa (ids_tarifa_detalle,
+     * plan y adicionales). Si las manda, se cobra eso; una lista vacia
+     * significa que no se cobra nada. Sin esas llaves se usa lo de la solicitud.
      */
     public static function aprobar()
     {
@@ -779,6 +903,10 @@ class SolicitudesInscripcionPublica
                 Flight::json(array('error' => 'Esta solicitud ya fue ' . $sol['estado'] . '.'), 400);
                 return;
             }
+
+            // Curso en el que queda: el que escogieron en la pantalla o el que pidio
+            $data = Flight::request()->data;
+            $idCurso = !empty($data['id_curso_extra']) ? (string) $data['id_curso_extra'] : $sol['id_curso_extra'];
 
             $db->beginTransaction();
 
@@ -900,12 +1028,19 @@ class SolicitudesInscripcionPublica
             }
 
             // --- Inscripcion al curso ---
-            $stmtCursoAnio = $db->prepare("SELECT anio, cupo_maximo, permite_sobrecupo, nombre
+            $stmtCursoAnio = $db->prepare("SELECT anio, cupo_maximo, permite_sobrecupo, nombre, fecha_inicio, activo
                                            FROM cursos_extra WHERE id = :id AND id_tenant = :id_tenant");
-            $stmtCursoAnio->bindValue(':id', $sol['id_curso_extra']);
+            $stmtCursoAnio->bindValue(':id', $idCurso);
             $stmtCursoAnio->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtCursoAnio->execute();
             $curso = $stmtCursoAnio->fetch(PDO::FETCH_ASSOC);
+
+            // Si cambiaron el curso, tiene que ser uno activo de la institucion
+            if (!$curso || ($idCurso !== $sol['id_curso_extra'] && (int) $curso['activo'] !== 1)) {
+                $db->rollBack();
+                Flight::json(array('error' => 'El curso escogido no existe o no está activo.'), 400);
+                return;
+            }
 
             // El cupo no se reserva al solicitar, asi que se valida aqui: si
             // entraron dos solicitudes y solo queda uno, la segunda falla.
@@ -921,8 +1056,8 @@ class SolicitudesInscripcionPublica
                             AND s.id <> :id_solicitud AND s.id_tenant = :id_tenant2)
                         AS inscritos
                 ");
-                $stmtCupo->bindValue(':id_curso', $sol['id_curso_extra']);
-                $stmtCupo->bindValue(':id_curso2', $sol['id_curso_extra']);
+                $stmtCupo->bindValue(':id_curso', $idCurso);
+                $stmtCupo->bindValue(':id_curso2', $idCurso);
                 $stmtCupo->bindParam(':id_solicitud', $id);
                 $stmtCupo->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtCupo->bindValue(':id_tenant2', TenantContext::id(), PDO::PARAM_INT);
@@ -941,7 +1076,7 @@ class SolicitudesInscripcionPublica
                 WHERE id_estudiante = :id_estudiante AND id_curso_extra = :id_curso
                   AND activo = 1 AND id_tenant = :id_tenant LIMIT 1");
             $stmtYaInscrito->bindParam(':id_estudiante', $idEstudiante);
-            $stmtYaInscrito->bindValue(':id_curso', $sol['id_curso_extra']);
+            $stmtYaInscrito->bindValue(':id_curso', $idCurso);
             $stmtYaInscrito->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtYaInscrito->execute();
             $filaInscrito = $stmtYaInscrito->fetch(PDO::FETCH_ASSOC);
@@ -956,10 +1091,70 @@ class SolicitudesInscripcionPublica
                 $stmtInscribir->bindValue(':id', $idInscripcion);
                 $stmtInscribir->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
                 $stmtInscribir->bindParam(':id_estudiante', $idEstudiante);
-                $stmtInscribir->bindValue(':id_curso', $sol['id_curso_extra']);
+                $stmtInscribir->bindValue(':id_curso', $idCurso);
                 $stmtInscribir->bindValue(':anio', (int) $curso['anio'], PDO::PARAM_INT);
                 $stmtInscribir->bindValue(':id_institucion', $sol['id_institucion_cliente']);
                 $stmtInscribir->execute();
+            }
+
+            // --- Horarios: una reserva fija por cada horario marcado ---
+            $idsHorarios = isset($data['ids_horarios']) && is_array($data['ids_horarios'])
+                ? $data['ids_horarios']
+                : (!empty($sol['ids_horarios_preferidos']) ? json_decode($sol['ids_horarios_preferidos'], true) : array());
+            $horariosAsignados = 0;
+            $reglas = ConfiguracionReservasCursosExtra::obtener($db, $idCurso);
+            if (!empty($idsHorarios) && empty($reglas['reserva_automatica'])) {
+                // Desde hoy, o desde que empieza el curso si todavia no empieza
+                $desde = max(date('Y-m-d'), $curso['fecha_inicio']);
+                $ocupacion = self::ocupacionHorarios($db, $idCurso);
+                foreach (array_unique($idsHorarios) as $idHorario) {
+                    if (!isset($ocupacion[$idHorario])) {
+                        $db->rollBack();
+                        Flight::json(array('error' => 'Uno de los horarios marcados ya no es de este curso.'), 400);
+                        return;
+                    }
+                    $h = $ocupacion[$idHorario];
+                    if ($h['lleno']) {
+                        $db->rollBack();
+                        Flight::json(array('error' => 'El horario ' . $h['nombre_dia'] . ' ' . substr($h['hora_inicial'], 0, 5) .
+                            ' ya está lleno (' . $h['ocupados'] . ' de ' . $h['cupo'] . ').'), 400);
+                        return;
+                    }
+                    // Si ya tenia la reserva fija (inscripcion reusada) no pasa nada
+                    $reserva = ReservasFijasCursosExtra::crear($db, $idInscripcion, $idHorario, $desde, null);
+                    if (!isset($reserva['error'])) {
+                        $horariosAsignados++;
+                    }
+                }
+            }
+
+            // --- Cobro: lo que escogieron en la pantalla o, si no mandan nada,
+            // lo que trajo la solicitud del portal ---
+            $idLink = null;
+            $lineasNoEncontradas = 0;
+            $idsElegidos = isset($data['ids_tarifa_detalle']) && is_array($data['ids_tarifa_detalle'])
+                ? $data['ids_tarifa_detalle'] : null;
+            $lineas = self::lineasDeCobro($db, $sol, $lineasNoEncontradas, $idCurso, $idsElegidos);
+            if (!empty($lineas)) {
+                $hoy = date('Y-m-d');
+                $total = 0;
+                $detalleLink = array();
+                foreach ($lineas as $linea) {
+                    $idCuenta = CuentasPorCobrar::crearCuentaCursoExtra(
+                        $db,
+                        $idInscripcion,
+                        $idPersonaEst,
+                        $linea['id_producto_servicio'],
+                        $hoy,
+                        $linea['valor'],
+                        $curso['nombre'] . ' · ' . $linea['nombre_producto'],
+                        $userData->id ?? null
+                    );
+                    $total += (float) $linea['valor'];
+                    $detalleLink[] = array('id_cuenta_por_cobrar' => $idCuenta, 'id_tarifa_curso_extra_detalle' => $linea['id']);
+                }
+                $correoDestino = !empty($sol['acu_correo']) ? $sol['acu_correo'] : $sol['est_correo'];
+                $idLink = LinksPago::registrar($db, $id, $idInscripcion, $curso['nombre'], $total, $correoDestino, $userData->id ?? null, $detalleLink);
             }
 
             $stmtCerrar = $db->prepare("UPDATE solicitudes_inscripcion_publica SET
@@ -978,12 +1173,21 @@ class SolicitudesInscripcionPublica
 
             $db->commit();
 
-            Flight::json(array(
+            // El link y el correo van despues del commit: si Bold o el correo
+            // fallan, la aprobacion ya quedo y se reintentan desde la solicitud.
+            $respuesta = array(
                 'id' => $id,
                 'id_estudiante' => $idEstudiante,
                 'id_inscripcion' => $idInscripcion,
+                'horarios_asignados' => $horariosAsignados,
+                'lineas_no_encontradas' => $lineasNoEncontradas,
                 'mensaje' => 'Solicitud aprobada. El estudiante quedó inscrito; las cuentas por cobrar se generan desde la inscripción.'
-            ));
+            );
+            if ($idLink !== null) {
+                $respuesta['link_pago'] = LinksPago::generarYEnviar($db, $idLink);
+                $respuesta['mensaje'] = 'Solicitud aprobada. El estudiante quedó inscrito y se creó la cuenta por cobrar.';
+            }
+            Flight::json($respuesta);
         } catch (Exception $e) {
             if ($db->inTransaction()) {
                 $db->rollBack();
@@ -991,6 +1195,171 @@ class SolicitudesInscripcionPublica
             error_log("Error al aprobar solicitud de inscripcion: " . $e->getMessage());
             Flight::json(array('error' => $e->getMessage()), 500);
         }
+    }
+
+    /**
+     * GET /solicitudes-inscripcion-publica/horarios/@id[?id_curso_extra=]
+     * Horarios del curso de la solicitud con su ocupacion (reservas fijas
+     * vigentes frente al cupo), marcando los que la persona escogio en el
+     * portal y, si ya se aprobo, los que quedaron asignados.
+     *
+     * Mientras esta pendiente, id_curso_extra trae los horarios de otro curso
+     * (cuando en la aprobacion le cambian el curso). Ya aprobada, se usa el
+     * curso en el que quedo inscrito.
+     */
+    public static function horariosParaAprobar($id)
+    {
+        $db = Flight::db();
+        $stmt = $db->prepare("SELECT id_curso_extra, ids_horarios_preferidos, id_inscripcion_creada
+            FROM solicitudes_inscripcion_publica WHERE id = :id AND id_tenant = :id_tenant");
+        $stmt->bindParam(':id', $id);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+        $sol = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$sol) {
+            Flight::json(array('error' => 'No se encontró la solicitud'), 404);
+            return;
+        }
+
+        $preferidos = !empty($sol['ids_horarios_preferidos']) ? json_decode($sol['ids_horarios_preferidos'], true) : array();
+        $idCurso = $sol['id_curso_extra'];
+        $otroCurso = isset(Flight::request()->query['id_curso_extra']) ? (string) Flight::request()->query['id_curso_extra'] : '';
+        if ($otroCurso !== '') {
+            $idCurso = $otroCurso;
+        }
+        $asignados = array();
+        if (!empty($sol['id_inscripcion_creada'])) {
+            $stmtInsc = $db->prepare("SELECT id_curso_extra FROM estudiantes_x_cursos_extra WHERE id = :id AND id_tenant = :id_tenant");
+            $stmtInsc->bindValue(':id', $sol['id_inscripcion_creada']);
+            $stmtInsc->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtInsc->execute();
+            $filaInsc = $stmtInsc->fetch(PDO::FETCH_ASSOC);
+            if ($filaInsc) {
+                $idCurso = $filaInsc['id_curso_extra'];
+            }
+
+            $stmtFijas = $db->prepare("SELECT id_horario_curso_extra FROM reservas_fijas_cursos_extra
+                WHERE id_estudiante_x_curso_extra = :id_inscripcion AND activo = 1
+                  AND (fecha_hasta IS NULL OR fecha_hasta >= CURDATE()) AND id_tenant = :id_tenant");
+            $stmtFijas->bindValue(':id_inscripcion', $sol['id_inscripcion_creada']);
+            $stmtFijas->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtFijas->execute();
+            $asignados = array_column($stmtFijas->fetchAll(PDO::FETCH_ASSOC), 'id_horario_curso_extra');
+        }
+
+        $horarios = array();
+        foreach (self::ocupacionHorarios($db, $idCurso) as $h) {
+            $h['preferido'] = in_array($h['id'], $preferidos, true);
+            $h['asignado'] = in_array($h['id'], $asignados, true);
+            $horarios[] = $h;
+        }
+
+        $reglas = ConfiguracionReservasCursosExtra::obtener($db, $idCurso);
+        Flight::json(array(
+            'reserva_automatica' => !empty($reglas['reserva_automatica']),
+            'horarios' => $horarios
+        ));
+    }
+
+    /**
+     * Horarios del curso con su ocupacion, indexados por id. Ocupados son las
+     * reservas fijas vigentes; el cupo es el del horario o, si no tiene, el
+     * maximo del curso. Lleno solo si hay cupo y el curso no permite sobrecupo.
+     */
+    private static function ocupacionHorarios($db, $id_curso_extra)
+    {
+        $stmt = $db->prepare("SELECT hce.id, hce.id_dia_semana, ds.nombre AS nombre_dia, hce.hora_inicial, hce.hora_final,
+                   COALESCE(hce.cupo, ce.cupo_maximo) AS cupo, ce.permite_sobrecupo,
+                   (SELECT COUNT(*) FROM reservas_fijas_cursos_extra rf
+                     WHERE rf.id_horario_curso_extra = hce.id AND rf.activo = 1
+                       AND (rf.fecha_hasta IS NULL OR rf.fecha_hasta >= CURDATE())
+                       AND rf.id_tenant = hce.id_tenant) AS ocupados
+            FROM horarios_cursos_extra hce
+            INNER JOIN cursos_extra ce ON ce.id = hce.id_curso_extra AND ce.id_tenant = hce.id_tenant
+            INNER JOIN dias_semana ds ON ds.id = hce.id_dia_semana
+            WHERE hce.id_curso_extra = :id_curso_extra AND hce.id_tenant = :id_tenant
+            ORDER BY hce.id_dia_semana, hce.hora_inicial");
+        $stmt->bindParam(':id_curso_extra', $id_curso_extra);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+
+        $horarios = array();
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $h) {
+            $cupo = $h['cupo'] !== null ? (int) $h['cupo'] : null;
+            $ocupados = (int) $h['ocupados'];
+            $horarios[$h['id']] = array(
+                'id' => $h['id'],
+                'id_dia_semana' => (int) $h['id_dia_semana'],
+                'nombre_dia' => $h['nombre_dia'],
+                'hora_inicial' => $h['hora_inicial'],
+                'hora_final' => $h['hora_final'],
+                'cupo' => $cupo,
+                'ocupados' => $ocupados,
+                'lleno' => $cupo !== null && empty($h['permite_sobrecupo']) && $ocupados >= $cupo
+            );
+        }
+        return $horarios;
+    }
+
+    /**
+     * Lineas de la tarifa que se cobran al aprobar: el plan y los adicionales
+     * que la persona escogio en el portal, siempre que sigan siendo de la
+     * tarifa del curso y esten activas. Los valores son los de la tarifa, no
+     * los que mostraba el portal. Las que ya no estan se cuentan en
+     * $noEncontradas para avisar en la pantalla.
+     *
+     * Si la aprobacion manda sus propias lineas ($idsElegidos) se usan esas en
+     * lugar de las de la solicitud, validadas contra la tarifa de $idCurso.
+     */
+    private static function lineasDeCobro($db, $sol, &$noEncontradas, $idCurso = null, $idsElegidos = null)
+    {
+        $ids = array();
+        if ($idsElegidos !== null) {
+            foreach ($idsElegidos as $idLinea) {
+                if (is_string($idLinea) && $idLinea !== '') {
+                    $ids[] = $idLinea;
+                }
+            }
+        } else {
+            if (!empty($sol['id_tarifa_curso_extra_detalle'])) {
+                $ids[] = $sol['id_tarifa_curso_extra_detalle'];
+            }
+            if (!empty($sol['ids_adicionales'])) {
+                $ids = array_merge($ids, json_decode($sol['ids_adicionales'], true) ?: array());
+            }
+        }
+        $ids = array_values(array_unique($ids));
+        if (empty($ids)) {
+            return array();
+        }
+
+        $marcas = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $db->prepare("SELECT d.id, d.id_producto_servicio, d.valor, ps.nombre AS nombre_producto
+            FROM tarifas_cursos_extra_detalle d
+            INNER JOIN tarifas_cursos_extra t ON t.id = d.id_tarifa_curso_extra AND t.id_tenant = d.id_tenant
+            INNER JOIN productos_servicios ps ON ps.id = d.id_producto_servicio AND ps.id_tenant = d.id_tenant
+            WHERE d.id IN ($marcas) AND d.activo = 1 AND t.id_curso_extra = ? AND d.id_tenant = ?");
+        $i = 1;
+        foreach ($ids as $idLinea) {
+            $stmt->bindValue($i++, $idLinea);
+        }
+        $stmt->bindValue($i++, $idCurso !== null ? $idCurso : $sol['id_curso_extra']);
+        $stmt->bindValue($i, TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+        $porId = array();
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $fila) {
+            $porId[$fila['id']] = $fila;
+        }
+
+        // En el orden en que llegaron: primero el plan, luego los adicionales
+        $lineas = array();
+        foreach ($ids as $idLinea) {
+            if (isset($porId[$idLinea])) {
+                $lineas[] = $porId[$idLinea];
+            }
+        }
+        $noEncontradas = count($ids) - count($lineas);
+        return $lineas;
     }
 
     public static function rechazar()

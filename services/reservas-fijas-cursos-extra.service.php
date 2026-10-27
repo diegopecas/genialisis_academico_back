@@ -65,6 +65,39 @@ class ReservasFijasCursosExtra
             return;
         }
 
+        try {
+            $db->beginTransaction();
+            $resultado = self::crear($db, $id_inscripcion, $id_horario, $fecha_desde, $fecha_hasta);
+            if (isset($resultado['error'])) {
+                $db->rollBack();
+                Flight::json(array('error' => $resultado['error']), 400);
+                return;
+            }
+            $db->commit();
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log("Error al crear la reserva fija: " . $e->getMessage());
+            Flight::json(array('error' => 'No se pudo crear la reserva fija.'), 500);
+            return;
+        }
+
+        Flight::json($resultado);
+    }
+
+    /**
+     * Crea la reserva fija y reserva al estudiante en las sesiones
+     * programadas de ese horario que ya existan desde fecha_desde. No abre
+     * transaccion: la abre quien llama (el endpoint new o la aprobacion de una
+     * solicitud de inscripcion), para que todo quede completo o nada.
+     *
+     * @return array {id, reservas_creadas, sin_cupo} o {error} si la
+     *               inscripcion y el horario no cuadran o ya existe una
+     *               reserva fija vigente en ese horario.
+     */
+    public static function crear($db, $id_inscripcion, $id_horario, $fecha_desde, $fecha_hasta)
+    {
         $verificar = $db->prepare("
             SELECT exce.id_curso_extra AS curso_inscripcion, hce.id_curso_extra AS curso_horario
             FROM estudiantes_x_cursos_extra exce, horarios_cursos_extra hce
@@ -78,12 +111,10 @@ class ReservasFijasCursosExtra
         $verificar->execute();
         $fila = $verificar->fetch();
         if (!$fila) {
-            Flight::json(array('error' => 'La inscripción o el horario no existen.'), 400);
-            return;
+            return array('error' => 'La inscripción o el horario no existen.');
         }
         if ($fila['curso_inscripcion'] !== $fila['curso_horario']) {
-            Flight::json(array('error' => 'El horario no es del curso en el que está inscrito el estudiante.'), 400);
-            return;
+            return array('error' => 'El horario no es del curso en el que está inscrito el estudiante.');
         }
 
         $duplicada = $db->prepare("
@@ -98,72 +129,59 @@ class ReservasFijasCursosExtra
         $duplicada->bindParam(':fecha_desde', $fecha_desde);
         $duplicada->execute();
         if ($duplicada->fetch()) {
-            Flight::json(array('error' => 'El estudiante ya tiene una reserva fija vigente en ese horario.'), 400);
-            return;
+            return array('error' => 'El estudiante ya tiene una reserva fija vigente en ese horario.');
         }
 
         $id = Uuid::generar();
         $reservadas = 0;
         $sinCupo = array();
-        try {
-            $db->beginTransaction();
 
-            $sentence = $db->prepare("
-                INSERT INTO reservas_fijas_cursos_extra
-                    (id, id_tenant, id_estudiante_x_curso_extra, id_horario_curso_extra, fecha_desde, fecha_hasta, activo)
-                VALUES
-                    (:id, :id_tenant, :id_inscripcion, :id_horario, :fecha_desde, :fecha_hasta, 1)
-            ");
-            $sentence->bindValue(':id', $id);
-            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $sentence->bindParam(':id_inscripcion', $id_inscripcion);
-            $sentence->bindParam(':id_horario', $id_horario);
-            $sentence->bindParam(':fecha_desde', $fecha_desde);
-            $sentence->bindValue(':fecha_hasta', $fecha_hasta);
-            $sentence->execute();
+        $sentence = $db->prepare("
+            INSERT INTO reservas_fijas_cursos_extra
+                (id, id_tenant, id_estudiante_x_curso_extra, id_horario_curso_extra, fecha_desde, fecha_hasta, activo)
+            VALUES
+                (:id, :id_tenant, :id_inscripcion, :id_horario, :fecha_desde, :fecha_hasta, 1)
+        ");
+        $sentence->bindValue(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindParam(':id_inscripcion', $id_inscripcion);
+        $sentence->bindParam(':id_horario', $id_horario);
+        $sentence->bindParam(':fecha_desde', $fecha_desde);
+        $sentence->bindValue(':fecha_hasta', $fecha_hasta);
+        $sentence->execute();
 
-            // Sesiones programadas de ese horario que ya existen en el rango.
-            $sesiones = $db->prepare("
-                SELECT s.id
-                FROM sesiones_cursos_extra s
-                INNER JOIN estados_sesiones_cursos_extra es ON s.id_estado_sesion_curso_extra = es.id
-                WHERE s.id_horario_curso_extra = :id_horario AND s.id_tenant = :id_tenant
-                  AND es.codigo = 'PROGRAMADA'
-                  AND s.fecha >= :fecha_desde
-                  AND (:fecha_hasta IS NULL OR s.fecha <= :fecha_hasta_2)
-                ORDER BY s.fecha
-            ");
-            $sesiones->bindParam(':id_horario', $id_horario);
-            $sesiones->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $sesiones->bindParam(':fecha_desde', $fecha_desde);
-            $sesiones->bindValue(':fecha_hasta', $fecha_hasta);
-            $sesiones->bindValue(':fecha_hasta_2', $fecha_hasta);
-            $sesiones->execute();
+        // Sesiones programadas de ese horario que ya existen en el rango.
+        $sesiones = $db->prepare("
+            SELECT s.id
+            FROM sesiones_cursos_extra s
+            INNER JOIN estados_sesiones_cursos_extra es ON s.id_estado_sesion_curso_extra = es.id
+            WHERE s.id_horario_curso_extra = :id_horario AND s.id_tenant = :id_tenant
+              AND es.codigo = 'PROGRAMADA'
+              AND s.fecha >= :fecha_desde
+              AND (:fecha_hasta IS NULL OR s.fecha <= :fecha_hasta_2)
+            ORDER BY s.fecha
+        ");
+        $sesiones->bindParam(':id_horario', $id_horario);
+        $sesiones->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sesiones->bindParam(':fecha_desde', $fecha_desde);
+        $sesiones->bindValue(':fecha_hasta', $fecha_hasta);
+        $sesiones->bindValue(':fecha_hasta_2', $fecha_hasta);
+        $sesiones->execute();
 
-            foreach ($sesiones->fetchAll() as $s) {
-                $sesion = SesionesCursosExtra::obtenerSesion($db, $s['id']);
-                $resultado = ReservasSesionesCursosExtra::reservar($db, $sesion, $id_inscripcion, $id, null);
-                if (isset($resultado['error'])) {
-                    // Ya tenia puesto (no pasa nada) o no hay cupo (se informa).
-                    if (!ReservasSesionesCursosExtra::hayCupo($db, $sesion)) {
-                        $sinCupo[] = $sesion['fecha'];
-                    }
-                } else {
-                    $reservadas++;
+        foreach ($sesiones->fetchAll() as $s) {
+            $sesion = SesionesCursosExtra::obtenerSesion($db, $s['id']);
+            $resultado = ReservasSesionesCursosExtra::reservar($db, $sesion, $id_inscripcion, $id, null);
+            if (isset($resultado['error'])) {
+                // Ya tenia puesto (no pasa nada) o no hay cupo (se informa).
+                if (!ReservasSesionesCursosExtra::hayCupo($db, $sesion)) {
+                    $sinCupo[] = $sesion['fecha'];
                 }
+            } else {
+                $reservadas++;
             }
-
-            $db->commit();
-        } catch (Exception $e) {
-            if ($db->inTransaction()) {
-                $db->rollBack();
-            }
-            error_log("Error al crear la reserva fija: " . $e->getMessage());
-            Flight::json(array('error' => 'No se pudo crear la reserva fija.'), 500);
-            return;
         }
 
-        Flight::json(array('id' => $id, 'reservas_creadas' => $reservadas, 'sin_cupo' => $sinCupo));
+        return array('id' => $id, 'reservas_creadas' => $reservadas, 'sin_cupo' => $sinCupo);
     }
 
     /**

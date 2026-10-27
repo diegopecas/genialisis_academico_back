@@ -444,6 +444,12 @@ Flight::before('start', function (&$params, &$output) {
         return;
     }
 
+    // Avisos de pago de Bold: los manda Bold, no un usuario. El handler valida
+    // la firma con la llave secreta del tenant (que llega en ?tenant=).
+    if ($ruta === '/pagos-bold/webhook') {
+        return;
+    }
+
     // Resto: token valido y que el tenant del token coincida con el del request.
     $userData = JWTService::requerirTenant(TenantContext::codigo());
 

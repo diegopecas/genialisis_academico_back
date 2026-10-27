@@ -138,6 +138,67 @@ class PagosRecibidos
         return self::armarNumero(self::configuracionRecibo($db), $anio, $numero);
     }
 
+    /**
+     * Registra un pago que llega de una pasarela (Bold) y lo aplica a sus
+     * cuentas por cobrar (cuenta_pagada). Toma el consecutivo del recibo
+     * igual que new().
+     *
+     * IMPORTANTE: debe llamarse DENTRO de una transaccion ya abierta, por la
+     * misma razon que siguienteNumeroRecibo.
+     *
+     * @param array $pago    fecha, id_estudiante, id_acudiente, id_tipo_pago,
+     *                       valor_recibido, observaciones, referencia_bancaria
+     * @param array $cuentas [ {id_cuenta_por_cobrar, valor_aplicado} ]
+     * @return string id del pago creado
+     */
+    public static function registrarDesdePasarela($db, $pago, $cuentas)
+    {
+        $anio = (int) date('Y', strtotime($pago['fecha']));
+        $numero = self::siguienteNumeroRecibo($db, $anio);
+
+        $idPago = Uuid::generar();
+        $sentence = $db->prepare("
+            INSERT INTO pagos_recibidos
+            (id, id_tenant, fecha, anio, numero, id_estudiante, id_colaborador, id_acudiente, id_tipo_pago,
+             valor_recibido, observaciones, referencia_bancaria, fecha_registro, id_usuario_registro,
+             fecha_contabilizacion, id_usuario_contable, id_documento_persona)
+            VALUES
+            (:id, :id_tenant, :fecha, :anio, :numero, :id_estudiante, NULL, :id_acudiente, :id_tipo_pago,
+             :valor_recibido, :observaciones, :referencia_bancaria, NOW(), NULL,
+             NULL, NULL, NULL)
+        ");
+        $sentence->bindValue(':id', $idPago);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':fecha', $pago['fecha']);
+        $sentence->bindValue(':anio', $anio, PDO::PARAM_INT);
+        $sentence->bindValue(':numero', $numero, PDO::PARAM_INT);
+        $sentence->bindValue(':id_estudiante', $pago['id_estudiante']);
+        $sentence->bindValue(':id_acudiente', $pago['id_acudiente']);
+        $sentence->bindValue(':id_tipo_pago', $pago['id_tipo_pago']);
+        $sentence->bindValue(':valor_recibido', $pago['valor_recibido']);
+        $sentence->bindValue(':observaciones', $pago['observaciones']);
+        $sentence->bindValue(':referencia_bancaria', $pago['referencia_bancaria']);
+        $sentence->execute();
+
+        $stmtCuenta = $db->prepare("
+            INSERT INTO cuenta_pagada
+            (id, id_tenant, id_cuenta_por_cobrar, id_pago_recibido, valor_aplicado, fecha)
+            VALUES
+            (:id, :id_tenant, :id_cuenta_por_cobrar, :id_pago_recibido, :valor_aplicado, :fecha)
+        ");
+        foreach ($cuentas as $cuenta) {
+            $stmtCuenta->bindValue(':id', Uuid::generar());
+            $stmtCuenta->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtCuenta->bindValue(':id_cuenta_por_cobrar', $cuenta['id_cuenta_por_cobrar']);
+            $stmtCuenta->bindValue(':id_pago_recibido', $idPago);
+            $stmtCuenta->bindValue(':valor_aplicado', $cuenta['valor_aplicado']);
+            $stmtCuenta->bindValue(':fecha', $pago['fecha']);
+            $stmtCuenta->execute();
+        }
+
+        return $idPago;
+    }
+
 
     public static function getAll()
     {

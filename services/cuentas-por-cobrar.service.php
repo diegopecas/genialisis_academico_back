@@ -1627,6 +1627,59 @@ class CuentasPorCobrar
     }
 
     /**
+     * Crea una cuenta por cobrar de un curso extra y la amarra a la
+     * inscripcion (cuentas_cobrar_x_curso_extra), con la mora configurada
+     * para el producto, igual que generarDesdeCursoExtra. La usa la
+     * aprobacion de las solicitudes del portal web.
+     *
+     * No abre transaccion: la abre quien llama.
+     *
+     * @return string id de la cuenta creada
+     */
+    public static function crearCuentaCursoExtra($db, $id_inscripcion, $id_persona, $id_producto_servicio, $fecha, $valor, $detalle, $id_usuario)
+    {
+        $mora = self::parametrosMoraProducto($db, $id_producto_servicio);
+
+        $idCuenta = Uuid::generar();
+        $stmtCuenta = $db->prepare("
+            INSERT INTO cuentas_por_cobrar
+            (id, id_tenant, id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario,
+             anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion,
+             id_tipo_mora, valor_recargo_mora, porcentaje_mora_mensual, mora_acumulable)
+            VALUES
+            (:id, :id_tenant, :id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario,
+             0, NULL, NULL, NULL,
+             :id_tipo_mora, :valor_recargo_mora, :porcentaje_mora_mensual, :mora_acumulable)
+        ");
+        $stmtCuenta->bindValue(':id', $idCuenta);
+        $stmtCuenta->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmtCuenta->bindValue(':id_producto_servicio', $id_producto_servicio);
+        $stmtCuenta->bindValue(':id_persona', $id_persona);
+        $stmtCuenta->bindValue(':fecha', $fecha);
+        $stmtCuenta->bindValue(':valor', $valor);
+        $stmtCuenta->bindValue(':detalle', $detalle);
+        $stmtCuenta->bindValue(':id_usuario', $id_usuario);
+        $stmtCuenta->bindValue(':id_tipo_mora', $mora['id_tipo_mora']);
+        $stmtCuenta->bindValue(':valor_recargo_mora', $mora['valor_recargo_mora']);
+        $stmtCuenta->bindValue(':porcentaje_mora_mensual', $mora['porcentaje_mora_mensual']);
+        $stmtCuenta->bindValue(':mora_acumulable', $mora['mora_acumulable'], PDO::PARAM_INT);
+        $stmtCuenta->execute();
+
+        $stmtRelacion = $db->prepare("
+            INSERT INTO cuentas_cobrar_x_curso_extra
+            (id, id_tenant, id_estudiante_x_curso_extra, id_cuenta_por_cobrar, fecha_registro)
+            VALUES (:id, :id_tenant, :id_inscripcion, :id_cuenta, NOW())
+        ");
+        $stmtRelacion->bindValue(':id', Uuid::generar());
+        $stmtRelacion->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmtRelacion->bindValue(':id_inscripcion', $id_inscripcion);
+        $stmtRelacion->bindValue(':id_cuenta', $idCuenta);
+        $stmtRelacion->execute();
+
+        return $idCuenta;
+    }
+
+    /**
      * Datos base de la pantalla de Registro Rapido de Cobros: el listado de
      * estudiantes con grupo y estado. Los productos salen del catalogo
      * (productos-servicios) y la asistencia del servicio de asistencia, por eso
