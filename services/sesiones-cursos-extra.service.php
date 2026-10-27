@@ -184,7 +184,10 @@ class SesionesCursosExtra
         }
 
         $idSesion = self::idSesionDeHorario($db, $h['id'], $fecha);
-        if ($idSesion === null && (!$h['activo'] || $fecha < $h['fecha_inicio'] || $fecha > $h['fecha_fin'])) {
+        // Un curso sin fechas es permanente: solo se valida la fecha que tenga.
+        $fueraDeFechas = ($h['fecha_inicio'] !== null && $fecha < $h['fecha_inicio'])
+            || ($h['fecha_fin'] !== null && $fecha > $h['fecha_fin']);
+        if ($idSesion === null && (!$h['activo'] || $fueraDeFechas)) {
             Flight::json(array('error' => 'El curso no está activo en esa fecha.'), 400);
             return;
         }
@@ -818,7 +821,8 @@ class SesionesCursosExtra
             LEFT JOIN docentes dh ON hce.id_docente = dh.id
             LEFT JOIN personas ph ON dh.id_persona = ph.id
             WHERE hce.id_tenant = :id_tenant AND ce.activo = 1
-              AND ce.fecha_inicio <= :fecha_hasta AND ce.fecha_fin >= :fecha_desde
+              AND (ce.fecha_inicio IS NULL OR ce.fecha_inicio <= :fecha_hasta)
+              AND (ce.fecha_fin IS NULL OR ce.fecha_fin >= :fecha_desde)
               AND (:id_curso IS NULL OR hce.id_curso_extra = :id_curso_2)
         ");
         $horarios->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -875,8 +879,9 @@ class SesionesCursosExtra
             $esAutomatica = isset($automatica[$h['id_curso_extra']]) ? $automatica[$h['id_curso_extra']] : 1;
             $cupo = $h['cupo'] !== null ? $h['cupo'] : $h['cupo_maximo'];
 
-            $fecha = new DateTime(max($fecha_desde, $h['fecha_inicio']));
-            $fin = new DateTime(min($fecha_hasta, $h['fecha_fin']));
+            // Sin fecha de inicio o de fin el curso es permanente: se toma el rango pedido.
+            $fecha = new DateTime($h['fecha_inicio'] !== null ? max($fecha_desde, $h['fecha_inicio']) : $fecha_desde);
+            $fin = new DateTime($h['fecha_fin'] !== null ? min($fecha_hasta, $h['fecha_fin']) : $fecha_hasta);
             while ($fecha <= $fin) {
                 $dia = $fecha->format('Y-m-d');
                 $fecha->modify('+1 day');

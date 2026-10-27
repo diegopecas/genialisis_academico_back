@@ -380,7 +380,8 @@ class LinksPago
             ), $cuentas);
 
             // Paquete de sesiones por cada linea de tipo paquete
-            $fechaInicio = max(date('Y-m-d'), $link['curso_fecha_inicio']);
+            // Un curso sin fecha de inicio es permanente: el paquete arranca hoy.
+            $fechaInicio = $link['curso_fecha_inicio'] !== null ? max(date('Y-m-d'), $link['curso_fecha_inicio']) : date('Y-m-d');
             $stmtLinea = $db->prepare("SELECT d.numero_sesiones, d.vigencia_dias, tcp.codigo AS codigo_tipo_cobro
                 FROM tarifas_cursos_extra_detalle d
                 INNER JOIN productos_servicios ps ON ps.id = d.id_producto_servicio AND ps.id_tenant = d.id_tenant

@@ -1105,7 +1105,7 @@ class SolicitudesInscripcionPublica
             $reglas = ConfiguracionReservasCursosExtra::obtener($db, $idCurso);
             if (!empty($idsHorarios) && empty($reglas['reserva_automatica'])) {
                 // Desde hoy, o desde que empieza el curso si todavia no empieza
-                $desde = max(date('Y-m-d'), $curso['fecha_inicio']);
+                $desde = $curso['fecha_inicio'] !== null ? max(date('Y-m-d'), $curso['fecha_inicio']) : date('Y-m-d');
                 $ocupacion = self::ocupacionHorarios($db, $idCurso);
                 foreach (array_unique($idsHorarios) as $idHorario) {
                     if (!isset($ocupacion[$idHorario])) {

@@ -100,8 +100,9 @@ class CursosExtra
         $icono = Flight::request()->data['icono'];
         $color = Flight::request()->data['color'];
         $cupo_maximo = Flight::request()->data['cupo_maximo'];
-        $fecha_inicio = Flight::request()->data['fecha_inicio'];
-        $fecha_fin = Flight::request()->data['fecha_fin'];
+        // Las fechas son opcionales: un curso sin fechas es permanente.
+        $fecha_inicio = !empty(Flight::request()->data['fecha_inicio']) ? Flight::request()->data['fecha_inicio'] : null;
+        $fecha_fin = !empty(Flight::request()->data['fecha_fin']) ? Flight::request()->data['fecha_fin'] : null;
         $anio = Flight::request()->data['anio'];
         // Campos opcionales: se leen con isset porque los formularios viejos no los envian.
         $id_tipo = isset(Flight::request()->data['id_tipo_curso_extracurricular']) ? Flight::request()->data['id_tipo_curso_extracurricular'] : null;
@@ -160,8 +161,9 @@ class CursosExtra
         $icono = Flight::request()->data['icono'];
         $color = Flight::request()->data['color'];
         $cupo_maximo = Flight::request()->data['cupo_maximo'];
-        $fecha_inicio = Flight::request()->data['fecha_inicio'];
-        $fecha_fin = Flight::request()->data['fecha_fin'];
+        // Las fechas son opcionales: un curso sin fechas es permanente.
+        $fecha_inicio = !empty(Flight::request()->data['fecha_inicio']) ? Flight::request()->data['fecha_inicio'] : null;
+        $fecha_fin = !empty(Flight::request()->data['fecha_fin']) ? Flight::request()->data['fecha_fin'] : null;
         $anio = Flight::request()->data['anio'];
         $activo = Flight::request()->data['activo'];
         // Campos opcionales: se leen con isset porque los formularios viejos no los envian.

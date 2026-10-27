@@ -2352,13 +2352,15 @@ class DashboardGerencial
             WHERE hce.id_tenant = :id_tenant
               AND hce.id_dia_semana = :dia
               AND ce.activo = 1
-              AND :fecha BETWEEN ce.fecha_inicio AND ce.fecha_fin
+              AND (ce.fecha_inicio IS NULL OR ce.fecha_inicio <= :fecha)
+              AND (ce.fecha_fin IS NULL OR ce.fecha_fin >= :fecha_2)
             ORDER BY ce.nombre, hce.hora_inicial";
 
         $stmt = $db->prepare($sql);
         $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->bindValue(':dia', $diaSemana, PDO::PARAM_INT);
         $stmt->bindValue(':fecha', $fecha);
+        $stmt->bindValue(':fecha_2', $fecha);
         $stmt->execute();
         return self::normalizarFranjas($stmt->fetchAll(PDO::FETCH_ASSOC));
     }
