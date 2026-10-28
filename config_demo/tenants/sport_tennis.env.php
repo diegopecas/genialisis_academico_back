@@ -31,21 +31,8 @@ define('VAPID_SUBJECT', 'mailto:contacto@genialisis.com');
 define('INTEGRACION_PORTAL_API_KEY', '386a11829f3e70eb15a74b5e80f354f49252655b0bbc1dd1a9cf238def7ea0f9');
 
 // =============================================
-// LINK DE PAGO DE BOLD
-// Llaves del boton de pagos (Panel de Bold > Integraciones). En modo de
-// pruebas Bold firma los avisos con llave vacia: BOLD_MODO_PRUEBAS = true.
-// URL del webhook para el panel de Bold:
-// https://api.genialisis.com/pagos-bold/webhook?tenant=sport_tennis
+// PASARELA DE PAGOS Y CORREO
+// Ya no van aqui: se configuran en Genialisis (Datos maestros >
+// Administracion > Configuracion > Pasarela de pagos / Servicio de correo)
+// y las llaves quedan cifradas en la base con la llave de cifrado.env.php.
 // =============================================
-define('BOLD_API_URL', 'https://integrations.api.bold.co');
-define('BOLD_API_KEY', 'OofRyZas6ED0THXwzBHlhXFx6UsoQVlI2uRKsnBSml0');
-define('BOLD_SECRET_KEY', 'M8oAIDH4cu-SC8XUzUEEag');
-define('BOLD_MODO_PRUEBAS', true);
-define('BOLD_CALLBACK_URL', '');
-
-// =============================================
-// CORREO (correo.genialisis.com): correo de aprobacion con el link de pago
-// =============================================
-define('CORREO_API_URL', 'https://correo.genialisis.com/enviar');
-define('CORREO_API_KEY', '53e3c2f8bba89193ca20ee5d6bf96c4734bd75fd1636fcad0d242f9218817389');
-define('CORREO_RESPONDER_A', 'info@sporttennis.org');

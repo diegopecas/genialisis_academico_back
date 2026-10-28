@@ -1,29 +1,30 @@
 <?php
 /**
- * Links de pago que se le mandan a la persona al aprobar una solicitud de
- * inscripcion del portal web (por ahora con Bold).
+ * Cobros que se le mandan a la persona al aprobar una solicitud de
+ * inscripcion del portal web: un link de pago de la pasarela del tenant o,
+ * si no tiene pasarela, los datos de las cuentas para transferir.
  *
  * Flujo:
- * 1. La aprobacion crea las cuentas por cobrar y registra el link en estado
- *    pendiente (registrar), dentro de su transaccion.
- * 2. Despues del commit se crea el link en Bold y se envia el correo con el
- *    boton de pago (generarYEnviar). Si algo falla queda el error en el link
- *    y se reintenta desde la solicitud.
- * 3. Cuando la persona paga, Bold avisa al webhook (webhookBold) o se
- *    consulta a mano (verificar). Se registra el pago recibido aplicado a las
- *    cuentas del link y, si el plan es por sesiones, el paquete. Un mismo
- *    pago nunca se registra dos veces.
+ * 1. La aprobacion crea las cuentas por cobrar y registra el cobro en estado
+ *    pendiente (registrar), dentro de su transaccion. El proveedor queda
+ *    'bold' si el tenant tiene Bold configurado, o 'transferencia' si no.
+ * 2. Despues del commit se crea el link en la pasarela (si aplica) y se
+ *    envia el correo (generarYEnviar): con el boton de pago, o con las
+ *    cuentas bancarias. Si algo falla queda el error y se reintenta desde la
+ *    solicitud.
+ * 3. Con pasarela, cuando la persona paga llega el aviso (webhookBold) o se
+ *    consulta a mano (verificar), y se registra el pago recibido aplicado a
+ *    las cuentas y, si el plan es por sesiones, el paquete. Un mismo pago
+ *    nunca se registra dos veces. Por transferencia, el pago se registra a
+ *    mano desde los pagos del estudiante.
  *
- * Configuracion en el .env.php del tenant:
- * - BOLD_API_URL, BOLD_API_KEY (llave de identidad), BOLD_SECRET_KEY (llave
- *   secreta para validar la firma del webhook), BOLD_MODO_PRUEBAS (true: la
- *   firma de pruebas se valida con llave vacia, como lo hace Bold) y
- *   BOLD_CALLBACK_URL (opcional: a donde vuelve la persona despues de pagar).
- * - CORREO_API_URL, CORREO_API_KEY y CORREO_RESPONDER_A (opcional): el
- *   servicio de correo de Genialisis (correo.genialisis.com).
- *
- * Parametros en configuracion_global: bold_id_tipo_pago (tipo de pago con el
- * que se registran) y bold_link_vigencia_dias (vacio = el link no vence).
+ * Configuracion en la base (ya no en el .env.php):
+ * - configuracion_pasarela_pago: proveedor, URL del API, llaves cifradas,
+ *   modo pruebas, tipo de pago con que se registran, vigencia del link y
+ *   URL de retorno (ConfiguracionPasarelaPago).
+ * - configuracion_correo: servicio de correo (ConfiguracionCorreo).
+ * - medios_pago_financieros con numero de cuenta: las cuentas que salen en
+ *   el correo y el PDF de transferencia.
  */
 class LinksPago
 {
@@ -32,8 +33,10 @@ class LinksPago
     // ==================== DESDE LA APROBACION ====================
 
     /**
-     * Registra el link en estado pendiente con las cuentas que cubre. No
-     * llama a Bold ni abre transaccion: corre dentro de la aprobacion.
+     * Registra el cobro en estado pendiente con las cuentas que cubre. No
+     * llama a la pasarela ni abre transaccion: corre dentro de la aprobacion.
+     * El proveedor sale de la configuracion del tenant: 'bold' o, sin
+     * pasarela, 'transferencia'.
      *
      * @param array $detalle [ {id_cuenta_por_cobrar, id_tarifa_curso_extra_detalle} ]
      * @return string id del link
@@ -42,14 +45,17 @@ class LinksPago
     {
         $id = Uuid::generar();
         $descripcion = mb_substr(self::nombreInstitucion() . ' · ' . $nombre_curso, 0, 100);
+        $config = ConfiguracionPasarelaPago::paraUso($db);
+        $proveedor = PasarelasPago::para($config) !== null ? $config['proveedor'] : 'transferencia';
 
         $sentence = $db->prepare("INSERT INTO links_pago
             (id, id_tenant, proveedor, id_solicitud_inscripcion_publica, id_estudiante_x_curso_extra,
              referencia, descripcion, valor, estado, correo_destino, id_usuario)
             VALUES
-            (:id, :id_tenant, 'bold', :id_solicitud, :id_inscripcion,
+            (:id, :id_tenant, :proveedor, :id_solicitud, :id_inscripcion,
              :referencia, :descripcion, :valor, 'pendiente', :correo, :id_usuario)");
         $sentence->bindValue(':id', $id);
+        $sentence->bindValue(':proveedor', $proveedor);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindValue(':id_solicitud', $id_solicitud);
         $sentence->bindValue(':id_inscripcion', $id_inscripcion);
@@ -76,10 +82,11 @@ class LinksPago
     }
 
     /**
-     * Crea el link en Bold (si todavia no existe) y envia el correo. Nunca
-     * lanza: lo que falle queda en el link.
+     * Crea el link en la pasarela (si todavia no existe) y envia el correo.
+     * Por transferencia no hay link: el cobro queda activo y se manda el
+     * correo con las cuentas. Nunca lanza: lo que falle queda en el link.
      *
-     * @return array estado, url, correo_enviado, error, error_correo
+     * @return array id, proveedor, estado, url, correo_enviado, error, error_correo
      */
     public static function generarYEnviar($db, $id_link)
     {
@@ -89,7 +96,11 @@ class LinksPago
         }
 
         if (in_array($link['estado'], array('pendiente', 'error'), true)) {
-            self::crearEnBold($db, $link);
+            if ($link['proveedor'] === 'transferencia') {
+                self::activarTransferencia($db, $link);
+            } else {
+                self::crearEnPasarela($db, $link);
+            }
             $link = self::obtener($db, $id_link);
         }
 
@@ -101,6 +112,7 @@ class LinksPago
 
         return array(
             'id' => $link['id'],
+            'proveedor' => $link['proveedor'],
             'estado' => $link['estado'],
             'url' => $link['url'],
             'correo_enviado' => $correoEnviado,
@@ -119,22 +131,37 @@ class LinksPago
     {
         JWTService::requerirAutenticacion();
         $db = Flight::db();
-        $sentence = $db->prepare("SELECT id, proveedor, referencia, descripcion, valor, estado, id_link_externo, url,
-                   fecha_vencimiento, ultimo_error, id_transaccion_externa, id_pago_recibido, fecha_pago,
-                   correo_destino, fecha_correo, error_correo, fecha_registro
-            FROM links_pago
-            WHERE id_solicitud_inscripcion_publica = :id_solicitud AND id_tenant = :id_tenant
-            ORDER BY fecha_registro DESC");
+        // saldo_pendiente: lo que falta por pagar de las cuentas del cobro.
+        // Por transferencia es la unica forma de saber si ya pagaron, porque
+        // el pago se registra a mano en los pagos del estudiante.
+        $sentence = $db->prepare("SELECT lp.id, lp.proveedor, lp.referencia, lp.descripcion, lp.valor, lp.estado, lp.id_link_externo, lp.url,
+                   lp.fecha_vencimiento, lp.ultimo_error, lp.id_transaccion_externa, lp.id_pago_recibido, lp.fecha_pago,
+                   lp.correo_destino, lp.fecha_correo, lp.error_correo, lp.fecha_registro,
+                   (SELECT COALESCE(SUM(c.valor - COALESCE(pg.aplicado, 0)), 0)
+                      FROM links_pago_detalle d
+                      INNER JOIN cuentas_por_cobrar c ON c.id = d.id_cuenta_por_cobrar AND c.id_tenant = d.id_tenant
+                      LEFT JOIN (SELECT cp.id_cuenta_por_cobrar,
+                                        SUM(CASE WHEN pr.anulado = 0 OR pr.anulado IS NULL THEN cp.valor_aplicado ELSE 0 END) AS aplicado
+                                   FROM cuenta_pagada cp
+                                   LEFT JOIN pagos_recibidos pr ON pr.id = cp.id_pago_recibido
+                                  WHERE cp.id_tenant = :id_tenant_pagos
+                                  GROUP BY cp.id_cuenta_por_cobrar) pg ON pg.id_cuenta_por_cobrar = c.id
+                      WHERE d.id_link_pago = lp.id AND (c.anulado = 0 OR c.anulado IS NULL) AND d.id_tenant = lp.id_tenant
+                   ) AS saldo_pendiente
+            FROM links_pago lp
+            WHERE lp.id_solicitud_inscripcion_publica = :id_solicitud AND lp.id_tenant = :id_tenant
+            ORDER BY lp.fecha_registro DESC");
         $sentence->bindParam(':id_solicitud', $id_solicitud);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_pagos', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         Flight::json($sentence->fetchAll(PDO::FETCH_ASSOC));
     }
 
     /**
      * PUT /links-pago/generar  { id }
-     * Reintenta crear el link en Bold (si quedo pendiente o con error) y
-     * envia el correo.
+     * Reintenta crear el link en la pasarela (si quedo pendiente o con error)
+     * y envia el correo.
      */
     public static function generar()
     {
@@ -147,7 +174,7 @@ class LinksPago
             return;
         }
         if (!in_array($link['estado'], array('pendiente', 'error'), true)) {
-            Flight::json(array('error' => 'El link ya está creado en Bold.'), 400);
+            Flight::json(array('error' => 'El cobro ya está creado.'), 400);
             return;
         }
         Flight::json(self::generarYEnviar($db, $id));
@@ -167,7 +194,7 @@ class LinksPago
             return;
         }
         if ($link['estado'] !== 'activo') {
-            Flight::json(array('error' => 'Solo se reenvía el correo de un link activo (sin pagar).'), 400);
+            Flight::json(array('error' => 'Solo se reenvía el correo de un cobro activo (sin pagar).'), 400);
             return;
         }
         $enviado = self::enviarCorreo($db, $link);
@@ -181,8 +208,8 @@ class LinksPago
 
     /**
      * PUT /links-pago/verificar  { id }
-     * Consulta el link en Bold. Si ya esta pagado y el pago no se ha
-     * registrado (por ejemplo, porque el aviso de Bold no llego), lo registra.
+     * Consulta el link en la pasarela. Si ya esta pagado y el pago no se ha
+     * registrado (por ejemplo, porque el aviso no llego), lo registra.
      */
     public static function verificar()
     {
@@ -198,27 +225,35 @@ class LinksPago
             Flight::json(array('id' => $id, 'estado' => 'pagado', 'mensaje' => 'El pago ya estaba registrado.'));
             return;
         }
+        if ($link['proveedor'] === 'transferencia') {
+            Flight::json(array('error' => 'Los pagos por transferencia se registran desde los pagos del estudiante.'), 400);
+            return;
+        }
         if (empty($link['id_link_externo'])) {
-            Flight::json(array('error' => 'El link todavía no está creado en Bold.'), 400);
+            Flight::json(array('error' => 'El link todavía no está creado en la pasarela.'), 400);
+            return;
+        }
+        $pasarela = PasarelasPago::para(ConfiguracionPasarelaPago::paraUso($db));
+        if ($pasarela === null) {
+            Flight::json(array('error' => 'No hay pasarela de pagos configurada (Configuración > Pasarela de pagos).'), 400);
             return;
         }
 
-        $respuesta = self::llamarBold('GET', '/online/link/v1/' . rawurlencode($link['id_link_externo']), null);
-        if ($respuesta['error'] !== null) {
-            Flight::json(array('error' => 'No se pudo consultar Bold: ' . $respuesta['error']), 502);
+        $consulta = $pasarela->consultarLink($link['id_link_externo']);
+        if ($consulta['error'] !== null) {
+            Flight::json(array('error' => 'No se pudo consultar la pasarela: ' . $consulta['error']), 502);
             return;
         }
 
-        $datos = isset($respuesta['cuerpo']['payload']) ? $respuesta['cuerpo']['payload'] : $respuesta['cuerpo'];
-        $estadoBold = isset($datos['status']) ? $datos['status'] : null;
-        if ($estadoBold !== 'PAID') {
+        $estadoBold = $consulta['estado'];
+        if (!$consulta['pagado']) {
             Flight::json(array('id' => $id, 'estado' => $link['estado'], 'estado_bold' => $estadoBold,
-                'mensaje' => 'Bold todavía no tiene el pago (estado ' . ($estadoBold ?: 'desconocido') . ').'));
+                'mensaje' => 'La pasarela todavía no tiene el pago (estado ' . ($estadoBold ?: 'desconocido') . ').'));
             return;
         }
 
-        $idTransaccion = !empty($datos['transaction_id']) ? (string) $datos['transaction_id'] : $link['id_link_externo'];
-        $valor = isset($datos['total']) ? (float) $datos['total'] : (float) $link['valor'];
+        $idTransaccion = $consulta['id_transaccion'] !== null ? $consulta['id_transaccion'] : $link['id_link_externo'];
+        $valor = $consulta['valor'] !== null ? $consulta['valor'] : (float) $link['valor'];
         $resultado = self::registrarPago($db, $id, $idTransaccion, $valor, 'consulta');
         if (isset($resultado['error'])) {
             Flight::json(array('error' => $resultado['error']), 500);
@@ -231,23 +266,25 @@ class LinksPago
     /**
      * POST /pagos-bold/webhook?tenant=codigo
      * Aviso de Bold. Es publico (sin token): se valida la firma
-     * x-bold-signature (HMAC-SHA256 del cuerpo en base64, en hexadecimal) con
-     * la llave secreta. Bold espera un 200 en menos de 2 segundos; si no lo
-     * recibe, reintenta.
+     * x-bold-signature con la llave secreta de la pasarela del tenant
+     * (PasarelaBold::firmaValida). Bold espera un 200 en menos de 2
+     * segundos; si no lo recibe, reintenta.
      */
     public static function webhookBold()
     {
         $cuerpo = (string) Flight::request()->getBody();
         $firma = isset($_SERVER['HTTP_X_BOLD_SIGNATURE']) ? (string) $_SERVER['HTTP_X_BOLD_SIGNATURE'] : '';
 
-        $llave = (defined('BOLD_MODO_PRUEBAS') && BOLD_MODO_PRUEBAS) ? '' : (defined('BOLD_SECRET_KEY') ? (string) BOLD_SECRET_KEY : null);
-        if ($llave === null) {
-            error_log('LinksPago: llego un aviso de Bold pero BOLD_SECRET_KEY no esta configurada.');
+        $db = Flight::db();
+        $config = ConfiguracionPasarelaPago::paraUso($db);
+        $pasarela = $config['proveedor'] === 'bold' ? PasarelasPago::para($config) : null;
+        $valida = $pasarela !== null ? $pasarela->firmaValida($cuerpo, $firma) : null;
+        if ($valida === null) {
+            error_log('LinksPago: llego un aviso de Bold pero el tenant no tiene Bold configurado con su llave secreta.');
             Flight::json(array('error' => 'Bold no está configurado.'), 503);
             return;
         }
-        $esperada = hash_hmac('sha256', base64_encode($cuerpo), $llave);
-        if ($firma === '' || !hash_equals($esperada, $firma)) {
+        if (!$valida) {
             error_log('LinksPago: aviso de Bold con firma invalida.');
             Flight::json(array('error' => 'Firma inválida.'), 401);
             return;
@@ -272,7 +309,6 @@ class LinksPago
             return;
         }
 
-        $db = Flight::db();
         $link = null;
         if ($referencia !== '') {
             $stmt = $db->prepare("SELECT id FROM links_pago WHERE referencia = :referencia AND id_tenant = :id_tenant");
@@ -365,9 +401,9 @@ class LinksPago
             $stmtAcudiente->execute();
             $acudiente = $stmtAcudiente->fetch(PDO::FETCH_ASSOC);
 
-            $idTipoPago = self::parametro($db, 'bold_id_tipo_pago');
+            $idTipoPago = ConfiguracionPasarelaPago::paraUso($db)['id_tipo_pago'];
             if (!$idTipoPago) {
-                error_log('LinksPago: falta el parametro bold_id_tipo_pago; el pago queda sin tipo.');
+                error_log('LinksPago: la pasarela no tiene tipo de pago configurado; el pago queda sin tipo.');
             }
 
             $idPago = PagosRecibidos::registrarDesdePasarela($db, array(
@@ -376,7 +412,7 @@ class LinksPago
                 'id_acudiente' => $acudiente ? $acudiente['id'] : null,
                 'id_tipo_pago' => $idTipoPago ?: null,
                 'valor_recibido' => $valorPagado,
-                'observaciones' => 'Pago con Bold (' . $origen . ') · ' . $link['descripcion'] .
+                'observaciones' => 'Pago con ' . ucfirst($link['proveedor']) . ' (' . $origen . ') · ' . $link['descripcion'] .
                     ($link['id_link_externo'] ? ' · ' . $link['id_link_externo'] : ''),
                 'referencia_bancaria' => mb_substr($id_transaccion, 0, 100)
             ), $cuentas);
@@ -412,7 +448,7 @@ class LinksPago
                         $tarifa['vigencia_dias'],
                         $fechaInicio,
                         $linea['id_cuenta_por_cobrar'],
-                        'Pago con Bold'
+                        'Pago con ' . ucfirst($link['proveedor'])
                     );
                 }
             }
@@ -438,46 +474,29 @@ class LinksPago
         }
     }
 
-    // ==================== BOLD ====================
+    // ==================== PASARELA ====================
 
     /**
-     * Crea el link de valor cerrado en Bold y deja el resultado en el link.
+     * Crea el link de valor cerrado en la pasarela del tenant y deja el
+     * resultado en el link.
      */
-    private static function crearEnBold($db, $link)
+    private static function crearEnPasarela($db, $link)
     {
-        $cuerpo = array(
-            'amount_type' => 'CLOSE',
-            'amount' => array(
-                'currency' => 'COP',
-                'total_amount' => (int) round((float) $link['valor']),
-                'tip_amount' => 0,
-                'taxes' => array()
-            ),
-            'reference' => $link['referencia'],
-            'description' => mb_strlen($link['descripcion']) >= 2 ? $link['descripcion'] : 'Pago de inscripción'
-        );
-        if (!empty($link['correo_destino'])) {
-            $cuerpo['payer_email'] = $link['correo_destino'];
-        }
-        if (defined('BOLD_CALLBACK_URL') && BOLD_CALLBACK_URL !== '') {
-            $cuerpo['callback_url'] = BOLD_CALLBACK_URL;
-        }
+        $config = ConfiguracionPasarelaPago::paraUso($db);
+        $pasarela = PasarelasPago::para($config);
+
         $vencimiento = null;
-        $dias = self::parametroNumero($db, 'bold_link_vigencia_dias');
-        if ($dias !== null && $dias > 0) {
-            $marca = time() + (int) $dias * 86400;
-            $vencimiento = date('Y-m-d H:i:s', $marca);
-            // Bold pide la fecha en nanosegundos desde 1970
-            $cuerpo['expiration_date'] = $marca * 1000000000;
+        $resultado = array('error' => 'No hay pasarela de pagos configurada (Configuración > Pasarela de pagos).');
+        if ($pasarela !== null) {
+            $marca = !empty($config['link_vigencia_dias']) ? time() + (int) $config['link_vigencia_dias'] * 86400 : null;
+            $vencimiento = $marca !== null ? date('Y-m-d H:i:s', $marca) : null;
+            $resultado = $pasarela->crearLink($link, $marca);
         }
 
-        $respuesta = self::llamarBold('POST', '/online/link/v1', $cuerpo);
-        $payload = isset($respuesta['cuerpo']['payload']) ? $respuesta['cuerpo']['payload'] : null;
-        if ($respuesta['error'] !== null || empty($payload['url'])) {
-            $error = $respuesta['error'] !== null ? $respuesta['error'] : 'Bold no devolvió el link.';
-            error_log('LinksPago: no se creo el link ' . $link['id'] . ' en Bold: ' . $error);
+        if ($resultado['error'] !== null) {
+            error_log('LinksPago: no se creo el link ' . $link['id'] . ' en la pasarela: ' . $resultado['error']);
             $stmt = $db->prepare("UPDATE links_pago SET estado = 'error', ultimo_error = :error WHERE id = :id AND id_tenant = :id_tenant");
-            $stmt->bindValue(':error', mb_substr($error, 0, 2000));
+            $stmt->bindValue(':error', mb_substr($resultado['error'], 0, 2000));
             $stmt->bindValue(':id', $link['id']);
             $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
@@ -487,61 +506,67 @@ class LinksPago
         $stmt = $db->prepare("UPDATE links_pago SET estado = 'activo', id_link_externo = :id_externo, url = :url,
                 fecha_vencimiento = :vencimiento, ultimo_error = NULL
             WHERE id = :id AND id_tenant = :id_tenant");
-        $stmt->bindValue(':id_externo', isset($payload['payment_link']) ? (string) $payload['payment_link'] : null);
-        $stmt->bindValue(':url', (string) $payload['url']);
+        $stmt->bindValue(':id_externo', $resultado['id_externo']);
+        $stmt->bindValue(':url', $resultado['url']);
         $stmt->bindValue(':vencimiento', $vencimiento);
         $stmt->bindValue(':id', $link['id']);
         $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->execute();
     }
 
-    /**
-     * Llamada al API de Bold con la llave de identidad.
-     *
-     * @return array {cuerpo, error}: error es null si respondio bien
-     */
-    private static function llamarBold($metodo, $ruta, $cuerpo)
+    /** Por transferencia no hay link que crear: el cobro queda activo */
+    private static function activarTransferencia($db, $link)
     {
-        if (!defined('BOLD_API_URL') || BOLD_API_URL === '' || !defined('BOLD_API_KEY') || BOLD_API_KEY === '') {
-            return array('cuerpo' => null, 'error' => 'Bold no está configurado (BOLD_API_URL o BOLD_API_KEY).');
-        }
+        $stmt = $db->prepare("UPDATE links_pago SET estado = 'activo', ultimo_error = NULL WHERE id = :id AND id_tenant = :id_tenant");
+        $stmt->bindValue(':id', $link['id']);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+    }
 
-        $ch = curl_init(rtrim(BOLD_API_URL, '/') . $ruta);
-        $opciones = array(
-            CURLOPT_CUSTOMREQUEST => $metodo,
-            CURLOPT_HTTPHEADER => array('Authorization: x-api-key ' . BOLD_API_KEY, 'Content-Type: application/json'),
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_TIMEOUT => 30
-        );
-        if ($cuerpo !== null) {
-            $opciones[CURLOPT_POSTFIELDS] = json_encode($cuerpo, JSON_UNESCAPED_UNICODE);
+    /**
+     * GET /links-pago/datos-pago/@id
+     * Lo que va en el PDF para transferir: lo mismo del correo (curso,
+     * participante, fecha de inicio, horarios, lineas, total) y las cuentas
+     * bancarias.
+     */
+    public static function datosPago($id)
+    {
+        JWTService::requerirAutenticacion();
+        $db = Flight::db();
+        $link = self::obtener($db, $id);
+        if (!$link) {
+            Flight::json(array('error' => 'El cobro no existe.'), 404);
+            return;
         }
-        curl_setopt_array($ch, $opciones);
-        $crudo = curl_exec($ch);
-        $codigoHttp = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $errorCurl = curl_error($ch);
-        curl_close($ch);
+        $datos = self::datosCorreo($db, $link);
+        $datos['valor'] = (float) $link['valor'];
+        $datos['referencia'] = $link['referencia'];
+        $datos['cuentas'] = self::cuentasBancarias($db);
+        Flight::json($datos);
+    }
 
-        $respuesta = is_string($crudo) ? json_decode($crudo, true) : null;
-        if ($codigoHttp >= 200 && $codigoHttp < 300 && is_array($respuesta) && empty($respuesta['errors'])) {
-            return array('cuerpo' => $respuesta, 'error' => null);
-        }
-
-        $detalle = $errorCurl !== '' ? $errorCurl : '';
-        if (is_array($respuesta) && !empty($respuesta['errors'])) {
-            $detalle = json_encode($respuesta['errors'], JSON_UNESCAPED_UNICODE);
-        } elseif ($detalle === '' && is_string($crudo)) {
-            $detalle = mb_substr($crudo, 0, 300);
-        }
-        return array('cuerpo' => $respuesta, 'error' => trim($detalle . ' (HTTP ' . $codigoHttp . ')'));
+    /**
+     * Cuentas para transferir: los medios de pago del tenant que tienen
+     * numero de cuenta, en el orden en que se muestran.
+     */
+    private static function cuentasBancarias($db)
+    {
+        $stmt = $db->prepare("SELECT nombre, numero_cuenta, descripcion
+            FROM medios_pago_financieros
+            WHERE id_tenant = :id_tenant AND numero_cuenta IS NOT NULL AND TRIM(numero_cuenta) <> ''
+            ORDER BY orden, nombre");
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
     // ==================== CORREO ====================
 
     /**
      * Correo a la persona con los horarios asignados, lo que va a pagar y el
-     * boton de pago. Deja la fecha o el error en el link.
+     * boton de pago, o las cuentas para transferir. Sale por el servicio de
+     * correo del tenant (ConfiguracionCorreo). Deja la fecha o el error en
+     * el link.
      *
      * @return bool true si salio
      */
@@ -550,40 +575,16 @@ class LinksPago
         $error = null;
         if (empty($link['correo_destino'])) {
             $error = 'La solicitud no tiene correo.';
-        } elseif (!defined('CORREO_API_URL') || CORREO_API_URL === '' || !defined('CORREO_API_KEY') || CORREO_API_KEY === '') {
-            $error = 'El servicio de correo no está configurado (CORREO_API_URL o CORREO_API_KEY).';
         }
 
         if ($error === null) {
             $datos = self::datosCorreo($db, $link);
-            $cuerpo = array(
-                'para' => array($link['correo_destino']),
-                'asunto' => 'Tu inscripción a ' . $datos['curso'] . ' fue aprobada',
-                'html' => self::htmlCorreo($datos, $link)
-            );
-            if (defined('CORREO_RESPONDER_A') && filter_var(CORREO_RESPONDER_A, FILTER_VALIDATE_EMAIL)) {
-                $cuerpo['responder_a'] = CORREO_RESPONDER_A;
+            if ($link['proveedor'] === 'transferencia') {
+                $datos['cuentas'] = self::cuentasBancarias($db);
             }
-
-            $ch = curl_init(CORREO_API_URL);
-            curl_setopt_array($ch, array(
-                CURLOPT_POST => true,
-                CURLOPT_POSTFIELDS => json_encode($cuerpo, JSON_UNESCAPED_UNICODE),
-                CURLOPT_HTTPHEADER => array('X-API-Key: ' . CORREO_API_KEY, 'Content-Type: application/json'),
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_TIMEOUT => 40
-            ));
-            $crudo = curl_exec($ch);
-            $codigoHttp = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $errorCurl = curl_error($ch);
-            curl_close($ch);
-
-            $respuesta = is_string($crudo) ? json_decode($crudo, true) : null;
-            if (!($codigoHttp === 200 && !empty($respuesta['ok']))) {
-                $codigo = isset($respuesta['error']['codigo']) ? $respuesta['error']['codigo'] : 'SIN_RESPUESTA';
-                $mensaje = isset($respuesta['error']['mensaje']) ? $respuesta['error']['mensaje'] : $errorCurl;
-                $error = '[' . $codigo . '] ' . $mensaje . ' (HTTP ' . $codigoHttp . ')';
-            }
+            $resultado = ConfiguracionCorreo::enviar($db, array($link['correo_destino']),
+                'Tu inscripción a ' . $datos['curso'] . ' fue aprobada', self::htmlCorreo($datos, $link));
+            $error = $resultado['error'];
         }
 
         if ($error !== null) {
@@ -676,6 +677,24 @@ class LinksPago
 
         $saludo = $d['saludo'] !== '' ? 'Hola, ' . $e($d['saludo']) . '.' : 'Hola.';
 
+        // Como pagar: boton de la pasarela, o las cuentas para transferir
+        if ($link['proveedor'] === 'transferencia') {
+            $cuentas = '';
+            foreach (isset($d['cuentas']) ? $d['cuentas'] : array() as $c) {
+                $cuentas .= '<div style="margin:0 0 10px;padding:10px 12px;border:1px solid #eee;border-radius:10px">' .
+                    '<strong>' . $e($c['nombre']) . '</strong><br>Cuenta ' . $e($c['numero_cuenta']) .
+                    (!empty($c['descripcion']) ? '<br><span style="font-size:13px;color:#555">' . $e($c['descripcion']) . '</span>' : '') .
+                    '</div>';
+            }
+            $bloquePago = '<p style="margin:22px 0 8px;font-weight:bold">Cómo pagar</p>' .
+                ($cuentas !== '' ? '<p style="margin:0 0 10px">Haz la transferencia a cualquiera de estas cuentas:</p>' . $cuentas
+                    : '<p style="margin:0 0 10px">Te enviamos los datos para el pago por WhatsApp.</p>') .
+                '<p style="margin:12px 0 0;font-size:13px;color:#555">Cuando pagues, responde este correo con el comprobante y el nombre del participante. Si tienes alguna pregunta, también puedes responder este correo.</p>';
+        } else {
+            $bloquePago = '<p style="margin:22px 0;text-align:center"><a href="' . $e($link['url']) . '" style="display:inline-block;background:#1f8f3a;color:#fff;text-decoration:none;padding:13px 26px;border-radius:999px;font-weight:bold">Pagar ahora</a></p>' .
+                '<p style="margin:0;font-size:13px;color:#555">El pago se hace en la página segura de la pasarela. Cuando se confirme, el plan queda activo. Si tienes alguna pregunta, responde este correo.</p>';
+        }
+
         // Fecha de inicio de clases puesta en la aprobacion, en formato 3 de noviembre de 2026
         $bloqueInicio = '';
         if (!empty($d['fecha_inicio_clases'])) {
@@ -699,8 +718,7 @@ class LinksPago
             '<p style="margin:18px 0 6px;font-weight:bold">Lo que vas a pagar</p>' .
             '<table style="width:100%;border-collapse:collapse;font-size:14px">' . $filas .
             '<tr><td style="padding:8px 0;font-weight:bold">Total</td><td style="padding:8px 0;text-align:right;font-weight:bold">' . $pesos($link['valor']) . '</td></tr></table>' .
-            '<p style="margin:22px 0;text-align:center"><a href="' . $e($link['url']) . '" style="display:inline-block;background:#1f8f3a;color:#fff;text-decoration:none;padding:13px 26px;border-radius:999px;font-weight:bold">Pagar ahora</a></p>' .
-            '<p style="margin:0;font-size:13px;color:#555">El pago se hace en la página segura de Bold. Cuando se confirme, el plan queda activo. Si tienes alguna pregunta, responde este correo.</p>' .
+            $bloquePago .
             '</div></div></body></html>';
     }
 
@@ -728,27 +746,5 @@ class LinksPago
         } catch (Exception $e) {
             return TenantContext::codigo();
         }
-    }
-
-    /** Valor de texto de un parametro de configuracion_global, o null */
-    private static function parametro($db, $clave)
-    {
-        $stmt = $db->prepare("SELECT valor_texto FROM configuracion_global WHERE clave = :clave AND id_tenant = :id_tenant");
-        $stmt->bindValue(':clave', $clave);
-        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-        $stmt->execute();
-        $fila = $stmt->fetch(PDO::FETCH_ASSOC);
-        return $fila && $fila['valor_texto'] !== null && trim($fila['valor_texto']) !== '' ? trim($fila['valor_texto']) : null;
-    }
-
-    /** Valor numerico de un parametro de configuracion_global, o null */
-    private static function parametroNumero($db, $clave)
-    {
-        $stmt = $db->prepare("SELECT valor_numero FROM configuracion_global WHERE clave = :clave AND id_tenant = :id_tenant");
-        $stmt->bindValue(':clave', $clave);
-        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-        $stmt->execute();
-        $fila = $stmt->fetch(PDO::FETCH_ASSOC);
-        return $fila && $fila['valor_numero'] !== null ? (float) $fila['valor_numero'] : null;
     }
 }
