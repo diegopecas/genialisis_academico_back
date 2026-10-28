@@ -1445,11 +1445,13 @@ class CuentasPorCobrar
                 INSERT INTO cuentas_por_cobrar 
                 (id, id_tenant, id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario, 
                  anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion,
-                 id_tipo_mora, valor_recargo_mora, porcentaje_mora_mensual, mora_acumulable)
+                 id_tipo_mora, valor_recargo_mora, porcentaje_mora_mensual, mora_acumulable,
+                 valor_base, descuento, motivo_descuento)
                 VALUES 
                 (:id, :id_tenant, :id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario,
                  0, NULL, NULL, NULL,
-                 :id_tipo_mora, :valor_recargo_mora, :porcentaje_mora_mensual, :mora_acumulable)
+                 :id_tipo_mora, :valor_recargo_mora, :porcentaje_mora_mensual, :mora_acumulable,
+                 :valor_base, :descuento, :motivo_descuento)
             ");
 
             $stmtInsertRelacion = $db->prepare("
@@ -1563,6 +1565,19 @@ class CuentasPorCobrar
                 foreach ($valoresInscripcion as $valor) {
                     $detalle = $valor['detalle'] ?? "Curso Extra #{$id_curso_extra}";
 
+                    // Valor de la tarifa y descuento: opcionales. Si el valor
+                    // quedo por debajo de la tarifa, el motivo es obligatorio.
+                    $descuento = self::descuentoCuenta(
+                        $valor['valor'],
+                        $valor['valor_base'] ?? null,
+                        $valor['motivo_descuento'] ?? null
+                    );
+                    if (isset($descuento['error'])) {
+                        $db->rollBack();
+                        Flight::json(array('error' => $descuento['error'] . ' (' . ($valor['nombre_producto'] ?? 'Producto') . ' · ' . $valor['fecha'] . ').'), 400);
+                        return;
+                    }
+
                     $idCxc2 = Uuid::generar();
                     $stmtInsertCuenta->bindValue(':id', $idCxc2);
                     $stmtInsertCuenta->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -1577,6 +1592,9 @@ class CuentasPorCobrar
                     $stmtInsertCuenta->bindValue(':valor_recargo_mora', $moraCursoExtra['valor_recargo_mora']);
                     $stmtInsertCuenta->bindValue(':porcentaje_mora_mensual', $moraCursoExtra['porcentaje_mora_mensual']);
                     $stmtInsertCuenta->bindValue(':mora_acumulable', $moraCursoExtra['mora_acumulable'], PDO::PARAM_INT);
+                    $stmtInsertCuenta->bindValue(':valor_base', $descuento['valor_base']);
+                    $stmtInsertCuenta->bindValue(':descuento', $descuento['descuento']);
+                    $stmtInsertCuenta->bindValue(':motivo_descuento', $descuento['motivo_descuento']);
                     $stmtInsertCuenta->execute();
 
                     $idCuenta = $idCxc2;
@@ -1634,22 +1652,31 @@ class CuentasPorCobrar
      *
      * No abre transaccion: la abre quien llama.
      *
+     * $valor_base y $motivo_descuento son opcionales: el valor de la tarifa y
+     * por que se cobra menos. Quien llama ya valido que el motivo venga.
+     *
      * @return string id de la cuenta creada
      */
-    public static function crearCuentaCursoExtra($db, $id_inscripcion, $id_persona, $id_producto_servicio, $fecha, $valor, $detalle, $id_usuario)
+    public static function crearCuentaCursoExtra($db, $id_inscripcion, $id_persona, $id_producto_servicio, $fecha, $valor, $detalle, $id_usuario, $valor_base = null, $motivo_descuento = null)
     {
         $mora = self::parametrosMoraProducto($db, $id_producto_servicio);
+        $descuento = self::descuentoCuenta($valor, $valor_base, $motivo_descuento);
+        if (isset($descuento['error'])) {
+            throw new Exception($descuento['error']);
+        }
 
         $idCuenta = Uuid::generar();
         $stmtCuenta = $db->prepare("
             INSERT INTO cuentas_por_cobrar
             (id, id_tenant, id_producto_servicio, id_persona, fecha, valor, detalle, id_usuario,
              anulado, fecha_anulacion, id_usuario_anulacion, id_horario_alimentacion,
-             id_tipo_mora, valor_recargo_mora, porcentaje_mora_mensual, mora_acumulable)
+             id_tipo_mora, valor_recargo_mora, porcentaje_mora_mensual, mora_acumulable,
+             valor_base, descuento, motivo_descuento)
             VALUES
             (:id, :id_tenant, :id_producto_servicio, :id_persona, :fecha, :valor, :detalle, :id_usuario,
              0, NULL, NULL, NULL,
-             :id_tipo_mora, :valor_recargo_mora, :porcentaje_mora_mensual, :mora_acumulable)
+             :id_tipo_mora, :valor_recargo_mora, :porcentaje_mora_mensual, :mora_acumulable,
+             :valor_base, :descuento, :motivo_descuento)
         ");
         $stmtCuenta->bindValue(':id', $idCuenta);
         $stmtCuenta->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -1663,6 +1690,9 @@ class CuentasPorCobrar
         $stmtCuenta->bindValue(':valor_recargo_mora', $mora['valor_recargo_mora']);
         $stmtCuenta->bindValue(':porcentaje_mora_mensual', $mora['porcentaje_mora_mensual']);
         $stmtCuenta->bindValue(':mora_acumulable', $mora['mora_acumulable'], PDO::PARAM_INT);
+        $stmtCuenta->bindValue(':valor_base', $descuento['valor_base']);
+        $stmtCuenta->bindValue(':descuento', $descuento['descuento']);
+        $stmtCuenta->bindValue(':motivo_descuento', $descuento['motivo_descuento']);
         $stmtCuenta->execute();
 
         $stmtRelacion = $db->prepare("
@@ -1677,6 +1707,37 @@ class CuentasPorCobrar
         $stmtRelacion->execute();
 
         return $idCuenta;
+    }
+
+    /**
+     * Valor de tarifa, descuento y motivo que se guardan en la cuenta. Son una
+     * foto del momento en que se crea: si despues cambia la tarifa, la cuenta
+     * no se toca.
+     *
+     * Sin valor de tarifa no hay descuento (los demas cobros siguen igual).
+     * Si el valor quedo por debajo de la tarifa, el motivo es obligatorio. Si
+     * quedo por encima, se guarda la tarifa pero no hay descuento.
+     *
+     * @return array {valor_base, descuento, motivo_descuento} | {error}
+     */
+    private static function descuentoCuenta($valor, $valorBase, $motivo)
+    {
+        if ($valorBase === null || $valorBase === '' || !is_numeric($valorBase)) {
+            return array('valor_base' => null, 'descuento' => null, 'motivo_descuento' => null);
+        }
+
+        $valorBase = round((float) $valorBase, 2);
+        $descuento = round($valorBase - (float) $valor, 2);
+        $motivo = is_string($motivo) ? trim($motivo) : '';
+
+        if ($descuento <= 0) {
+            return array('valor_base' => $valorBase, 'descuento' => null, 'motivo_descuento' => null);
+        }
+        if ($motivo === '') {
+            return array('error' => 'Falta el motivo del descuento');
+        }
+
+        return array('valor_base' => $valorBase, 'descuento' => $descuento, 'motivo_descuento' => mb_substr($motivo, 0, 500));
     }
 
     /**

@@ -41,8 +41,8 @@ define('INTEGRACION_PORTAL_API_KEY', '386a11829f3e70eb15a74b5e80f354f49252655b0b
 // https://api.genialisis.com/pagos-bold/webhook?tenant=sport_tennis
 // =============================================
 define('BOLD_API_URL', 'https://integrations.api.bold.co');
-define('BOLD_API_KEY', '');
-define('BOLD_SECRET_KEY', '');
+define('BOLD_API_KEY', 'OofRyZas6ED0THXwzBHlhXFx6UsoQVlI2uRKsnBSml0');
+define('BOLD_SECRET_KEY', 'M8oAIDH4cu-SC8XUzUEEag');
 define('BOLD_MODO_PRUEBAS', true);
 define('BOLD_CALLBACK_URL', '');
 

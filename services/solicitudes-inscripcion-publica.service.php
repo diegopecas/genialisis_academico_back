@@ -874,6 +874,14 @@ class SolicitudesInscripcionPublica
      * curso (id_curso_extra) y otras lineas de la tarifa (ids_tarifa_detalle,
      * plan y adicionales). Si las manda, se cobra eso; una lista vacia
      * significa que no se cobra nada. Sin esas llaves se usa lo de la solicitud.
+     *
+     * lineas_cobro ([{id, valor, motivo_descuento}]) reemplaza a
+     * ids_tarifa_detalle cuando se cambia el valor: el valor no puede pasar
+     * del de la tarifa, y si es menor el motivo es obligatorio. La cuenta
+     * guarda el valor de la tarifa, el descuento y el motivo.
+     *
+     * fecha_inicio_clases (opcional): desde cuando quedan las reservas fijas
+     * y desde cuando arranca el paquete cuando llegue el pago.
      */
     public static function aprobar()
     {
@@ -907,6 +915,34 @@ class SolicitudesInscripcionPublica
             // Curso en el que queda: el que escogieron en la pantalla o el que pidio
             $data = Flight::request()->data;
             $idCurso = !empty($data['id_curso_extra']) ? (string) $data['id_curso_extra'] : $sol['id_curso_extra'];
+
+            $fechaInicioClases = null;
+            if (!empty($data['fecha_inicio_clases'])) {
+                $fechaInicioClases = (string) $data['fecha_inicio_clases'];
+                $f = DateTime::createFromFormat('Y-m-d', $fechaInicioClases);
+                if (!$f || $f->format('Y-m-d') !== $fechaInicioClases) {
+                    Flight::json(array('error' => 'La fecha de inicio de clases no es válida.'), 400);
+                    return;
+                }
+            }
+
+            // Valores y motivos escogidos en la pantalla, por linea de la tarifa
+            $valoresElegidos = array();
+            if (isset($data['lineas_cobro']) && is_array($data['lineas_cobro'])) {
+                foreach ($data['lineas_cobro'] as $l) {
+                    if (!is_array($l) || empty($l['id']) || !is_string($l['id'])) {
+                        continue;
+                    }
+                    if (!isset($l['valor']) || !is_numeric($l['valor']) || (float) $l['valor'] < 0) {
+                        Flight::json(array('error' => 'Hay un valor a cobrar que no es válido.'), 400);
+                        return;
+                    }
+                    $valoresElegidos[$l['id']] = array(
+                        'valor' => round((float) $l['valor'], 2),
+                        'motivo' => isset($l['motivo_descuento']) && is_string($l['motivo_descuento']) ? trim($l['motivo_descuento']) : ''
+                    );
+                }
+            }
 
             $db->beginTransaction();
 
@@ -1028,7 +1064,7 @@ class SolicitudesInscripcionPublica
             }
 
             // --- Inscripcion al curso ---
-            $stmtCursoAnio = $db->prepare("SELECT anio, cupo_maximo, permite_sobrecupo, nombre, fecha_inicio, activo
+            $stmtCursoAnio = $db->prepare("SELECT anio, cupo_maximo, permite_sobrecupo, nombre, fecha_inicio, fecha_fin, activo
                                            FROM cursos_extra WHERE id = :id AND id_tenant = :id_tenant");
             $stmtCursoAnio->bindValue(':id', $idCurso);
             $stmtCursoAnio->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
@@ -1039,6 +1075,13 @@ class SolicitudesInscripcionPublica
             if (!$curso || ($idCurso !== $sol['id_curso_extra'] && (int) $curso['activo'] !== 1)) {
                 $db->rollBack();
                 Flight::json(array('error' => 'El curso escogido no existe o no está activo.'), 400);
+                return;
+            }
+
+            // La fecha de inicio de clases no puede quedar despues de que termina el curso
+            if ($fechaInicioClases !== null && !empty($curso['fecha_fin']) && $fechaInicioClases > $curso['fecha_fin']) {
+                $db->rollBack();
+                Flight::json(array('error' => 'La fecha de inicio de clases es posterior al fin del curso (' . $curso['fecha_fin'] . ').'), 400);
                 return;
             }
 
@@ -1105,7 +1148,12 @@ class SolicitudesInscripcionPublica
             $reglas = ConfiguracionReservasCursosExtra::obtener($db, $idCurso);
             if (!empty($idsHorarios) && empty($reglas['reserva_automatica'])) {
                 // Desde hoy, o desde que empieza el curso si todavia no empieza
-                $desde = $curso['fecha_inicio'] !== null ? max(date('Y-m-d'), $curso['fecha_inicio']) : date('Y-m-d');
+                // Con fecha de inicio de clases, desde esa fecha (nunca antes de hoy)
+                if ($fechaInicioClases !== null) {
+                    $desde = max(date('Y-m-d'), $fechaInicioClases);
+                } else {
+                    $desde = $curso['fecha_inicio'] !== null ? max(date('Y-m-d'), $curso['fecha_inicio']) : date('Y-m-d');
+                }
                 $ocupacion = self::ocupacionHorarios($db, $idCurso);
                 foreach (array_unique($idsHorarios) as $idHorario) {
                     if (!isset($ocupacion[$idHorario])) {
@@ -1132,29 +1180,56 @@ class SolicitudesInscripcionPublica
             // lo que trajo la solicitud del portal ---
             $idLink = null;
             $lineasNoEncontradas = 0;
-            $idsElegidos = isset($data['ids_tarifa_detalle']) && is_array($data['ids_tarifa_detalle'])
-                ? $data['ids_tarifa_detalle'] : null;
+            if (isset($data['lineas_cobro']) && is_array($data['lineas_cobro'])) {
+                $idsElegidos = array_keys($valoresElegidos);
+            } else {
+                $idsElegidos = isset($data['ids_tarifa_detalle']) && is_array($data['ids_tarifa_detalle'])
+                    ? $data['ids_tarifa_detalle'] : null;
+            }
             $lineas = self::lineasDeCobro($db, $sol, $lineasNoEncontradas, $idCurso, $idsElegidos);
             if (!empty($lineas)) {
                 $hoy = date('Y-m-d');
                 $total = 0;
                 $detalleLink = array();
                 foreach ($lineas as $linea) {
+                    // Valor de la tarifa, o el que pusieron en la pantalla (nunca mayor)
+                    $valorTarifa = round((float) $linea['valor'], 2);
+                    $valorCobrar = $valorTarifa;
+                    $motivo = null;
+                    if (isset($valoresElegidos[$linea['id']])) {
+                        $valorCobrar = $valoresElegidos[$linea['id']]['valor'];
+                        $motivo = $valoresElegidos[$linea['id']]['motivo'];
+                        if ($valorCobrar > $valorTarifa) {
+                            $db->rollBack();
+                            Flight::json(array('error' => 'El valor de ' . $linea['nombre_producto'] . ' no puede ser mayor que el de la tarifa.'), 400);
+                            return;
+                        }
+                        if ($valorCobrar < $valorTarifa && $motivo === '') {
+                            $db->rollBack();
+                            Flight::json(array('error' => 'Falta el motivo del descuento de ' . $linea['nombre_producto'] . '.'), 400);
+                            return;
+                        }
+                    }
                     $idCuenta = CuentasPorCobrar::crearCuentaCursoExtra(
                         $db,
                         $idInscripcion,
                         $idPersonaEst,
                         $linea['id_producto_servicio'],
                         $hoy,
-                        $linea['valor'],
+                        $valorCobrar,
                         $curso['nombre'] . ' · ' . $linea['nombre_producto'],
-                        $userData->id ?? null
+                        $userData->id ?? null,
+                        $valorTarifa,
+                        $motivo
                     );
-                    $total += (float) $linea['valor'];
+                    $total += $valorCobrar;
                     $detalleLink[] = array('id_cuenta_por_cobrar' => $idCuenta, 'id_tarifa_curso_extra_detalle' => $linea['id']);
                 }
-                $correoDestino = !empty($sol['acu_correo']) ? $sol['acu_correo'] : $sol['est_correo'];
-                $idLink = LinksPago::registrar($db, $id, $idInscripcion, $curso['nombre'], $total, $correoDestino, $userData->id ?? null, $detalleLink);
+                // Con todo en cero (descuento total) no hay nada que pagar en Bold
+                if ($total > 0) {
+                    $correoDestino = !empty($sol['acu_correo']) ? $sol['acu_correo'] : $sol['est_correo'];
+                    $idLink = LinksPago::registrar($db, $id, $idInscripcion, $curso['nombre'], $total, $correoDestino, $userData->id ?? null, $detalleLink);
+                }
             }
 
             $stmtCerrar = $db->prepare("UPDATE solicitudes_inscripcion_publica SET
@@ -1162,8 +1237,10 @@ class SolicitudesInscripcionPublica
                 id_estudiante_creado = :id_estudiante,
                 id_inscripcion_creada = :id_inscripcion,
                 id_usuario_resolvio = :id_usuario,
+                fecha_inicio_clases = :fecha_inicio_clases,
                 fecha_resolucion = NOW()
                 WHERE id = :id AND id_tenant = :id_tenant");
+            $stmtCerrar->bindValue(':fecha_inicio_clases', $fechaInicioClases);
             $stmtCerrar->bindParam(':id_estudiante', $idEstudiante);
             $stmtCerrar->bindParam(':id_inscripcion', $idInscripcion);
             $stmtCerrar->bindValue(':id_usuario', $userData->id ?? null);
@@ -1186,6 +1263,9 @@ class SolicitudesInscripcionPublica
             if ($idLink !== null) {
                 $respuesta['link_pago'] = LinksPago::generarYEnviar($db, $idLink);
                 $respuesta['mensaje'] = 'Solicitud aprobada. El estudiante quedó inscrito y se creó la cuenta por cobrar.';
+            } elseif (!empty($lineas)) {
+                // Descuento total: hay cuenta (en cero) pero nada que pagar en Bold
+                $respuesta['mensaje'] = 'Solicitud aprobada. El estudiante quedó inscrito y se creó la cuenta por cobrar sin valor a pagar, así que no se envió link de pago.';
             }
             Flight::json($respuesta);
         } catch (Exception $e) {

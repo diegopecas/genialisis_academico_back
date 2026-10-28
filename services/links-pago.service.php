@@ -312,10 +312,12 @@ class LinksPago
         try {
             $db->beginTransaction();
 
-            $stmt = $db->prepare("SELECT lp.*, exce.id_estudiante, exce.id_curso_extra, ce.fecha_inicio AS curso_fecha_inicio
+            $stmt = $db->prepare("SELECT lp.*, exce.id_estudiante, exce.id_curso_extra, ce.fecha_inicio AS curso_fecha_inicio,
+                       s.fecha_inicio_clases
                 FROM links_pago lp
                 INNER JOIN estudiantes_x_cursos_extra exce ON exce.id = lp.id_estudiante_x_curso_extra AND exce.id_tenant = lp.id_tenant
                 INNER JOIN cursos_extra ce ON ce.id = exce.id_curso_extra AND ce.id_tenant = lp.id_tenant
+                LEFT JOIN solicitudes_inscripcion_publica s ON s.id = lp.id_solicitud_inscripcion_publica AND s.id_tenant = lp.id_tenant
                 WHERE lp.id = :id AND lp.id_tenant = :id_tenant
                 FOR UPDATE");
             $stmt->bindValue(':id', $id_link);
@@ -379,9 +381,16 @@ class LinksPago
                 'referencia_bancaria' => mb_substr($id_transaccion, 0, 100)
             ), $cuentas);
 
-            // Paquete de sesiones por cada linea de tipo paquete
-            // Un curso sin fecha de inicio es permanente: el paquete arranca hoy.
-            $fechaInicio = $link['curso_fecha_inicio'] !== null ? max(date('Y-m-d'), $link['curso_fecha_inicio']) : date('Y-m-d');
+            // Paquete de sesiones por cada linea de tipo paquete.
+            // Arranca en la fecha de inicio de clases que se puso al aprobar;
+            // si ya paso (pagaron tarde), arranca el dia del pago.
+            // Sin esa fecha: un curso sin fecha de inicio es permanente y el
+            // paquete arranca hoy.
+            if (!empty($link['fecha_inicio_clases'])) {
+                $fechaInicio = max(date('Y-m-d'), $link['fecha_inicio_clases']);
+            } else {
+                $fechaInicio = $link['curso_fecha_inicio'] !== null ? max(date('Y-m-d'), $link['curso_fecha_inicio']) : date('Y-m-d');
+            }
             $stmtLinea = $db->prepare("SELECT d.numero_sesiones, d.vigencia_dias, tcp.codigo AS codigo_tipo_cobro
                 FROM tarifas_cursos_extra_detalle d
                 INNER JOIN productos_servicios ps ON ps.id = d.id_producto_servicio AND ps.id_tenant = d.id_tenant
@@ -599,7 +608,7 @@ class LinksPago
     {
         $stmt = $db->prepare("SELECT ce.nombre AS curso,
                    TRIM(CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.primer_apellido, ''))) AS participante,
-                   s.acu_primer_nombre, s.est_primer_nombre
+                   s.acu_primer_nombre, s.est_primer_nombre, s.fecha_inicio_clases
             FROM estudiantes_x_cursos_extra exce
             INNER JOIN cursos_extra ce ON ce.id = exce.id_curso_extra AND ce.id_tenant = exce.id_tenant
             INNER JOIN estudiantes e ON e.id = exce.id_estudiante AND e.id_tenant = exce.id_tenant
@@ -639,6 +648,7 @@ class LinksPago
             'saludo' => $saludo,
             'participante' => isset($fila['participante']) ? $fila['participante'] : '',
             'curso' => isset($fila['curso']) ? $fila['curso'] : '',
+            'fecha_inicio_clases' => !empty($fila['fecha_inicio_clases']) ? $fila['fecha_inicio_clases'] : null,
             'horarios' => $stmtHorarios->fetchAll(PDO::FETCH_ASSOC),
             'lineas' => $stmtLineas->fetchAll(PDO::FETCH_ASSOC)
         );
@@ -666,6 +676,16 @@ class LinksPago
 
         $saludo = $d['saludo'] !== '' ? 'Hola, ' . $e($d['saludo']) . '.' : 'Hola.';
 
+        // Fecha de inicio de clases puesta en la aprobacion, en formato 3 de noviembre de 2026
+        $bloqueInicio = '';
+        if (!empty($d['fecha_inicio_clases'])) {
+            $meses = array(1 => 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto',
+                'septiembre', 'octubre', 'noviembre', 'diciembre');
+            $t = strtotime($d['fecha_inicio_clases']);
+            $bloqueInicio = '<p style="margin:12px 0 0">Las clases empiezan el <strong>' .
+                (int) date('j', $t) . ' de ' . $meses[(int) date('n', $t)] . ' de ' . date('Y', $t) . '</strong>.</p>';
+        }
+
         return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"></head>' .
             '<body style="margin:0;background:#f5f5f7;font-family:Arial,Helvetica,sans-serif;color:#222">' .
             '<div style="max-width:560px;margin:0 auto;padding:24px 16px">' .
@@ -674,6 +694,7 @@ class LinksPago
             '<h1 style="margin:0 0 16px;font-size:21px">Tu inscripción fue aprobada</h1>' .
             '<p style="margin:0 0 10px">' . $saludo . '</p>' .
             '<p style="margin:0">Aprobamos la inscripción de <strong>' . $e($d['participante']) . '</strong> a <strong>' . $e($d['curso']) . '</strong> y ya le separamos el cupo.</p>' .
+            $bloqueInicio .
             $bloqueHorarios .
             '<p style="margin:18px 0 6px;font-weight:bold">Lo que vas a pagar</p>' .
             '<table style="width:100%;border-collapse:collapse;font-size:14px">' . $filas .
