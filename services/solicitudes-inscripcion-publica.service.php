@@ -647,61 +647,145 @@ class SolicitudesInscripcionPublica
         }
 
         try {
-            $db = Flight::db();
-
-            $stmtCursos = $db->prepare("SELECT id, nombre, fecha_inicio, fecha_fin, fecha_limite_inscripcion,
-                       edad_minima_meses, edad_maxima_meses, cupo_maximo, anio
-                FROM cursos_extra
-                WHERE activo = 1 AND id_tenant = :id_tenant
-                ORDER BY nombre");
-            $stmtCursos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $stmtCursos->execute();
-            $cursos = $stmtCursos->fetchAll(PDO::FETCH_ASSOC);
-
-            $stmtHorarios = $db->prepare("SELECT id, id_dia_semana, hora_inicial, hora_final, cupo
-                FROM horarios_cursos_extra
-                WHERE id_curso_extra = :id_curso_extra AND id_tenant = :id_tenant
-                ORDER BY id_dia_semana, hora_inicial");
-
-            $response = array();
-            foreach ($cursos as $curso) {
-                $tarifa = TarifasCursosExtra::resolverTarifa($db, $curso['id'], $curso['anio'], null);
-                $planes = array();
-                foreach ($tarifa ? $tarifa['detalle'] : array() as $linea) {
-                    $planes[] = array(
-                        'id' => $linea['id'],
-                        'nombre' => $linea['nombre_producto'],
-                        'tipo' => $linea['tipo'],
-                        'valor' => (float) $linea['valor'],
-                        'numero_sesiones' => $linea['numero_sesiones'] !== null ? (int) $linea['numero_sesiones'] : null,
-                        'vigencia_dias' => $linea['vigencia_dias'] !== null ? (int) $linea['vigencia_dias'] : null,
-                        'orden' => (int) $linea['orden']
-                    );
-                }
-
-                $stmtHorarios->bindValue(':id_curso_extra', $curso['id']);
-                $stmtHorarios->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-                $stmtHorarios->execute();
-
-                $response[] = array(
-                    'id' => $curso['id'],
-                    'nombre' => $curso['nombre'],
-                    'fecha_inicio' => $curso['fecha_inicio'],
-                    'fecha_fin' => $curso['fecha_fin'],
-                    'fecha_limite_inscripcion' => $curso['fecha_limite_inscripcion'],
-                    'edad_minima_meses' => $curso['edad_minima_meses'] !== null ? (int) $curso['edad_minima_meses'] : null,
-                    'edad_maxima_meses' => $curso['edad_maxima_meses'] !== null ? (int) $curso['edad_maxima_meses'] : null,
-                    'cupo_maximo' => $curso['cupo_maximo'] !== null ? (int) $curso['cupo_maximo'] : null,
-                    'planes' => $planes,
-                    'horarios' => $stmtHorarios->fetchAll(PDO::FETCH_ASSOC)
-                );
-            }
-
-            Flight::json(array('cursos' => $response));
+            Flight::json(array('cursos' => self::armarCatalogoPortal(Flight::db())));
         } catch (Exception $e) {
             error_log("Error en catalogoParaPortal: " . $e->getMessage());
             Flight::json(array('error' => 'No se pudo armar el catálogo.', 'codigo' => 'ERROR_INTERNO'), 500);
         }
+    }
+
+    /**
+     * POST /cursos-extra/sincronizar-portal (con token de sesion)
+     * Manda ya mismo al portal web los cursos activos con los planes de su
+     * tarifa vigente y sus horarios. El portal actualiza sus programas,
+     * precios y horarios (los empata por id_externo) y responde el resumen.
+     *
+     * El portal se configura en configuracion_global: portal_web_url_api (URL
+     * del back del portal), portal_web_dominio y portal_web_ruta (con estos
+     * el portal sabe de que institucion es). Va con la misma API key de la
+     * integracion (INTEGRACION_PORTAL_API_KEY).
+     *
+     * Responde el resumen del portal o {error}.
+     */
+    public static function sincronizarPortal()
+    {
+        try {
+            $db = Flight::db();
+
+            if (!defined('INTEGRACION_PORTAL_API_KEY') || INTEGRACION_PORTAL_API_KEY === '') {
+                Flight::json(array('error' => 'La integración con el portal no está configurada para esta institución.'), 409);
+                return;
+            }
+
+            $stmt = $db->prepare("SELECT clave, valor_texto FROM configuracion_global
+                WHERE id_tenant = :id_tenant AND clave IN ('portal_web_url_api', 'portal_web_dominio', 'portal_web_ruta')");
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmt->execute();
+            $portal = array('portal_web_url_api' => '', 'portal_web_dominio' => '', 'portal_web_ruta' => '');
+            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $fila) {
+                $portal[$fila['clave']] = trim((string) $fila['valor_texto']);
+            }
+            if ($portal['portal_web_url_api'] === '' || $portal['portal_web_dominio'] === '') {
+                Flight::json(array('error' => 'Falta configurar el portal web (portal_web_url_api y portal_web_dominio en la configuración global).'), 409);
+                return;
+            }
+
+            $cuerpo = json_encode(array('cursos' => self::armarCatalogoPortal($db)), JSON_UNESCAPED_UNICODE);
+            $url = rtrim($portal['portal_web_url_api'], '/') . '/integracion/sincronizar';
+
+            $ch = curl_init($url);
+            curl_setopt_array($ch, array(
+                CURLOPT_POST => true,
+                CURLOPT_POSTFIELDS => $cuerpo,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_HTTPHEADER => array(
+                    'Content-Type: application/json',
+                    'X-API-KEY: ' . INTEGRACION_PORTAL_API_KEY,
+                    'X-Portal-Dominio: ' . $portal['portal_web_dominio'],
+                    'X-Portal-Ruta: ' . $portal['portal_web_ruta']
+                ),
+                CURLOPT_CONNECTTIMEOUT => 15,
+                CURLOPT_TIMEOUT => 90
+            ));
+            $crudo = curl_exec($ch);
+            $codigoHttp = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $errorCurl = curl_error($ch);
+            curl_close($ch);
+
+            $respuesta = is_string($crudo) ? json_decode($crudo, true) : null;
+            if ($codigoHttp < 200 || $codigoHttp >= 300 || !is_array($respuesta)) {
+                $detalle = is_array($respuesta) && isset($respuesta['error']) ? $respuesta['error'] : ($errorCurl !== '' ? $errorCurl : 'HTTP ' . $codigoHttp);
+                error_log("Error en sincronizarPortal: " . $detalle);
+                Flight::json(array('error' => 'El portal no recibió la sincronización: ' . $detalle), 502);
+                return;
+            }
+
+            Flight::json($respuesta);
+        } catch (Exception $e) {
+            error_log("Error en sincronizarPortal: " . $e->getMessage());
+            Flight::json(array('error' => 'No se pudo sincronizar con el portal.'), 500);
+        }
+    }
+
+    /**
+     * Cursos activos con los planes de su tarifa vigente y sus horarios, como
+     * los recibe el portal. Solo lo que el portal necesita: nada de inscritos
+     * ni cartera.
+     *
+     * @param PDO $db
+     * @return array
+     */
+    private static function armarCatalogoPortal($db)
+    {
+        $stmtCursos = $db->prepare("SELECT id, nombre, fecha_inicio, fecha_fin, fecha_limite_inscripcion,
+                   edad_minima_meses, edad_maxima_meses, cupo_maximo, anio
+            FROM cursos_extra
+            WHERE activo = 1 AND id_tenant = :id_tenant
+            ORDER BY nombre");
+        $stmtCursos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmtCursos->execute();
+        $cursos = $stmtCursos->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmtHorarios = $db->prepare("SELECT id, id_dia_semana, hora_inicial, hora_final, cupo
+            FROM horarios_cursos_extra
+            WHERE id_curso_extra = :id_curso_extra AND id_tenant = :id_tenant
+            ORDER BY id_dia_semana, hora_inicial");
+
+        $response = array();
+        foreach ($cursos as $curso) {
+            $tarifa = TarifasCursosExtra::resolverTarifa($db, $curso['id'], $curso['anio'], null);
+            $planes = array();
+            foreach ($tarifa ? $tarifa['detalle'] : array() as $linea) {
+                $planes[] = array(
+                    'id' => $linea['id'],
+                    'nombre' => $linea['nombre_producto'],
+                    'tipo' => $linea['tipo'],
+                    'valor' => (float) $linea['valor'],
+                    'numero_sesiones' => $linea['numero_sesiones'] !== null ? (int) $linea['numero_sesiones'] : null,
+                    'vigencia_dias' => $linea['vigencia_dias'] !== null ? (int) $linea['vigencia_dias'] : null,
+                    'orden' => (int) $linea['orden']
+                );
+            }
+
+            $stmtHorarios->bindValue(':id_curso_extra', $curso['id']);
+            $stmtHorarios->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtHorarios->execute();
+
+            $response[] = array(
+                'id' => $curso['id'],
+                'nombre' => $curso['nombre'],
+                'fecha_inicio' => $curso['fecha_inicio'],
+                'fecha_fin' => $curso['fecha_fin'],
+                'fecha_limite_inscripcion' => $curso['fecha_limite_inscripcion'],
+                'edad_minima_meses' => $curso['edad_minima_meses'] !== null ? (int) $curso['edad_minima_meses'] : null,
+                'edad_maxima_meses' => $curso['edad_maxima_meses'] !== null ? (int) $curso['edad_maxima_meses'] : null,
+                'cupo_maximo' => $curso['cupo_maximo'] !== null ? (int) $curso['cupo_maximo'] : null,
+                'planes' => $planes,
+                'horarios' => $stmtHorarios->fetchAll(PDO::FETCH_ASSOC)
+            );
+        }
+
+        return $response;
     }
 
     /**

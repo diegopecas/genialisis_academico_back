@@ -171,6 +171,8 @@ Flight::route('PUT /cursos-extra', [CursosExtra::class, 'replace']);
 Flight::route('DELETE /cursos-extra', [CursosExtra::class, 'delete']);
 Flight::route('GET /cursos-extra/@id/inscritos', [CursosExtra::class, 'getInscritos']);
 Flight::route('GET /cursos-extra/@id/estudiantes-disponibles', [CursosExtra::class, 'getEstudiantesDisponibles']);
+// Manda ya mismo al portal web los cursos, planes y horarios (ver SolicitudesInscripcionPublica::sincronizarPortal)
+Flight::route('POST /cursos-extra/sincronizar-portal', [SolicitudesInscripcionPublica::class, 'sincronizarPortal']);
 
 // ESTUDIANTES X CURSOS EXTRA
 Flight::route('PUT /estudiantes-x-cursos-extra/anular', [EstudiantesXCursosExtra::class, 'anular']);
