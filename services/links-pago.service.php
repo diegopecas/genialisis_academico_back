@@ -525,9 +525,9 @@ class LinksPago
 
     /**
      * GET /links-pago/datos-pago/@id
-     * Lo que va en el PDF para transferir: lo mismo del correo (curso,
-     * participante, fecha de inicio, horarios, lineas, total) y las cuentas
-     * bancarias.
+     * Lo que va en el PDF de pago: lo mismo del correo (curso, participante,
+     * fecha de inicio, horarios, lineas, total), las cuentas bancarias y, con
+     * pasarela, el link para pagar en linea.
      */
     public static function datosPago($id)
     {
@@ -541,6 +541,8 @@ class LinksPago
         $datos = self::datosCorreo($db, $link);
         $datos['valor'] = (float) $link['valor'];
         $datos['referencia'] = $link['referencia'];
+        // Con pasarela, el link para pagar en linea (si sigue sin pagar)
+        $datos['url'] = $link['proveedor'] !== 'transferencia' && $link['estado'] === 'activo' ? $link['url'] : null;
         $datos['cuentas'] = self::cuentasBancarias($db);
         Flight::json($datos);
     }
@@ -579,9 +581,8 @@ class LinksPago
 
         if ($error === null) {
             $datos = self::datosCorreo($db, $link);
-            if ($link['proveedor'] === 'transferencia') {
-                $datos['cuentas'] = self::cuentasBancarias($db);
-            }
+            // Las cuentas van siempre: con pasarela, por si prefiere transferir
+            $datos['cuentas'] = self::cuentasBancarias($db);
             $resultado = ConfiguracionCorreo::enviar($db, array($link['correo_destino']),
                 'Tu inscripción a ' . $datos['curso'] . ' fue aprobada', self::htmlCorreo($datos, $link));
             $error = $resultado['error'];
@@ -677,22 +678,27 @@ class LinksPago
 
         $saludo = $d['saludo'] !== '' ? 'Hola, ' . $e($d['saludo']) . '.' : 'Hola.';
 
-        // Como pagar: boton de la pasarela, o las cuentas para transferir
+        // Como pagar: boton de la pasarela (y las cuentas por si prefiere
+        // transferir), o solo las cuentas
+        $cuentas = '';
+        foreach (isset($d['cuentas']) ? $d['cuentas'] : array() as $c) {
+            $cuentas .= '<div style="margin:0 0 10px;padding:10px 12px;border:1px solid #eee;border-radius:10px">' .
+                '<strong>' . $e($c['nombre']) . '</strong><br>Cuenta ' . $e($c['numero_cuenta']) .
+                (!empty($c['descripcion']) ? '<br><span style="font-size:13px;color:#555">' . $e($c['descripcion']) . '</span>' : '') .
+                '</div>';
+        }
         if ($link['proveedor'] === 'transferencia') {
-            $cuentas = '';
-            foreach (isset($d['cuentas']) ? $d['cuentas'] : array() as $c) {
-                $cuentas .= '<div style="margin:0 0 10px;padding:10px 12px;border:1px solid #eee;border-radius:10px">' .
-                    '<strong>' . $e($c['nombre']) . '</strong><br>Cuenta ' . $e($c['numero_cuenta']) .
-                    (!empty($c['descripcion']) ? '<br><span style="font-size:13px;color:#555">' . $e($c['descripcion']) . '</span>' : '') .
-                    '</div>';
-            }
             $bloquePago = '<p style="margin:22px 0 8px;font-weight:bold">Cómo pagar</p>' .
                 ($cuentas !== '' ? '<p style="margin:0 0 10px">Haz la transferencia a cualquiera de estas cuentas:</p>' . $cuentas
                     : '<p style="margin:0 0 10px">Te enviamos los datos para el pago por WhatsApp.</p>') .
                 '<p style="margin:12px 0 0;font-size:13px;color:#555">Cuando pagues, responde este correo con el comprobante y el nombre del participante. Si tienes alguna pregunta, también puedes responder este correo.</p>';
         } else {
             $bloquePago = '<p style="margin:22px 0;text-align:center"><a href="' . $e($link['url']) . '" style="display:inline-block;background:#1f8f3a;color:#fff;text-decoration:none;padding:13px 26px;border-radius:999px;font-weight:bold">Pagar ahora</a></p>' .
-                '<p style="margin:0;font-size:13px;color:#555">El pago se hace en la página segura de la pasarela. Cuando se confirme, el plan queda activo. Si tienes alguna pregunta, responde este correo.</p>';
+                '<p style="margin:0;font-size:13px;color:#555">El pago se hace en la página segura de la pasarela. Cuando se confirme, el plan queda activo. Si tienes alguna pregunta, responde este correo.</p>' .
+                ($cuentas !== ''
+                    ? '<p style="margin:22px 0 8px;font-weight:bold">¿Prefieres transferir?</p>' .
+                      '<p style="margin:0 0 10px">También puedes pagar a cualquiera de estas cuentas y responder este correo con el comprobante y el nombre del participante:</p>' . $cuentas
+                    : '');
         }
 
         // Fecha de inicio de clases puesta en la aprobacion, en formato 3 de noviembre de 2026
