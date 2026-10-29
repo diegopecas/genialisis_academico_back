@@ -64,6 +64,8 @@ Flight::route('POST /acudientes/verificar-duplicados', [Acudientes::class, 'veri
 // Ruta para obtener estudiantes de un acudiente específico
 Flight::route('GET /acudientes/mis-estudiantes/@id_persona', [Acudientes::class, 'getEstudiantesByAcudiente']);
 Flight::route('GET /acudientes/mis-estudiantes-ids/@id_persona', [Acudientes::class, 'getEstudiantesIdsOnly']);
+// Portal de padres: el acudiente registra a un hijo (permiso padres.estudiantes.agregar_hijo)
+Flight::route('POST /acudientes/agregar-hijo', [Acudientes::class, 'agregarHijo']);
 
 
 // Tipos de necesidades especiales

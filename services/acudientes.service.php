@@ -1,6 +1,13 @@
 <?php
 class Acudientes
 {
+    /**
+     * Permisos del portal de padres para quien tambien es estudiante y para
+     * que el acudiente cree a sus hijos. Sin ellos todo funciona como antes.
+     */
+    const PERMISO_VERME = 'padres.estudiantes.verme';
+    const PERMISO_AGREGAR_HIJO = 'padres.estudiantes.agregar_hijo';
+
     public static function getAll()
     {
         $db = Flight::db();
@@ -459,6 +466,13 @@ class Acudientes
         $sentence->execute();
         $response = $sentence->fetchAll();
 
+        // Quien tambien es estudiante se ve a si mismo, de primero y marcado
+        // con es_yo. Solo con el permiso: sin el, la lista queda como antes.
+        $propio = self::estudiantePropio($db, $idPersona);
+        if ($propio) {
+            array_unshift($response, $propio);
+        }
+
         Flight::json($response);
     }
 
@@ -478,6 +492,12 @@ class Acudientes
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
+
+        $propio = self::estudiantePropio($db, $idPersona);
+        if ($propio) {
+            array_unshift($response, array('id_estudiante' => $propio['id_estudiante']));
+        }
+
         Flight::json($response);
     }
 
@@ -517,6 +537,259 @@ class Acudientes
         $sentence->execute();
         $response = $sentence->fetch();
 
-        return !empty($response) && (int) $response['total'] > 0;
+        if (!empty($response) && (int) $response['total'] > 0) {
+            return true;
+        }
+
+        // Tambien es "suyo" el estudiante que es la misma persona, si tiene
+        // el permiso de verse como estudiante.
+        $propio = self::estudiantePropio($db, $idPersona);
+
+        return $propio !== null && $propio['id_estudiante'] === $idEstudiante;
+    }
+
+    /**
+     * Fila de "mis estudiantes" de la propia persona, cuando ella misma es
+     * estudiante activo. Solo aplica si:
+     *   - la persona consultada es la del usuario en sesion (no se deja ver
+     *     a otro como estudiante cambiando el id en la URL), y
+     *   - el usuario tiene el permiso padres.estudiantes.verme.
+     * Si no se cumple devuelve null y nada cambia.
+     *
+     * Trae las mismas columnas de getEstudiantesByAcudiente, mas es_yo = 1.
+     *
+     * @param PDO $db
+     * @param string $idPersona
+     * @return array|null
+     */
+    private static function estudiantePropio(PDO $db, $idPersona)
+    {
+        if (empty($idPersona)) {
+            return null;
+        }
+
+        $userData = JWTService::autenticacionOpcional();
+        if (!$userData || !isset($userData->id_persona) || $userData->id_persona !== $idPersona) {
+            return null;
+        }
+        if (!PermisosService::tiene($userData, self::PERMISO_VERME)) {
+            return null;
+        }
+
+        $sentence = $db->prepare("SELECT 
+                            e.id as id_estudiante,
+                            e.id_persona,
+                            e.fecha_ingreso,
+                            e.activo,
+                            e.alimentacion,
+                            e.telefono_emergencia,
+                            e.eps,
+                            e.anno,
+                            p.primer_nombre,
+                            p.segundo_nombre,
+                            p.primer_apellido,
+                            p.segundo_apellido,
+                            p.id_tipo_identificacion,
+                            ti.nombre AS tipo_identificacion,
+                            p.numero_identificacion,
+                            p.fecha_nacimiento,
+                            TIMESTAMPDIFF(YEAR, p.fecha_nacimiento, CURDATE()) AS edad,
+                            p.id_genero,
+                            g.nombre AS nombre_genero,
+                            p.direccion,
+                            grp.id AS id_grupo,
+                            grp.nombre AS nombre_grupo,
+                            CONCAT(p.primer_nombre, ' ', IFNULL(p.segundo_nombre, ''), ' ', p.primer_apellido, ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo,
+                            1 AS es_responsable_pago,
+                            0 AS autorizado_recoger,
+                            'Yo' AS tipo_acudiente,
+                            1 AS es_yo
+                            FROM estudiantes e
+                            INNER JOIN personas p ON e.id_persona = p.id
+                            INNER JOIN tipos_identificacion ti ON p.id_tipo_identificacion = ti.id
+                            LEFT JOIN generos g ON p.id_genero = g.id
+                            LEFT JOIN estudiantes_x_grupos eg ON e.id = eg.id_estudiante AND eg.activo = 1
+                            LEFT JOIN grupos grp ON eg.id_grupo = grp.id
+                            WHERE e.id_persona = :id_persona
+                            AND e.activo = 1
+                            AND e.id_tenant = :id_tenant
+                            LIMIT 1");
+        $sentence->bindParam(':id_persona', $idPersona);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $fila = $sentence->fetch();
+
+        return $fila ? $fila : null;
+    }
+
+    /**
+     * Portal de padres: el acudiente registra a un hijo con sus datos
+     * basicos. Crea (o reusa por documento) la persona, el estudiante y la
+     * relacion de acudiente, con quien lo registra como responsable de pago.
+     *
+     * El acudiente es siempre el usuario en sesion: no se recibe del cliente.
+     * Exige el permiso padres.estudiantes.agregar_hijo.
+     *
+     * No pisa los datos de una persona que ya exista, y no deja tomar un
+     * estudiante que ya tiene otro acudiente: eso lo resuelve la escuela.
+     *
+     * Responde {id_estudiante}.
+     */
+    public static function agregarHijo()
+    {
+        $userData = JWTService::requerirAutenticacion();
+        if (!PermisosService::tiene($userData, self::PERMISO_AGREGAR_HIJO)) {
+            Flight::json(array('error' => 'No tienes permiso para registrar estudiantes.'), 403);
+            return;
+        }
+
+        $idPersonaAcu = isset($userData->id_persona) ? $userData->id_persona : null;
+        if (empty($idPersonaAcu)) {
+            Flight::json(array('error' => 'No se pudo identificar al acudiente.'), 400);
+            return;
+        }
+
+        $data = Flight::request()->data;
+        $texto = function ($clave) use ($data) {
+            $valor = isset($data[$clave]) ? trim((string) $data[$clave]) : '';
+            return $valor === '' ? null : $valor;
+        };
+
+        $idTipo = $texto('id_tipo_identificacion');
+        $numero = $texto('numero_identificacion');
+        $primerNombre = $texto('primer_nombre');
+        $segundoNombre = $texto('segundo_nombre');
+        $primerApellido = $texto('primer_apellido');
+        $segundoApellido = $texto('segundo_apellido');
+        $fechaNacimiento = $texto('fecha_nacimiento');
+        $idGenero = $texto('id_genero');
+        $idTipoAcudiente = $texto('id_tipo_acudiente');
+
+        if ($idTipo === null || $numero === null || $primerNombre === null || $primerApellido === null
+            || $fechaNacimiento === null || $idTipoAcudiente === null) {
+            Flight::json(array('error' => 'Faltan datos: documento, nombre, apellido, fecha de nacimiento y parentesco son obligatorios.'), 400);
+            return;
+        }
+        if ($fechaNacimiento > date('Y-m-d')) {
+            Flight::json(array('error' => 'La fecha de nacimiento no puede ser futura.'), 400);
+            return;
+        }
+
+        $db = Flight::db();
+
+        try {
+            $db->beginTransaction();
+
+            // El acudiente no puede registrarse a si mismo como hijo
+            $stmt = $db->prepare("SELECT numero_identificacion, telefono FROM personas
+                                  WHERE id = :id AND id_tenant = :id_tenant LIMIT 1");
+            $stmt->bindParam(':id', $idPersonaAcu);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmt->execute();
+            $acudiente = $stmt->fetch();
+            if (!$acudiente) {
+                $db->rollBack();
+                Flight::json(array('error' => 'No se encontró tu registro como persona en la escuela.'), 400);
+                return;
+            }
+            if (trim((string) $acudiente['numero_identificacion']) === $numero) {
+                $db->rollBack();
+                Flight::json(array('error' => 'Ese documento es el tuyo: no puedes registrarte como tu propio hijo.'), 400);
+                return;
+            }
+
+            // Persona: se reusa si el documento ya existe en el tenant
+            $stmt = $db->prepare("SELECT id FROM personas
+                                  WHERE numero_identificacion = :numero AND id_tenant = :id_tenant LIMIT 1");
+            $stmt->bindParam(':numero', $numero);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmt->execute();
+            $idPersonaEst = $stmt->fetchColumn();
+
+            if (!$idPersonaEst) {
+                $idPersonaEst = Uuid::generar();
+                $stmt = $db->prepare("INSERT INTO personas (
+                    id, id_tenant, primer_nombre, segundo_nombre, primer_apellido, segundo_apellido,
+                    id_tipo_identificacion, numero_identificacion, fecha_nacimiento, id_genero, nacionalidad
+                ) VALUES (
+                    :id, :id_tenant, :primer_nombre, :segundo_nombre, :primer_apellido, :segundo_apellido,
+                    :id_tipo, :numero, :fecha_nacimiento, :id_genero, 'Colombiana'
+                )");
+                $stmt->bindValue(':id', $idPersonaEst);
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmt->bindValue(':primer_nombre', $primerNombre);
+                $stmt->bindValue(':segundo_nombre', $segundoNombre);
+                $stmt->bindValue(':primer_apellido', $primerApellido);
+                $stmt->bindValue(':segundo_apellido', $segundoApellido);
+                $stmt->bindValue(':id_tipo', (int) $idTipo, PDO::PARAM_INT);
+                $stmt->bindValue(':numero', $numero);
+                $stmt->bindValue(':fecha_nacimiento', $fechaNacimiento);
+                $stmt->bindValue(':id_genero', $idGenero !== null ? (int) $idGenero : null, $idGenero !== null ? PDO::PARAM_INT : PDO::PARAM_NULL);
+                $stmt->execute();
+            }
+
+            // Estudiante: se reusa si ya existe
+            $stmt = $db->prepare("SELECT id FROM estudiantes
+                                  WHERE id_persona = :id_persona AND id_tenant = :id_tenant LIMIT 1");
+            $stmt->bindParam(':id_persona', $idPersonaEst);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmt->execute();
+            $idEstudiante = $stmt->fetchColumn();
+
+            if ($idEstudiante) {
+                // Ya registrado: si es suyo se avisa; si tiene otro acudiente
+                // no se toma desde el portal.
+                $stmt = $db->prepare("SELECT id_persona FROM acudientes
+                                      WHERE id_estudiante = :id_estudiante AND id_tenant = :id_tenant AND activo = 1");
+                $stmt->bindParam(':id_estudiante', $idEstudiante);
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmt->execute();
+                $acudientesActuales = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+                if (in_array($idPersonaAcu, $acudientesActuales, true)) {
+                    $db->rollBack();
+                    Flight::json(array('error' => 'Ese estudiante ya está en tus estudiantes.'), 400);
+                    return;
+                }
+                if (!empty($acudientesActuales)) {
+                    $db->rollBack();
+                    Flight::json(array('error' => 'Ese estudiante ya tiene un acudiente registrado. Comunícate con la escuela para que te agreguen.'), 409);
+                    return;
+                }
+            } else {
+                $idEstudiante = Uuid::generar();
+                $stmt = $db->prepare("INSERT INTO estudiantes
+                    (id, id_tenant, fecha_ingreso, alimentacion, permanente, telefono_emergencia, activo, anno, id_persona)
+                    VALUES (:id, :id_tenant, CURDATE(), 0, 0, :telefono, 1, :anno, :id_persona)");
+                $stmt->bindValue(':id', $idEstudiante);
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                // El telefono de emergencia es el del acudiente que lo registra
+                $stmt->bindValue(':telefono', $acudiente['telefono'] !== null ? $acudiente['telefono'] : '');
+                $stmt->bindValue(':anno', (int) date('Y'), PDO::PARAM_INT);
+                $stmt->bindValue(':id_persona', $idPersonaEst);
+                $stmt->execute();
+            }
+
+            // Relacion de acudiente, con quien lo registra como responsable de pago
+            $stmt = $db->prepare("INSERT INTO acudientes
+                (id, id_tenant, id_tipo_acudiente, id_persona, id_estudiante,
+                 es_responsable_pago, autorizado_recoger, ve_en_portal_padres, activo)
+                VALUES (:id, :id_tenant, :id_tipo_acudiente, :id_persona, :id_estudiante, 1, 1, 1, 1)");
+            $stmt->bindValue(':id', Uuid::generar());
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmt->bindValue(':id_tipo_acudiente', (int) $idTipoAcudiente, PDO::PARAM_INT);
+            $stmt->bindValue(':id_persona', $idPersonaAcu);
+            $stmt->bindValue(':id_estudiante', $idEstudiante);
+            $stmt->execute();
+
+            $db->commit();
+            Flight::json(array('id_estudiante' => $idEstudiante));
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log("Error en agregarHijo: " . $e->getMessage());
+            Flight::json(array('error' => 'No se pudo registrar el estudiante.'), 500);
+        }
     }
 }
