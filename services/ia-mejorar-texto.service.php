@@ -1,8 +1,8 @@
 <?php
 class IaMejorarTexto
 {
-    // Modelos que usa este servicio. Se sacan a constantes para que el registro
-    // de consumo (ia_consumos) guarde el mismo modelo que se llama.
+    // Modelos por defecto cuando el tenant no tiene ia_mejorar_texto_cadena. Con
+    // la cadena configurada, el modelo de cada paso sale de ella.
     const MODELO_GEMINI = 'gemini-2.5-flash';
     const MODELO_GROQ = 'llama-3.3-70b-versatile';
 
@@ -98,43 +98,111 @@ PROMPT;
         return $config;
     }
 
+    /**
+     * Recorre la cadena de proveedores ia_mejorar_texto_cadena ("proveedor|modelo;...") hasta
+     * que uno responda. Proveedores: claude, gemini y groq. Si el tenant no tiene
+     * la clave, se conserva el comportamiento anterior: Gemini y luego Groq con
+     * los modelos de las constantes.
+     */
     private static function llamarIA($config, $prompt)
     {
+        $cadenaRaw = isset($config['ia_mejorar_texto_cadena']) ? trim($config['ia_mejorar_texto_cadena']) : '';
+        $pasos = self::parsearCadena($cadenaRaw);
+        if (empty($pasos)) {
+            $pasos = [
+                ['proveedor' => 'gemini', 'modelo' => self::MODELO_GEMINI],
+                ['proveedor' => 'groq', 'modelo' => self::MODELO_GROQ]
+            ];
+        }
+
         // Todos los proveedores que se prueben quedan en un solo registro de consumo
         $intentos = [];
 
-        $gemini_key = $config['gemini_api_key'] ?? null;
-        if ($gemini_key) {
+        foreach ($pasos as $paso) {
+            $proveedor = $paso['proveedor'];
+            $modelo = $paso['modelo'];
+            $resultado = null;
             $inicio = microtime(true);
-            $resultado = self::llamarGemini($gemini_key, $prompt);
-            $intentos[] = IaConsumos::intento('gemini', self::MODELO_GEMINI, $resultado, $inicio);
-            if ($resultado['success']) {
-                IaConsumos::registrar('mejorar_texto', 'mejorar', $intentos);
-                return ["success" => true, "respuesta" => $resultado['respuesta'], "proveedor" => "gemini"];
-            }
-            error_log("IaMejorarTexto - Gemini falló: " . ($resultado['error'] ?? 'desconocido'));
-        }
 
-        $groq_key = $config['groq_api_key'] ?? null;
-        if ($groq_key) {
-            $inicio = microtime(true);
-            $resultado = self::llamarGroq($groq_key, $prompt);
-            $intentos[] = IaConsumos::intento('groq', self::MODELO_GROQ, $resultado, $inicio);
-            if ($resultado['success']) {
-                IaConsumos::registrar('mejorar_texto', 'mejorar', $intentos);
-                return ["success" => true, "respuesta" => $resultado['respuesta'], "proveedor" => "groq"];
+            if ($proveedor === 'claude') {
+                $key = $config['claude_api_key'] ?? null;
+                if (!$key) {
+                    error_log("IaMejorarTexto - se salta 'claude': falta claude_api_key");
+                    continue;
+                }
+                $resultado = IaClaude::llamarTexto(
+                    $key,
+                    $modelo,
+                    "Eres un redactor experto en lenguaje técnico docente. Responde SOLO con el texto mejorado en texto plano, sin markdown ni comentarios adicionales.",
+                    [["role" => "user", "content" => $prompt]],
+                    2048,
+                    60
+                );
+            } elseif ($proveedor === 'gemini') {
+                $key = $config['gemini_api_key'] ?? null;
+                if (!$key) {
+                    error_log("IaMejorarTexto - se salta 'gemini': falta gemini_api_key");
+                    continue;
+                }
+                $resultado = self::llamarGemini($key, $modelo, $prompt);
+            } elseif ($proveedor === 'groq') {
+                $key = $config['groq_api_key'] ?? null;
+                if (!$key) {
+                    error_log("IaMejorarTexto - se salta 'groq': falta groq_api_key");
+                    continue;
+                }
+                $resultado = self::llamarGroq($key, $modelo, $prompt);
+            } else {
+                error_log("IaMejorarTexto - proveedor no soportado en la cadena: {$proveedor}");
+                continue;
             }
-            error_log("IaMejorarTexto - Groq falló: " . ($resultado['error'] ?? 'desconocido'));
+
+            $intentos[] = IaConsumos::intento($proveedor, $modelo, $resultado, $inicio);
+
+            if (!empty($resultado['success'])) {
+                IaConsumos::registrar('mejorar_texto', 'mejorar', $intentos);
+                return ["success" => true, "respuesta" => $resultado['respuesta'], "proveedor" => $proveedor];
+            }
+            error_log("IaMejorarTexto - {$proveedor} ({$modelo}) falló: " . ($resultado['error'] ?? 'desconocido'));
         }
 
         IaConsumos::registrar('mejorar_texto', 'mejorar', $intentos);
         return ["success" => false, "error" => "No hay proveedores de IA disponibles"];
     }
 
-    private static function llamarGemini($api_key, $prompt)
+    /**
+     * Parsea "proveedor|modelo;proveedor|modelo" a una lista ordenada de pasos.
+     * Ignora trozos vacíos o mal formados.
+     */
+    private static function parsearCadena($cadena)
+    {
+        $pasos = [];
+        if (trim($cadena) === '') {
+            return $pasos;
+        }
+        foreach (explode(';', $cadena) as $trozo) {
+            $trozo = trim($trozo);
+            if ($trozo === '') {
+                continue;
+            }
+            $partes = explode('|', $trozo, 2);
+            if (count($partes) !== 2) {
+                continue;
+            }
+            $proveedor = strtolower(trim($partes[0]));
+            $modelo = trim($partes[1]);
+            if ($proveedor === '' || $modelo === '') {
+                continue;
+            }
+            $pasos[] = ['proveedor' => $proveedor, 'modelo' => $modelo];
+        }
+        return $pasos;
+    }
+
+    private static function llamarGemini($api_key, $modelo, $prompt)
     {
         try {
-            $url = "https://generativelanguage.googleapis.com/v1/models/" . self::MODELO_GEMINI . ":generateContent?key=" . $api_key;
+            $url = "https://generativelanguage.googleapis.com/v1/models/" . $modelo . ":generateContent?key=" . $api_key;
 
             $body = json_encode([
                 "contents" => [["role" => "user", "parts" => [["text" => $prompt]]]],
@@ -168,13 +236,13 @@ PROMPT;
         }
     }
 
-    private static function llamarGroq($api_key, $prompt)
+    private static function llamarGroq($api_key, $modelo, $prompt)
     {
         try {
             $url = "https://api.groq.com/openai/v1/chat/completions";
 
             $body = json_encode([
-                "model" => self::MODELO_GROQ,
+                "model" => $modelo,
                 "messages" => [
                     ["role" => "system", "content" => "Eres un redactor experto en lenguaje técnico docente. Responde SOLO con el texto mejorado en texto plano, sin markdown ni comentarios adicionales."],
                     ["role" => "user", "content" => $prompt]

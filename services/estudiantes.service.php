@@ -1491,8 +1491,10 @@ class Estudiantes
                 $config[$filaConfig['clave']] = $filaConfig['valor'];
             }
 
-            if (empty($config['gemini_api_key'])) {
-                Flight::json(array('error' => 'API Key de Gemini no configurada en ia_configuracion'), 500);
+            // La lectura la hace la cadena ia_vision_cadena (Claude, Gemini, ...): basta con
+            // que exista; IaVision se salta los proveedores que no tengan su llave.
+            if (empty($config['ia_vision_cadena'])) {
+                Flight::json(array('error' => 'No hay cadena de proveedores de IA configurada (ia_vision_cadena)'), 500);
                 return;
             }
 

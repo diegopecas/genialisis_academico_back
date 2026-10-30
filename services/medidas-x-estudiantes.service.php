@@ -1,10 +1,6 @@
 <?php
 class MedidasXEstudiantes
 {
-    // Modelo de visión para leer el reporte de la báscula. En constante para que
-    // el registro de consumo (ia_consumos) guarde el mismo modelo que se llama.
-    const MODELO_GEMINI_MEDIDAS = 'gemini-2.5-flash-lite';
-
     public static function getAll()
     {
         try {
@@ -369,7 +365,7 @@ class MedidasXEstudiantes
     }
 
     /**
-     * Analiza imagen de reporte de báscula inteligente con Gemini
+     * Analiza imagen de reporte de báscula inteligente con la cadena de IA de visión (ia_vision_cadena)
      */
     public static function analizarReporteMedidas()
     {
@@ -404,25 +400,23 @@ class MedidasXEstudiantes
                 return;
             }
 
+            // Configuración de IA del tenant: se cargan todas las claves en un solo arreglo,
+            // porque la lectura la hace IaVision con la cadena ia_vision_cadena.
             $db = Flight::db();
-            $stmt = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = 'gemini_api_key' AND id_tenant = :id_tenant LIMIT 1");
-            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $stmt->execute();
-            $config = $stmt->fetch();
+            $stmtConfig = $db->prepare("SELECT clave, valor FROM ia_configuracion WHERE id_tenant = :id_tenant");
+            $stmtConfig->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtConfig->execute();
+            $config = [];
+            foreach ($stmtConfig->fetchAll(PDO::FETCH_ASSOC) as $filaConfig) {
+                $config[$filaConfig['clave']] = $filaConfig['valor'];
+            }
 
-            if (!$config || empty($config['valor'])) {
-                Flight::json(['error' => 'API Key de Gemini no configurada'], 500);
+            if (empty($config['ia_vision_cadena'])) {
+                Flight::json(['error' => 'No hay cadena de proveedores de IA configurada (ia_vision_cadena)'], 500);
                 return;
             }
 
-            $apiKey = $config['valor'];
-
-            $stmtEstado = $db->prepare("SELECT valor FROM ia_configuracion WHERE clave = 'estado_servicio' AND id_tenant = :id_tenant LIMIT 1");
-            $stmtEstado->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-            $stmtEstado->execute();
-            $estado = $stmtEstado->fetch();
-
-            if ($estado && $estado['valor'] !== 'activo') {
+            if (isset($config['estado_servicio']) && $config['estado_servicio'] !== 'activo') {
                 Flight::json(['error' => 'El servicio de IA se encuentra pausado o en mantenimiento'], 503);
                 return;
             }
@@ -462,66 +456,20 @@ class MedidasXEstudiantes
                 . "- La fecha conviértela a YYYY-MM-DD.\n"
                 . "- Usa el campo 'nombre' para buscar equivalentes (ej: 'IMC' puede ser 'BMI').";
 
-            $url = "https://generativelanguage.googleapis.com/v1beta/models/" . self::MODELO_GEMINI_MEDIDAS . ":generateContent?key=" . $apiKey;
-
-            $payload = [
-                'contents' => [[
-                    'parts' => [
-                        ['inlineData' => ['mimeType' => $mimeType, 'data' => $base64]],
-                        ['text' => $prompt]
-                    ]
-                ]],
-                'generationConfig' => ['temperature' => 0.1, 'maxOutputTokens' => 1000]
-            ];
-
-            $inicioIa = microtime(true);
-
-            $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, $url);
-            curl_setopt($ch, CURLOPT_POST, true);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
-            curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-
-            $response = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $curlError = curl_error($ch);
-            curl_close($ch);
+            // La cadena de proveedores (Claude, Gemini, ...), los reintentos y el formato
+            // de cada proveedor los maneja IaVision; acá solo se interpreta el texto.
+            $resultado = IaVision::extraerDeImagen($config, $base64, $mimeType, $prompt, false, 1000);
 
             // Un registro de consumo por lectura, haya o no respondido la IA
-            $respuestaIa = (!$curlError && $httpCode === 200) ? json_decode($response, true) : null;
-            $errorIa = $curlError
-                ? 'conexión: ' . $curlError
-                : ($httpCode !== 200 ? 'HTTP ' . $httpCode . ' - ' . substr((string)$response, 0, 300) : 'formato de respuesta inesperado');
-            IaConsumos::registrar('medidas', 'analizar_reporte_medidas', [
-                IaConsumos::intento('gemini', self::MODELO_GEMINI_MEDIDAS, [
-                    'success' => isset($respuestaIa['candidates'][0]['content']['parts'][0]['text']),
-                    'http' => $curlError ? null : $httpCode,
-                    'error' => $errorIa,
-                    'tokens' => IaConsumos::tokensGemini($respuestaIa)
-                ], $inicioIa)
-            ]);
+            IaVision::registrarUso($db, TenantContext::id(), $resultado, 'medidas', 'analizar_reporte_medidas');
 
-            if ($curlError) {
-                Flight::json(['error' => 'Error de conexión con IA: ' . $curlError], 500);
+            if (!$resultado['success']) {
+                error_log("Error IA medidas: " . $resultado['error']);
+                Flight::json(['error' => 'Error en el servicio de IA: ' . $resultado['error']], 500);
                 return;
             }
 
-            if ($httpCode !== 200) {
-                error_log("Error HTTP Gemini medidas: " . $httpCode . " - " . $response);
-                Flight::json(['error' => 'Error en el servicio de IA (HTTP ' . $httpCode . ')'], 500);
-                return;
-            }
-
-            $respuestaGemini = json_decode($response, true);
-
-            if (!$respuestaGemini || !isset($respuestaGemini['candidates'][0]['content']['parts'][0]['text'])) {
-                Flight::json(['error' => 'No se pudo interpretar la respuesta de la IA'], 500);
-                return;
-            }
-
-            $textoRespuesta = $respuestaGemini['candidates'][0]['content']['parts'][0]['text'];
+            $textoRespuesta = $resultado['texto'];
             $textoRespuesta = preg_replace('/```json\s*/', '', $textoRespuesta);
             $textoRespuesta = preg_replace('/```\s*/', '', $textoRespuesta);
             $textoRespuesta = trim($textoRespuesta);
@@ -537,14 +485,9 @@ class MedidasXEstudiantes
             $stmtContador->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtContador->execute();
 
-            $tokensInput = 0;
-            $tokensOutput = 0;
-            $tokensTotal = 0;
-            if (isset($respuestaGemini['usageMetadata'])) {
-                $tokensInput = isset($respuestaGemini['usageMetadata']['promptTokenCount']) ? intval($respuestaGemini['usageMetadata']['promptTokenCount']) : 0;
-                $tokensOutput = isset($respuestaGemini['usageMetadata']['candidatesTokenCount']) ? intval($respuestaGemini['usageMetadata']['candidatesTokenCount']) : 0;
-                $tokensTotal = $tokensInput + $tokensOutput;
-            }
+            $tokensInput = $resultado['tokens']['input'];
+            $tokensOutput = $resultado['tokens']['output'];
+            $tokensTotal = $resultado['tokens']['total'];
 
             // Los tokens ya no se acumulan en ia_configuracion: el consumo queda en ia_consumos.
 

@@ -1421,7 +1421,7 @@ class PagosRecibidos
     }
 
     /**
-     * Analiza un comprobante de pago usando Gemini Flash.
+     * Analiza un comprobante de pago con la cadena de IA de visión (ia_vision_cadena).
      * POST /pagos-recibidos/analizar-comprobante
      */
     public static function analizarComprobante()
@@ -1458,8 +1458,10 @@ class PagosRecibidos
                 $config[$filaConfig['clave']] = $filaConfig['valor'];
             }
 
-            if (empty($config['gemini_api_key'])) {
-                Flight::json(array('error' => 'API Key de Gemini no configurada en ia_configuracion'), 500);
+            // La lectura la hace la cadena ia_vision_cadena (Claude, Gemini, ...): basta con
+            // que exista; IaVision se salta los proveedores que no tengan su llave.
+            if (empty($config['ia_vision_cadena'])) {
+                Flight::json(array('error' => 'No hay cadena de proveedores de IA configurada (ia_vision_cadena)'), 500);
                 return;
             }
 
@@ -1483,7 +1485,7 @@ class PagosRecibidos
                 . "  \"monto_texto\": (string con el monto TAL CUAL aparece impreso en el comprobante, conservando sus puntos y comas, por ejemplo \"35.000,00\" o \"1.200.000\"),\n"
                 . "  \"referencia\": (string entre comillas SIEMPRE, aunque sean solo dígitos, para no perder ninguno; es el número de referencia, aprobación o comprobante),\n"
                 . "  \"fecha\": (string en formato YYYY-MM-DD),\n"
-                . "  \"banco\": (string con el nombre de la entidad o banco emisor del comprobante, por ejemplo: Nequi, Bancolombia, Daviplata, etc.)\n"
+                . "  \"banco\": (string con el nombre de la entidad, banco o billetera DONDE LLEGÓ el dinero, es decir la cuenta o llave de destino, por ejemplo: Nequi, Bancolombia, Daviplata, etc.)\n"
                 . "}\n\n"
                 . "Si no puedes identificar algún campo, usa null para ese campo.\n"
                 . "IMPORTANTE sobre el monto_texto:\n"
@@ -1492,9 +1494,13 @@ class PagosRecibidos
                 . "- Ejemplo: si el comprobante muestra '$1.200.000', devuelve \"1.200.000\".\n"
                 . "- Devuelve solo el número con sus separadores, sin el símbolo de peso ni texto adicional.\n"
                 . "IMPORTANTE sobre el banco:\n"
-                . "- Devuelve el nombre de la entidad financiera que emitió el comprobante (la app o banco de origen).";
+                . "- Devuelve la entidad que RECIBIÓ el dinero (destino), NO la app o banco desde donde se hizo el pago (origen).\n"
+                . "- El logo y el encabezado del comprobante suelen ser del banco de origen: no los uses para este campo.\n"
+                . "- Búscalo en el destinatario: por ejemplo 'a la llave Nequi 3001234567', 'cuenta de ahorros Bancolombia', 'Daviplata', 'Bre-B' con la entidad del destino.\n"
+                . "- Ejemplo: un comprobante de Davivienda que dice 'Usted envió $50.000 a la llave Nequi 3001234567' debe devolver \"Nequi\".\n"
+                . "- Si en el comprobante no se ve la entidad de destino, devuelve null.";
 
-            // La cadena de proveedores (Gemini -> OpenRouter -> Groq) y los reintentos
+            // La cadena de proveedores (ia_vision_cadena) y los reintentos
             // los maneja IaVision; acá solo interpretamos el texto que devuelva.
             $resultado = IaVision::extraerDeImagen($config, $base64, $mimeType, $prompt, $esPdf);
 

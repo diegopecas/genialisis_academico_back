@@ -14,7 +14,10 @@
  * (uno que hable un formato distinto) requiere código.
  *
  * Proveedores que entiende hoy:
- *   - gemini      -> formato Gemini (único que procesa PDF). Key: gemini_api_key.
+ *   - claude      -> API de Claude (Anthropic), vía IaClaude. Procesa imagen y PDF.
+ *                    Key: claude_api_key. El modelo puede traer el esfuerzo:
+ *                    claude|claude-sonnet-5-5|low
+ *   - gemini      -> formato Gemini (procesa imagen y PDF). Key: gemini_api_key.
  *   - openrouter  -> formato OpenAI-compatible. Key: openrouter_api_key.
  *   - qwen        -> formato OpenAI-compatible (DashScope directo, URL dedicada por
  *                    tenant). Keys: qwen_api_key + qwen_base_url (base hasta /v1).
@@ -47,7 +50,7 @@ class IaVision
      * @param string $base64   Contenido del archivo en base64.
      * @param string $mimeType MIME del archivo (image/jpeg, image/png, application/pdf).
      * @param string $prompt   Instrucción para el modelo.
-     * @param bool   $esPdf    true si el archivo es PDF (solo Gemini lo procesa).
+     * @param bool   $esPdf    true si el archivo es PDF (solo Claude y Gemini lo procesan).
      * @param int    $maxTokens Límite de tokens de la respuesta del modelo. Por
      *                          defecto 500 (suficiente para un comprobante). Se sube
      *                          cuando la respuesta esperada es más larga (por ejemplo
@@ -55,7 +58,7 @@ class IaVision
      * @return array [
      *   'success'   => bool,
      *   'texto'     => string|null,   // texto crudo devuelto por el modelo
-     *   'proveedor' => string|null,   // 'gemini' | 'openrouter' | 'qwen' | 'groq'
+     *   'proveedor' => string|null,   // 'claude' | 'gemini' | 'openrouter' | 'qwen' | 'groq'
      *   'modelo'    => string|null,   // modelo que respondió
      *   'tokens'    => ['input'=>int, 'output'=>int, 'total'=>int],
      *   'error'     => string|null,   // motivo si ningún proveedor respondió
@@ -92,8 +95,8 @@ class IaVision
             $proveedor = $paso['proveedor'];
             $modelo = $paso['modelo'];
 
-            // El PDF solo lo procesa Gemini; los demás proveedores se saltan.
-            if ($esPdf && $proveedor !== 'gemini') {
+            // El PDF solo lo procesan Claude y Gemini; los demás proveedores se saltan.
+            if ($esPdf && $proveedor !== 'gemini' && $proveedor !== 'claude') {
                 error_log("IaVision - se salta '$proveedor' porque no procesa PDF");
                 continue;
             }
@@ -101,7 +104,26 @@ class IaVision
             $r = null;
             $inicio = microtime(true);
 
-            if ($proveedor === 'gemini') {
+            if ($proveedor === 'claude') {
+                $key = isset($config['claude_api_key']) ? $config['claude_api_key'] : null;
+                if (!$key) {
+                    error_log("IaVision - se salta 'claude': falta claude_api_key");
+                    continue;
+                }
+                $c = IaClaude::llamarVision($key, $modelo, $base64, $mimeType, $prompt, $maxTokens, $timeout);
+                // IaClaude devuelve 'respuesta' y tokens entrada/salida; IaVision usa 'texto' e input/output.
+                $r = array(
+                    'success' => $c['success'],
+                    'texto' => $c['respuesta'],
+                    'tokens' => array(
+                        'input' => $c['tokens'] ? $c['tokens']['entrada'] : 0,
+                        'output' => $c['tokens'] ? $c['tokens']['salida'] : 0,
+                        'total' => $c['tokens'] ? $c['tokens']['total'] : 0
+                    ),
+                    'http' => $c['http'],
+                    'error' => $c['error']
+                );
+            } elseif ($proveedor === 'gemini') {
                 $key = isset($config['gemini_api_key']) ? $config['gemini_api_key'] : null;
                 if (!$key) {
                     error_log("IaVision - se salta 'gemini': falta gemini_api_key");

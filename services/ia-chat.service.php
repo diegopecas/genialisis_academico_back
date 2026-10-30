@@ -96,7 +96,7 @@ class IaChat
             $fecha_consulta = self::resolverFechaConsulta($mensaje);
             $contexto = self::armarContexto($db, $id_persona, $rol, $nombre, $config, $id_usuario, $es_super_admin, $fecha_consulta);
 
-            // 8. Llamar a la IA (Gemini primero, Groq fallback)
+            // 8. Llamar a la IA (en el orden de la cadena ia_chat_cadena)
             $inicio_tiempo = microtime(true);
             $respuesta_ia = self::llamarIA($config, $contexto, $historial, $mensaje);
             $tiempo_ms = round((microtime(true) - $inicio_tiempo) * 1000);
@@ -238,8 +238,11 @@ class IaChat
                     COUNT(*) as total_interacciones,
                     COUNT(DISTINCT c.id_persona) as usuarios_unicos,
                     ROUND(AVG(m.tiempo_respuesta_ms)) as promedio_tiempo_ms,
+                    SUM(CASE WHEN m.proveedor = 'claude' THEN 1 ELSE 0 END) as uso_claude,
                     SUM(CASE WHEN m.proveedor = 'gemini' THEN 1 ELSE 0 END) as uso_gemini,
                     SUM(CASE WHEN m.proveedor = 'groq' THEN 1 ELSE 0 END) as uso_groq,
+                    SUM(CASE WHEN m.proveedor = 'openrouter' THEN 1 ELSE 0 END) as uso_openrouter,
+                    SUM(CASE WHEN m.proveedor = 'qwen' THEN 1 ELSE 0 END) as uso_qwen,
                     SUM(CASE WHEN m.proveedor = 'fallback' THEN 1 ELSE 0 END) as uso_fallback,
                     SUM(CASE WHEN DATE(m.fecha) = CURDATE() THEN 1 ELSE 0 END) as interacciones_hoy
                 FROM ia_chat_mensajes m
@@ -1108,7 +1111,21 @@ class IaChat
             $r = null;
             $inicio = microtime(true);
 
-            if ($proveedor === 'gemini') {
+            if ($proveedor === 'claude') {
+                $key = $config['claude_api_key'] ?? null;
+                if (!$key) {
+                    error_log("IaChat - se salta 'claude': falta claude_api_key");
+                    continue;
+                }
+                $r = IaClaude::llamarTexto(
+                    $key,
+                    $modelo,
+                    $contexto . "\n\nResponde siempre en español.",
+                    self::mensajesClaude($historial, $mensaje_usuario),
+                    1024,
+                    60
+                );
+            } elseif ($proveedor === 'gemini') {
                 $key = $config['gemini_api_key'] ?? null;
                 if (!$key) {
                     error_log("IaChat - se salta 'gemini': falta gemini_api_key");
@@ -1198,6 +1215,27 @@ class IaChat
             $pasos[] = ['proveedor' => $proveedor, 'modelo' => $modelo];
         }
         return $pasos;
+    }
+
+    /**
+     * Turnos para Claude: el historial más el mensaje actual (si no está ya al
+     * final del historial). El contexto va aparte como instrucción de sistema.
+     */
+    private static function mensajesClaude($historial, $mensaje_usuario)
+    {
+        $mensajes = [];
+        foreach ($historial as $msg) {
+            $mensajes[] = [
+                "role" => $msg['rol_mensaje'] === 'user' ? 'user' : 'assistant',
+                "content" => $msg['mensaje']
+            ];
+        }
+
+        if (empty($historial) || end($historial)['mensaje'] !== $mensaje_usuario) {
+            $mensajes[] = ["role" => "user", "content" => $mensaje_usuario];
+        }
+
+        return $mensajes;
     }
 
     private static function llamarGemini($api_key, $modelo, $contexto, $historial, $mensaje_usuario)

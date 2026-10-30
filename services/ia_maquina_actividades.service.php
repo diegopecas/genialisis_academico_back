@@ -588,6 +588,8 @@ PROMPT;
         // 'gemini' usa la llave gratis (gemini_api_key) y 'gemini_pago' la paga
         // (gemini_pago_api_key): la paga queda de respaldo para cuando la gratis
         // responda 503 por alta demanda o se le acabe la cuota.
+        // 'claude' usa claude_api_key; su modelo puede traer el esfuerzo
+        // (claude|claude-sonnet-5-5|medium), ver IaClaude.
         $cadenaRaw = isset($config['ia_actividades_cadena']) ? trim($config['ia_actividades_cadena']) : '';
         $pasos = self::parsearCadena($cadenaRaw);
 
@@ -606,7 +608,21 @@ PROMPT;
             $resultado = null;
             $inicio = microtime(true);
 
-            if ($proveedor === 'gemini') {
+            if ($proveedor === 'claude') {
+                $key = $config['claude_api_key'] ?? null;
+                if (!$key) {
+                    error_log("IaMaquinaActividades - se salta 'claude': falta claude_api_key");
+                    continue;
+                }
+                $resultado = IaClaude::llamarTexto(
+                    $key,
+                    $modelo,
+                    "Eres un experto pedagógico en educación preescolar colombiana. Responde SOLO con JSON válido, sin markdown ni texto adicional.",
+                    [["role" => "user", "content" => $prompt]],
+                    32768,
+                    120
+                );
+            } elseif ($proveedor === 'gemini') {
                 $key = $config['gemini_api_key'] ?? null;
                 if (!$key) {
                     error_log("IaMaquinaActividades - se salta 'gemini': falta gemini_api_key");
