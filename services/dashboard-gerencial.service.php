@@ -112,6 +112,26 @@ class DashboardGerencial
         ];
     }
 
+    /**
+     * Cumplimiento del horario de los grupos en una fecha, para el correo de
+     * resumen de coordinación. Reusa el mismo cálculo del tab académico y
+     * devuelve solo los contadores.
+     */
+    public static function resumenAcademicoContexto($db, $fecha)
+    {
+        self::setTimeZone();
+        $r = self::calcularEjecucionAcademica($db, $fecha, self::MODO_ACADEMICO_GRUPOS);
+
+        return [
+            'fecha' => $fecha,
+            'dia_habil' => $r['dia_habil'],
+            'franjas_evaluables' => $r['kpis']['franjas_evaluables'],
+            'franjas_ejecutadas' => $r['kpis']['ejecutadas'],
+            'franjas_sin_ejecutar' => $r['kpis']['sin_ejecutar'],
+            'porcentaje_cumplimiento' => $r['kpis']['porcentaje_cumplimiento']
+        ];
+    }
+
     // =========================================================
     // DETALLE ASISTENCIA ESTUDIANTES
     // =========================================================
