@@ -27,6 +27,8 @@ Flight::route('POST /calificaciones-rapida', [Calificaciones::class, 'guardarCal
 
 // PARAMETROS-CALIFICACIONES
 Flight::route('GET /parametros-calificaciones', [ParametrosCalificaciones::class, 'getAll']);
+// Va antes de /@id para que 'activos' no se tome como un id
+Flight::route('GET /parametros-calificaciones/activos', [ParametrosCalificaciones::class, 'getActivos']);
 Flight::route('GET /parametros-calificaciones/@id', [ParametrosCalificaciones::class, 'getById']);
 Flight::route('POST /parametros-calificaciones', [ParametrosCalificaciones::class, 'new']);
 Flight::route('PUT /parametros-calificaciones', [ParametrosCalificaciones::class, 'replace']);

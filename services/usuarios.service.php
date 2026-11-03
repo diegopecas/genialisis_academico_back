@@ -308,9 +308,31 @@ class Usuarios
         }
     }
 
+    /**
+     * true si el tenant del request está activo en la master (tenants.activo).
+     * Con el tenant inactivo nadie puede iniciar sesión; el pre-login ya lo
+     * oculta, esto cierra el login directo por la API.
+     */
+    private static function tenantActivo()
+    {
+        $dbMaster = new PDO(DB_MASTER_DSN, DB_MASTER_USERNAME, DB_MASTER_PASSWORD, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
+        ]);
+        $stmt = $dbMaster->prepare("SELECT activo FROM tenants WHERE codigo = :codigo LIMIT 1");
+        $stmt->execute(['codigo' => TenantContext::codigo()]);
+        $activo = $stmt->fetchColumn();
+        return $activo !== false && (int) $activo === 1;
+    }
+
     public static function getUsuarioByUsuarioAndClave()
     {
         try {
+            if (!self::tenantActivo()) {
+                Flight::json([['error' => true, 'code' => 'TENANT_INACTIVE', 'message' => 'La institución no está activa']]);
+                return;
+            }
+
             $db = Flight::db();
             $usuario = Flight::request()->data['usuario'];
             $clave = Flight::request()->data['clave'];

@@ -464,6 +464,10 @@ class LinksPago
             $stmtPagado->execute();
 
             $db->commit();
+
+            // Avisos por correo, ya con el pago guardado: si fallan, el pago queda igual
+            self::notificarPago($db, $id_link, $id_transaccion, $valorPagado);
+
             return array('ok' => true);
         } catch (Exception $e) {
             if ($db->inTransaction()) {
@@ -725,6 +729,123 @@ class LinksPago
             '<table style="width:100%;border-collapse:collapse;font-size:14px">' . $filas .
             '<tr><td style="padding:8px 0;font-weight:bold">Total</td><td style="padding:8px 0;text-align:right;font-weight:bold">' . $pesos($link['valor']) . '</td></tr></table>' .
             $bloquePago .
+            '</div></div></body></html>';
+    }
+
+    // ==================== AVISOS DE PAGO RECIBIDO ====================
+
+    /**
+     * Correos de pago recibido: a la persona que pago (el correo del link) y
+     * a la institucion (la direccion de respuesta del Servicio de correo).
+     * Se llama despues de registrar el pago; si un correo no sale queda en el
+     * log y no afecta el pago.
+     */
+    private static function notificarPago($db, $id_link, $id_transaccion, $valorPagado)
+    {
+        try {
+            $link = self::obtener($db, $id_link);
+            if (!$link) {
+                return;
+            }
+            $datos = self::datosCorreo($db, $link);
+            $datos['valor_pagado'] = $valorPagado;
+            $datos['referencia_pago'] = $id_transaccion;
+            $datos['fecha_pago'] = date('Y-m-d H:i');
+
+            if (!empty($link['correo_destino'])) {
+                $resultado = ConfiguracionCorreo::enviar($db, array($link['correo_destino']),
+                    'Recibimos tu pago de ' . $datos['curso'], self::htmlPagoPersona($datos));
+                if ($resultado['error'] !== null) {
+                    error_log('LinksPago: no salio el correo de pago recibido del link ' . $id_link . ': ' . $resultado['error']);
+                }
+            }
+
+            $config = ConfiguracionCorreo::paraUso($db);
+            $correoInstitucion = $config && !empty($config['responder_a']) ? $config['responder_a'] : null;
+            if ($correoInstitucion) {
+                $resultado = ConfiguracionCorreo::enviar($db, array($correoInstitucion),
+                    'Llegó un pago: ' . $datos['participante'] . ' · ' . $datos['curso'], self::htmlPagoInstitucion($datos, $link));
+                if ($resultado['error'] !== null) {
+                    error_log('LinksPago: no salio el aviso de pago a la institucion del link ' . $id_link . ': ' . $resultado['error']);
+                }
+            } else {
+                error_log('LinksPago: no se avisa a la institucion del pago del link ' . $id_link . ': el Servicio de correo no tiene direccion de respuesta.');
+            }
+        } catch (Exception $e) {
+            error_log('LinksPago: no se pudieron mandar los avisos del pago del link ' . $id_link . ': ' . $e->getMessage());
+        }
+    }
+
+    private static function htmlPagoPersona($d)
+    {
+        $e = function ($t) { return htmlspecialchars((string) $t, ENT_QUOTES, 'UTF-8'); };
+        $saludo = $d['saludo'] !== '' ? 'Hola, ' . $e($d['saludo']) . '.' : 'Hola.';
+
+        $cuerpo = '<p style="margin:0 0 10px">' . $saludo . '</p>' .
+            '<p style="margin:0">Recibimos el pago de la inscripción de <strong>' . $e($d['participante']) . '</strong> a <strong>' . $e($d['curso']) . '</strong>. ¡Gracias!</p>' .
+            self::bloqueInicioClases($d) .
+            self::tablaPago($d) .
+            '<p style="margin:18px 0 0;font-size:13px;color:#555">Guarda este correo como constancia. Si tienes alguna pregunta, responde este correo.</p>';
+
+        return self::plantillaCorreo($d['institucion'], 'Recibimos tu pago', $cuerpo);
+    }
+
+    private static function htmlPagoInstitucion($d, $link)
+    {
+        $e = function ($t) { return htmlspecialchars((string) $t, ENT_QUOTES, 'UTF-8'); };
+
+        $cuerpo = '<p style="margin:0">Llegó el pago de <strong>' . $e($d['participante']) . '</strong> por <strong>' . $e($d['curso']) . '</strong> con ' . $e(ucfirst($link['proveedor'])) . '. Ya quedó registrado en Genialisis y, si es un paquete de sesiones, quedó activo.</p>' .
+            self::bloqueInicioClases($d) .
+            self::tablaPago($d) .
+            (!empty($link['correo_destino']) ? '<p style="margin:14px 0 0;font-size:13px;color:#555">Correo de quien pagó: ' . $e($link['correo_destino']) . '</p>' : '');
+
+        return self::plantillaCorreo($d['institucion'], 'Llegó un pago', $cuerpo);
+    }
+
+    // Lineas pagadas, total, fecha y referencia de la pasarela
+    private static function tablaPago($d)
+    {
+        $e = function ($t) { return htmlspecialchars((string) $t, ENT_QUOTES, 'UTF-8'); };
+        $pesos = function ($v) { return '$' . number_format((float) $v, 0, ',', '.'); };
+
+        $filas = '';
+        foreach ($d['lineas'] as $l) {
+            $filas .= '<tr><td style="padding:6px 0;border-bottom:1px solid #eee">' . $e($l['detalle']) . '</td>' .
+                '<td style="padding:6px 0;border-bottom:1px solid #eee;text-align:right;white-space:nowrap">' . $pesos($l['valor']) . '</td></tr>';
+        }
+
+        return '<p style="margin:18px 0 6px;font-weight:bold">Detalle del pago</p>' .
+            '<table style="width:100%;border-collapse:collapse;font-size:14px">' . $filas .
+            '<tr><td style="padding:8px 0;font-weight:bold">Total pagado</td><td style="padding:8px 0;text-align:right;font-weight:bold">' . $pesos($d['valor_pagado']) . '</td></tr>' .
+            '<tr><td style="padding:4px 0;color:#555">Fecha</td><td style="padding:4px 0;text-align:right;color:#555;white-space:nowrap">' . $e($d['fecha_pago']) . '</td></tr>' .
+            ($d['referencia_pago'] !== '' ? '<tr><td style="padding:4px 0;color:#555">Referencia del pago</td><td style="padding:4px 0;text-align:right;color:#555">' . $e($d['referencia_pago']) . '</td></tr>' : '') .
+            '</table>';
+    }
+
+    // Fecha de inicio de clases puesta en la aprobacion, en formato 3 de noviembre de 2026
+    private static function bloqueInicioClases($d)
+    {
+        if (empty($d['fecha_inicio_clases'])) {
+            return '';
+        }
+        $meses = array(1 => 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto',
+            'septiembre', 'octubre', 'noviembre', 'diciembre');
+        $t = strtotime($d['fecha_inicio_clases']);
+        return '<p style="margin:12px 0 0">Las clases empiezan el <strong>' .
+            (int) date('j', $t) . ' de ' . $meses[(int) date('n', $t)] . ' de ' . date('Y', $t) . '</strong>.</p>';
+    }
+
+    // Marco comun de los correos de pago (el mismo del correo de aprobacion)
+    private static function plantillaCorreo($institucion, $titulo, $cuerpo)
+    {
+        $e = function ($t) { return htmlspecialchars((string) $t, ENT_QUOTES, 'UTF-8'); };
+        return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"></head>' .
+            '<body style="margin:0;background:#f5f5f7;font-family:Arial,Helvetica,sans-serif;color:#222">' .
+            '<div style="max-width:560px;margin:0 auto;padding:24px 16px">' .
+            '<div style="background:#fff;border-radius:14px;padding:24px;border:1px solid #eee">' .
+            '<p style="margin:0 0 4px;font-size:13px;color:#888">' . $e($institucion) . '</p>' .
+            '<h1 style="margin:0 0 16px;font-size:21px">' . $e($titulo) . '</h1>' .
+            $cuerpo .
             '</div></div></body></html>';
     }
 
