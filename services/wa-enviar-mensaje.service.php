@@ -8,38 +8,11 @@ class WaEnviarMensaje
         file_put_contents($logFile, date('[Y-m-d H:i:s] ') . $msg . "\n", FILE_APPEND);
     }
     
-    // Obtener config de WhatsApp desde BD maestra
-    private static function getConfig()
+    // Obtener config de WhatsApp de la línea (BD maestra). Con una sola
+    // línea conectada en el tenant, $idLinea puede no llegar.
+    private static function getConfig($idLinea = null)
     {
-        static $config = null;
-        
-        if ($config) return $config;
-        
-        require_once CONFIG_DIR . '/master.env.php';
-        
-        $dbMaster = new PDO(DB_MASTER_DSN, DB_MASTER_USERNAME, DB_MASTER_PASSWORD, [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
-        ]);
-        
-        $tenant = $_SERVER['HTTP_X_TENANT'] ?? '';
-        $tenant = preg_replace('/[^a-z0-9\-_]/i', '', $tenant);
-        
-        $stmt = $dbMaster->prepare("
-            SELECT twc.* 
-            FROM tenants_whatsapp_config twc
-            INNER JOIN tenants t ON twc.id_tenant = t.id
-            WHERE t.codigo = :codigo AND twc.activo = 1
-            LIMIT 1
-        ");
-        $stmt->execute(['codigo' => $tenant]);
-        $config = $stmt->fetch();
-        
-        if (!$config) {
-            throw new Exception('Configuración de WhatsApp no encontrada para este tenant');
-        }
-        
-        return $config;
+        return WaLineas::configActiva($idLinea);
     }
     
     // Obtener código del tenant desde header
@@ -117,9 +90,11 @@ class WaEnviarMensaje
     }
     
     /**
-     * Buscar o crear conversación ÚNICA por contacto (sin expiración).
+     * Buscar o crear conversación ÚNICA por contacto y línea (sin expiración).
+     * Una conversación vieja sin línea (de antes de las líneas) se toma y
+     * queda en la línea por la que se está enviando.
      */
-    private static function resolverConversacion($db, $numeroDestino)
+    private static function resolverConversacion($db, $numeroDestino, $idLinea)
     {
         $stmt = $db->prepare("SELECT id FROM wa_contactos WHERE numero_telefono = :numero AND id_tenant = :id_tenant LIMIT 1");
         $stmt->execute(['numero' => $numeroDestino, 'id_tenant' => TenantContext::id()]);
@@ -135,24 +110,30 @@ class WaEnviarMensaje
         }
         
         $stmt = $db->prepare("
-            SELECT id FROM wa_conversaciones 
+            SELECT id, id_linea FROM wa_conversaciones
             WHERE id_contacto = :contacto AND activa = 1 AND id_tenant = :id_tenant
-            /* id es UUID: ordenar por id no daba la conversacion mas reciente. */
-            ORDER BY fecha_creacion DESC, id DESC LIMIT 1
+            AND (id_linea = :id_linea OR id_linea IS NULL)
+            /* Primero la de la línea; la sin línea solo si no hay.
+               id es UUID: ordenar por id no daba la conversacion mas reciente. */
+            ORDER BY (id_linea IS NULL) ASC, fecha_creacion DESC, id DESC LIMIT 1
         ");
-        $stmt->execute(['contacto' => $idContacto, 'id_tenant' => TenantContext::id()]);
+        $stmt->execute(['contacto' => $idContacto, 'id_tenant' => TenantContext::id(), 'id_linea' => $idLinea]);
         $conv = $stmt->fetch();
-        
+
         if (!$conv) {
             $stmt = $db->prepare("
-                INSERT INTO wa_conversaciones (id, id_tenant, id_contacto, activa, fecha_creacion) 
-                VALUES (:id, :id_tenant, :contacto, 1, NOW())
+                INSERT INTO wa_conversaciones (id, id_tenant, id_contacto, id_linea, activa, fecha_creacion)
+                VALUES (:id, :id_tenant, :contacto, :id_linea, 1, NOW())
             ");
             $idConvNew = Uuid::generar();
-            $stmt->execute(['id' => $idConvNew, 'id_tenant' => TenantContext::id(), 'contacto' => $idContacto]);
+            $stmt->execute(['id' => $idConvNew, 'id_tenant' => TenantContext::id(), 'contacto' => $idContacto, 'id_linea' => $idLinea]);
             $idConversacion = $idConvNew;
         } else {
             $idConversacion = $conv['id'];
+            if ($conv['id_linea'] === null) {
+                $db->prepare("UPDATE wa_conversaciones SET id_linea = :id_linea WHERE id = :id AND id_tenant = :id_tenant")
+                    ->execute(['id_linea' => $idLinea, 'id' => $idConversacion, 'id_tenant' => TenantContext::id()]);
+            }
         }
         
         return $idConversacion;
@@ -242,9 +223,9 @@ class WaEnviarMensaje
     {
         try {
             $db = Flight::db();
-            $config = self::getConfig();
-            
             $data = self::getData();
+            $config = self::getConfig($data['id_linea'] ?? null);
+            
             $numeroDestino = $data['numero_destino'] ?? null;
             $mensaje = $data['mensaje'] ?? null;
             $idPersonaRemitente = $data['id_persona_remitente'] ?? null;
@@ -254,7 +235,7 @@ class WaEnviarMensaje
                 return;
             }
             
-            $idConversacion = self::resolverConversacion($db, $numeroDestino);
+            $idConversacion = self::resolverConversacion($db, $numeroDestino, $config['id']);
 
             // Verificar ventana de 24h
             $ventana = self::verificarVentana($db, $idConversacion);
@@ -315,9 +296,9 @@ class WaEnviarMensaje
     {
         try {
             $db = Flight::db();
-            $config = self::getConfig();
-            
             $data = self::getData();
+            $config = self::getConfig($data['id_linea'] ?? null);
+            
             $numeroDestino = $data['numero_destino'] ?? null;
             $urlImagen = $data['url_imagen'] ?? null;
             $caption = $data['caption'] ?? '';
@@ -328,7 +309,7 @@ class WaEnviarMensaje
                 return;
             }
             
-            $idConversacion = self::resolverConversacion($db, $numeroDestino);
+            $idConversacion = self::resolverConversacion($db, $numeroDestino, $config['id']);
             
             $payload = [
                 'messaging_product' => 'whatsapp',
@@ -367,9 +348,9 @@ class WaEnviarMensaje
     {
         try {
             $db = Flight::db();
-            $config = self::getConfig();
-            
             $data = self::getData();
+            $config = self::getConfig($data['id_linea'] ?? null);
+            
             $numeroDestino = $data['numero_destino'] ?? null;
             $urlDocumento = $data['url_documento'] ?? null;
             $nombreArchivo = $data['nombre_archivo'] ?? 'documento';
@@ -380,7 +361,7 @@ class WaEnviarMensaje
                 return;
             }
             
-            $idConversacion = self::resolverConversacion($db, $numeroDestino);
+            $idConversacion = self::resolverConversacion($db, $numeroDestino, $config['id']);
             
             $payload = [
                 'messaging_product' => 'whatsapp',
@@ -419,7 +400,7 @@ class WaEnviarMensaje
     {
         try {
             $db = Flight::db();
-            $config = self::getConfig();
+            $config = self::getConfig($_POST['id_linea'] ?? null);
             
             $numeroDestino = $_POST['numero_destino'] ?? null;
             $caption = $_POST['caption'] ?? '';
@@ -446,7 +427,7 @@ class WaEnviarMensaje
                 return;
             }
 
-            $idConversacion = self::resolverConversacion($db, $numeroDestino);
+            $idConversacion = self::resolverConversacion($db, $numeroDestino, $config['id']);
 
             // Verificar ventana de 24h
             $ventana = self::verificarVentana($db, $idConversacion);
@@ -587,9 +568,9 @@ class WaEnviarMensaje
     {
         try {
             $db = Flight::db();
-            $config = self::getConfig();
-            
             $data = self::getData();
+            $config = self::getConfig($data['id_linea'] ?? null);
+            
             $numeroDestino = $data['numero_destino'] ?? null;
             $templateName = $data['template_name'] ?? null;
             $languageCode = $data['language_code'] ?? 'es';
@@ -601,7 +582,7 @@ class WaEnviarMensaje
                 return;
             }
             
-            $idConversacion = self::resolverConversacion($db, $numeroDestino);
+            $idConversacion = self::resolverConversacion($db, $numeroDestino, $config['id']);
             
             $payload = [
                 'messaging_product' => 'whatsapp',

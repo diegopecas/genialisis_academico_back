@@ -30,11 +30,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['hub_verify_token'])) {
     
     $dbMaster = conectarBD(DB_MASTER_DSN, DB_MASTER_USERNAME, DB_MASTER_PASSWORD);
     
-    $stmt = $dbMaster->prepare("SELECT verify_token FROM tenants_whatsapp_config WHERE activo = 1 LIMIT 1");
-    $stmt->execute();
+    // Cada línea guarda su verify_token; vale el de cualquier línea activa
+    $stmt = $dbMaster->prepare("SELECT 1 FROM tenants_whatsapp_config WHERE activo = 1 AND verify_token = :verify_token LIMIT 1");
+    $stmt->execute(['verify_token' => (string) $_GET['hub_verify_token']]);
     $config = $stmt->fetch();
     
-    if ($config && $_GET['hub_verify_token'] === $config['verify_token']) {
+    if ($config) {
         echo $_GET['hub_challenge'];
     } else {
         http_response_code(403);
@@ -110,6 +111,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         
         require_once $tenantConfig;
+
+        // Contexto del tenant: el webhook no pasa por index.php. El id sale de
+        // TENANT_ID del config del tenant y debe ser el mismo de la línea.
+        require_once dirname(__DIR__) . '/services/tenant-context.service.php';
+        require_once dirname(__DIR__) . '/services/uuid.service.php';
+        TenantContext::setCodigo($config['codigo']);
+
+        if (!defined('TENANT_ID') || (int) TENANT_ID !== (int) $config['id_tenant']) {
+            logError("TENANT_ID del config de {$config['codigo']} no coincide con el tenant de la línea {$config['id']}");
+            exit;
+        }
+
         $dbTenant = conectarBD(DB_DSN, DB_USERNAME, DB_PASSWORD);
         
         // Procesar según tipo de evento
@@ -117,7 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             procesarMensajeEntrante($dbTenant, $value, $config);
 
             // Enviar push notification a los usuarios suscritos
-            enviarPushNotification($dbTenant, $value);
+            enviarPushNotification($dbTenant, $dbMaster, $value, $config);
         }
         
         if (isset($value['statuses'])) {
@@ -180,7 +193,7 @@ function procesarMensajeEntrante($db, $value, $config) {
     $idMensajeWa = $message['id'];
     $timestampWa = $message['timestamp'];
     
-    // 1. Buscar o crear contacto
+    // 1. Buscar o crear contacto (el contacto es del tenant, sirve para todas sus líneas)
     $idContacto = buscarOCrearContacto($db, $numeroTelefono, $nombreWhatsapp);
     
     if (!$idContacto) {
@@ -188,8 +201,8 @@ function procesarMensajeEntrante($db, $value, $config) {
         return;
     }
     
-    // 2. Buscar o crear conversación activa (ÚNICA por contacto)
-    $idConversacion = buscarOCrearConversacion($db, $idContacto);
+    // 2. Buscar o crear conversación activa (ÚNICA por contacto y línea)
+    $idConversacion = buscarOCrearConversacion($db, $idContacto, $config['id']);
     
     if (!$idConversacion) {
         logError("Error creando conversación para contacto: {$idContacto}");
@@ -203,19 +216,22 @@ function procesarMensajeEntrante($db, $value, $config) {
     $contenido = procesarContenido($message);
     
     // 5. Verificar que el mensaje no exista ya (idempotencia)
-    $stmt = $db->prepare("SELECT id FROM wa_mensajes WHERE id_mensaje_wa = :id_mensaje_wa LIMIT 1");
-    $stmt->execute(['id_mensaje_wa' => $idMensajeWa]);
+    $stmt = $db->prepare("SELECT id FROM wa_mensajes WHERE id_mensaje_wa = :id_mensaje_wa AND id_tenant = :id_tenant LIMIT 1");
+    $stmt->execute(['id_mensaje_wa' => $idMensajeWa, 'id_tenant' => TenantContext::id()]);
     if ($stmt->fetch()) {
         return;
     }
     
-    // 6. Guardar mensaje
+    // 6. Guardar mensaje (el id es UUID: se genera aquí, lastInsertId no sirve)
+    $idMensajeLocal = Uuid::generar();
     $stmt = $db->prepare("
         INSERT INTO wa_mensajes (
+            id, id_tenant,
             id_conversacion, id_mensaje_wa, direccion, canal, tipo,
             contenido, id_multimedia, tipo_mime_multimedia,
             nombre_archivo, timestamp_wa, estado, respondido
         ) VALUES (
+            :id, :id_tenant,
             :id_conversacion, :id_mensaje_wa, 'entrada', 'whatsapp', :tipo,
             :contenido, :id_multimedia, :tipo_mime,
             :nombre_archivo, :timestamp_wa, 'recibido', 0
@@ -223,6 +239,8 @@ function procesarMensajeEntrante($db, $value, $config) {
     ");
     
     $stmt->execute([
+        'id' => $idMensajeLocal,
+        'id_tenant' => TenantContext::id(),
         'id_conversacion' => $idConversacion,
         'id_mensaje_wa' => $idMensajeWa,
         'tipo' => $contenido['tipo'],
@@ -232,8 +250,6 @@ function procesarMensajeEntrante($db, $value, $config) {
         'nombre_archivo' => $contenido['nombre_archivo'] ?? null,
         'timestamp_wa' => $timestampWa
     ]);
-    
-    $idMensajeLocal = $db->lastInsertId();
     
     logError("Mensaje recibido de {$numeroTelefono} - ID: {$idMensajeWa} - Tipo: {$contenido['tipo']}");
     
@@ -253,8 +269,9 @@ function actualizarVentana24h($db, $idConversacion) {
         SET ventana_wa_inicio = NOW(), 
             ventana_wa_fin = DATE_ADD(NOW(), INTERVAL 24 HOUR)
         WHERE id = :id
+        AND id_tenant = :id_tenant
     ");
-    $stmt->execute(['id' => $idConversacion]);
+    $stmt->execute(['id' => $idConversacion, 'id_tenant' => TenantContext::id()]);
 }
 
 // =============================================
@@ -353,11 +370,13 @@ function descargarMultimedia($db, $idMensaje, $contenido, $config, $idConversaci
                 SET url_multimedia = :url_multimedia,
                     nombre_archivo = :nombre_archivo
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
             $stmt->execute([
                 'url_multimedia' => $rutaRelativa,
                 'nombre_archivo' => $nombreArchivo,
-                'id' => $idMensaje
+                'id' => $idMensaje,
+                'id_tenant' => TenantContext::id()
             ]);
             
             logError("Multimedia guardada: {$rutaRelativa} ({$bytesWritten} bytes)");
@@ -414,25 +433,25 @@ function obtenerExtension($tipoMime, $nombreArchivo = null) {
 // =============================================
 
 function buscarOCrearContacto($db, $numero, $nombre) {
-    $stmt = $db->prepare("SELECT id FROM wa_contactos WHERE numero_telefono = :numero LIMIT 1");
-    $stmt->execute(['numero' => $numero]);
+    $stmt = $db->prepare("SELECT id FROM wa_contactos WHERE numero_telefono = :numero AND id_tenant = :id_tenant LIMIT 1");
+    $stmt->execute(['numero' => $numero, 'id_tenant' => TenantContext::id()]);
     $contacto = $stmt->fetch();
     
     if ($contacto) {
         if ($nombre) {
-            $stmt = $db->prepare("UPDATE wa_contactos SET nombre_whatsapp = :nombre WHERE id = :id");
-            $stmt->execute(['nombre' => $nombre, 'id' => $contacto['id']]);
+            $stmt = $db->prepare("UPDATE wa_contactos SET nombre_whatsapp = :nombre WHERE id = :id AND id_tenant = :id_tenant");
+            $stmt->execute(['nombre' => $nombre, 'id' => $contacto['id'], 'id_tenant' => TenantContext::id()]);
         }
         return $contacto['id'];
     }
     
+    // El id es UUID: se genera aquí, lastInsertId no sirve
+    $idContacto = Uuid::generar();
     $stmt = $db->prepare("
-        INSERT INTO wa_contactos (numero_telefono, nombre_whatsapp, fecha_primera_interaccion)
-        VALUES (:numero, :nombre, NOW())
+        INSERT INTO wa_contactos (id, id_tenant, numero_telefono, nombre_whatsapp, fecha_primera_interaccion)
+        VALUES (:id, :id_tenant, :numero, :nombre, NOW())
     ");
-    $stmt->execute(['numero' => $numero, 'nombre' => $nombre]);
-    
-    $idContacto = $db->lastInsertId();
+    $stmt->execute(['id' => $idContacto, 'id_tenant' => TenantContext::id(), 'numero' => $numero, 'nombre' => $nombre]);
     vincularConPersona($db, $idContacto, $numero);
     
     return $idContacto;
@@ -449,14 +468,16 @@ function vincularConPersona($db, $idContacto, $numero) {
             INNER JOIN acudientes a ON a.id_persona = p.id
             WHERE REPLACE(REPLACE(REPLACE(REPLACE(p.telefono, '+', ''), ' ', ''), '-', ''), '(', '') LIKE CONCAT('%', :ultimos10)
             AND a.activo = 1
+            AND p.id_tenant = :id_tenant
+            AND a.id_tenant = :id_tenant_a
             LIMIT 1
         ");
-        $stmt->execute(['ultimos10' => $ultimos10]);
+        $stmt->execute(['ultimos10' => $ultimos10, 'id_tenant' => TenantContext::id(), 'id_tenant_a' => TenantContext::id()]);
         $persona = $stmt->fetch();
         
         if ($persona) {
-            $stmt = $db->prepare("UPDATE wa_contactos SET id_persona = :id_persona WHERE id = :id");
-            $stmt->execute(['id_persona' => $persona['id'], 'id' => $idContacto]);
+            $stmt = $db->prepare("UPDATE wa_contactos SET id_persona = :id_persona WHERE id = :id AND id_tenant = :id_tenant");
+            $stmt->execute(['id_persona' => $persona['id'], 'id' => $idContacto, 'id_tenant' => TenantContext::id()]);
         }
     } catch (Exception $e) {
         logError("Error vinculando persona: " . $e->getMessage());
@@ -464,29 +485,41 @@ function vincularConPersona($db, $idContacto, $numero) {
 }
 
 /**
- * Conversación ÚNICA por contacto.
+ * Conversación ÚNICA por contacto y línea.
  * Ya no crea nuevas conversaciones por ventana de 24h.
+ * Una conversación vieja sin línea (de antes de las líneas) se toma y queda
+ * en la línea por la que entró el mensaje.
  */
-function buscarOCrearConversacion($db, $idContacto) {
+function buscarOCrearConversacion($db, $idContacto, $idLinea) {
     $stmt = $db->prepare("
-        SELECT id FROM wa_conversaciones
+        SELECT id, id_linea FROM wa_conversaciones
         WHERE id_contacto = :id_contacto AND activa = 1
-        ORDER BY id DESC LIMIT 1
+        AND id_tenant = :id_tenant
+        AND (id_linea = :id_linea OR id_linea IS NULL)
+        /* Primero la de la línea; la sin línea solo si no hay.
+           id es UUID: ordenar por id no daba la conversacion mas reciente. */
+        ORDER BY (id_linea IS NULL) ASC, fecha_creacion DESC, id DESC LIMIT 1
     ");
-    $stmt->execute(['id_contacto' => $idContacto]);
+    $stmt->execute(['id_contacto' => $idContacto, 'id_tenant' => TenantContext::id(), 'id_linea' => $idLinea]);
     $conv = $stmt->fetch();
     
     if ($conv) {
+        if ($conv['id_linea'] === null) {
+            $stmt = $db->prepare("UPDATE wa_conversaciones SET id_linea = :id_linea WHERE id = :id AND id_tenant = :id_tenant");
+            $stmt->execute(['id_linea' => $idLinea, 'id' => $conv['id'], 'id_tenant' => TenantContext::id()]);
+        }
         return $conv['id'];
     }
     
+    // El id es UUID: se genera aquí, lastInsertId no sirve
+    $idConversacion = Uuid::generar();
     $stmt = $db->prepare("
-        INSERT INTO wa_conversaciones (id_contacto, activa, fecha_creacion)
-        VALUES (:id_contacto, 1, NOW())
+        INSERT INTO wa_conversaciones (id, id_tenant, id_contacto, id_linea, activa, fecha_creacion)
+        VALUES (:id, :id_tenant, :id_contacto, :id_linea, 1, NOW())
     ");
-    $stmt->execute(['id_contacto' => $idContacto]);
+    $stmt->execute(['id' => $idConversacion, 'id_tenant' => TenantContext::id(), 'id_contacto' => $idContacto, 'id_linea' => $idLinea]);
     
-    return $db->lastInsertId();
+    return $idConversacion;
 }
 
 function procesarContenido($message) {
@@ -539,8 +572,8 @@ function procesarEstadoMensaje($db, $status) {
     
     $idMensajeWa = $status['id'];
     
-    $stmt = $db->prepare("UPDATE wa_mensajes SET estado = :estado WHERE id_mensaje_wa = :id_mensaje_wa");
-    $stmt->execute(['estado' => $estado, 'id_mensaje_wa' => $idMensajeWa]);
+    $stmt = $db->prepare("UPDATE wa_mensajes SET estado = :estado WHERE id_mensaje_wa = :id_mensaje_wa AND id_tenant = :id_tenant");
+    $stmt->execute(['estado' => $estado, 'id_mensaje_wa' => $idMensajeWa, 'id_tenant' => TenantContext::id()]);
 
     // Si Meta envía datos de la conversación (ventana), actualizar
     if (isset($status['conversation']['expiration_timestamp'])) {
@@ -552,9 +585,10 @@ function procesarEstadoMensaje($db, $status) {
             SELECT wm.id_conversacion 
             FROM wa_mensajes wm 
             WHERE wm.id_mensaje_wa = :id_mensaje_wa 
+            AND wm.id_tenant = :id_tenant
             LIMIT 1
         ");
-        $stmt->execute(['id_mensaje_wa' => $idMensajeWa]);
+        $stmt->execute(['id_mensaje_wa' => $idMensajeWa, 'id_tenant' => TenantContext::id()]);
         $msg = $stmt->fetch();
         
         if ($msg) {
@@ -562,10 +596,12 @@ function procesarEstadoMensaje($db, $status) {
                 UPDATE wa_conversaciones 
                 SET ventana_wa_fin = FROM_UNIXTIME(:exp_timestamp)
                 WHERE id = :id
+                AND id_tenant = :id_tenant
             ");
             $stmt->execute([
                 'exp_timestamp' => $expTimestamp,
-                'id' => $msg['id_conversacion']
+                'id' => $msg['id_conversacion'],
+                'id_tenant' => TenantContext::id()
             ]);
         }
     }
@@ -575,12 +611,14 @@ function procesarEstadoMensaje($db, $status) {
 // PUSH NOTIFICATIONS
 // =============================================
 
-function enviarPushNotification($db, $value) {
+function enviarPushNotification($db, $dbMaster, $value, $config) {
     try {
         if (!class_exists('Minishlink\WebPush\WebPush')) {
             return;
         }
 
+        // JWTService trae las constantes de portal que usa el push
+        require_once dirname(__DIR__) . '/services/jwt.service.php';
         require_once dirname(__DIR__) . '/services/push-notification.service.php';
 
         $pushService = new PushNotificationService($db);
@@ -588,6 +626,13 @@ function enviarPushNotification($db, $value) {
         $contact = $value['contacts'][0] ?? [];
         $message = $value['messages'][0] ?? [];
         $nombreContacto = $contact['profile']['name'] ?? $message['from'] ?? 'WhatsApp';
+
+        // Con varias líneas conectadas, el título dice por cuál llegó
+        $stmt = $dbMaster->prepare("SELECT COUNT(*) FROM tenants_whatsapp_config WHERE id_tenant = :id_tenant AND activo = 1");
+        $stmt->execute(['id_tenant' => $config['id_tenant']]);
+        if ((int) $stmt->fetchColumn() > 1 && !empty($config['nombre'])) {
+            $nombreContacto = $config['nombre'] . ' · ' . $nombreContacto;
+        }
 
         $tipo = 'texto';
         $preview = '';
@@ -623,9 +668,11 @@ function enviarPushNotification($db, $value) {
                 INNER JOIN wa_contactos wco ON wco.id = wc.id_contacto
                 WHERE wco.numero_telefono = :numero
                 AND wc.activa = 1
-                ORDER BY wc.id DESC LIMIT 1
+                AND wc.id_tenant = :id_tenant
+                AND wc.id_linea = :id_linea
+                ORDER BY wc.fecha_creacion DESC, wc.id DESC LIMIT 1
             ");
-            $stmt->execute(['numero' => $numeroTelefono]);
+            $stmt->execute(['numero' => $numeroTelefono, 'id_tenant' => TenantContext::id(), 'id_linea' => $config['id']]);
             $conv = $stmt->fetch();
             $idConversacion = $conv['id'] ?? null;
         }
@@ -640,7 +687,7 @@ function enviarPushNotification($db, $value) {
             ]
         );
 
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         logError('Error enviando push: ' . $e->getMessage());
     }
 }

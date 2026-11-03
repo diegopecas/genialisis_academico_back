@@ -36,6 +36,7 @@ class WaConversaciones
                 wconv.fecha_creacion,
                 wconv.ventana_wa_inicio,
                 wconv.ventana_wa_fin,
+                wconv.id_linea,
                 wc.id AS id_contacto,
                 wc.numero_telefono,
                 wc.nombre_whatsapp,
@@ -134,17 +135,21 @@ class WaConversaciones
             $db = Flight::db();
 
             $id_contacto = Flight::request()->data['id_contacto'];
+            // Línea de WhatsApp (tenants_whatsapp_config.id); opcional
+            $id_linea = Flight::request()->data['id_linea'] ?? null;
 
             $sentence = $db->prepare("
                 INSERT INTO wa_conversaciones(
                     id,
                     id_tenant,
                     id_contacto,
+                    id_linea,
                     activa
                 ) VALUES (
                     :id,
                     :id_tenant,
                     :id_contacto,
+                    :id_linea,
                     1
                 )
             ");
@@ -153,6 +158,7 @@ class WaConversaciones
             $sentence->bindValue(':id', $idConv);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->bindParam(':id_contacto', $id_contacto);
+            $sentence->bindValue(':id_linea', $id_linea);
             $sentence->execute();
 
             Flight::json(array('id' => $idConv));

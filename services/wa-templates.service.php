@@ -1,33 +1,11 @@
 <?php
 class WaTemplates
 {
-    private static function getConfig()
+    // Config de la línea (BD maestra). Las plantillas son de la cuenta de
+    // negocio (WABA) de la línea; con una sola línea conectada puede no llegar.
+    private static function getConfig($idLinea = null)
     {
-        require_once CONFIG_DIR . '/master.env.php';
-
-        $dbMaster = new PDO(DB_MASTER_DSN, DB_MASTER_USERNAME, DB_MASTER_PASSWORD, [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
-        ]);
-
-        $tenant = $_SERVER['HTTP_X_TENANT'] ?? '';
-        $tenant = preg_replace('/[^a-z0-9\-_]/i', '', $tenant);
-
-        $stmt = $dbMaster->prepare("
-            SELECT twc.* 
-            FROM tenants_whatsapp_config twc
-            INNER JOIN tenants t ON twc.id_tenant = t.id
-            WHERE t.codigo = :codigo AND twc.activo = 1
-            LIMIT 1
-        ");
-        $stmt->execute(['codigo' => $tenant]);
-        $config = $stmt->fetch();
-
-        if (!$config) {
-            throw new Exception('Configuración de WhatsApp no encontrada para este tenant');
-        }
-
-        return $config;
+        return WaLineas::configActiva($idLinea);
     }
 
     private static function callGraphAPI($method, $url, $payload = null, $accessToken = '')
@@ -64,7 +42,7 @@ class WaTemplates
     public static function getAll()
     {
         try {
-            $config = self::getConfig();
+            $config = self::getConfig(Flight::request()->query['id_linea'] ?? null);
             $wabaId = $config['wa_business_account_id'];
             $apiVersion = $config['api_version'];
             $token = $config['access_token'];
@@ -120,7 +98,7 @@ class WaTemplates
     public static function getAprobados()
     {
         try {
-            $config = self::getConfig();
+            $config = self::getConfig(Flight::request()->query['id_linea'] ?? null);
             $wabaId = $config['wa_business_account_id'];
             $apiVersion = $config['api_version'];
             $token = $config['access_token'];
@@ -159,12 +137,12 @@ class WaTemplates
     public static function create()
     {
         try {
-            $config = self::getConfig();
+            $data = self::getData();
+            $config = self::getConfig($data['id_linea'] ?? null);
             $wabaId = $config['wa_business_account_id'];
             $apiVersion = $config['api_version'];
             $token = $config['access_token'];
 
-            $data = self::getData();
             $name = $data['name'] ?? null;
             $category = $data['category'] ?? 'UTILITY';
             $language = $data['language'] ?? 'es';
@@ -244,7 +222,7 @@ class WaTemplates
     public static function delete($name)
     {
         try {
-            $config = self::getConfig();
+            $config = self::getConfig(Flight::request()->query['id_linea'] ?? null);
             $wabaId = $config['wa_business_account_id'];
             $apiVersion = $config['api_version'];
             $token = $config['access_token'];

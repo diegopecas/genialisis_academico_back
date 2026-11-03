@@ -1,2 +1,2 @@
 RewriteEngine Off
-DirectoryIndex index.php
+DirectoryIndex webhook-whatsapp.php

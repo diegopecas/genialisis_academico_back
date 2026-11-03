@@ -63,7 +63,7 @@ if (strpos($requestUri, '/webhooks/firma') !== false) {
 }
 // Webhook WhatsApp Business
 if (strpos($requestUri, '/webhooks/whatsapp') !== false) {
-    require __DIR__ . '/webhook/index.php';
+    require __DIR__ . '/webhook/webhook-whatsapp.php';
     exit(0);
 }
 // Servir imagen temporal de Instagram (tenant en la ruta, validada por HMAC).

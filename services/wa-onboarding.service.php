@@ -146,8 +146,10 @@ class WaOnboarding
 
     /**
      * POST /wa-onboarding/procesar
-     * Recibe code + phone_number_id + waba_id + business_id desde el frontend.
+     * Recibe code + phone_number_id + waba_id + business_id + nombre desde el frontend.
      * Intercambia code por token, suscribe webhooks, guarda config.
+     * Cada número conectado es una línea del tenant: si el número ya estaba
+     * (reconexión) se actualiza su fila; si es nuevo, se agrega otra línea.
      */
     public static function procesarOnboarding()
     {
@@ -159,6 +161,11 @@ class WaOnboarding
             $wabaId = $data['waba_id'] ?? null;
             $businessId = $data['business_id'] ?? null;
             $esCoexistence = isset($data['es_coexistence']) ? (int)(bool)$data['es_coexistence'] : 1;
+            $nombre = trim((string)($data['nombre'] ?? ''));
+            if (mb_strlen($nombre) > 60) {
+                Flight::json(['error' => 'El nombre de la línea puede tener máximo 60 caracteres'], 400);
+                return;
+            }
 
             if (!$code || !$phoneNumberId || !$wabaId) {
                 Flight::json(['error' => 'code, phone_number_id y waba_id son requeridos'], 400);
@@ -167,6 +174,19 @@ class WaOnboarding
 
             $dbMaster = self::getMasterDb();
             $idTenant = self::getTenantId($dbMaster);
+
+            // El número es único en toda la master (uk_phone_number_id):
+            // no se puede conectar en un jardín si ya está en otro.
+            $stmt = $dbMaster->prepare("
+                SELECT id, id_tenant FROM tenants_whatsapp_config WHERE phone_number_id = :phone_number_id LIMIT 1
+            ");
+            $stmt->execute(['phone_number_id' => $phoneNumberId]);
+            $existing = $stmt->fetch();
+
+            if ($existing && (int)$existing['id_tenant'] !== $idTenant) {
+                Flight::json(['error' => 'Ese número de WhatsApp ya está conectado en otra institución'], 409);
+                return;
+            }
 
             // 1. Intercambiar code por access_token
             $tokenUrl = 'https://graph.facebook.com/' . META_GRAPH_VERSION . '/oauth/access_token'
@@ -213,16 +233,11 @@ class WaOnboarding
             // 4. Generar verify_token único para el webhook
             $verifyToken = bin2hex(random_bytes(16));
 
-            // 5. INSERT/UPDATE en tenants_whatsapp_config
-            $stmt = $dbMaster->prepare("
-                SELECT id FROM tenants_whatsapp_config WHERE id_tenant = :id_tenant LIMIT 1
-            ");
-            $stmt->execute(['id_tenant' => $idTenant]);
-            $existing = $stmt->fetch();
-
+            // 5. INSERT/UPDATE en tenants_whatsapp_config (la línea de ese número)
             if ($existing) {
                 $stmt = $dbMaster->prepare("
                     UPDATE tenants_whatsapp_config SET
+                        nombre = COALESCE(:nombre, nombre),
                         app_id = :app_id,
                         phone_number_id = :phone_number_id,
                         wa_business_account_id = :waba_id,
@@ -238,9 +253,10 @@ class WaOnboarding
                         app_secret = :app_secret,
                         api_version = :api_version,
                         activo = 1
-                    WHERE id_tenant = :id_tenant
+                    WHERE id = :id
                 ");
                 $stmt->execute([
+                    'nombre' => $nombre !== '' ? $nombre : null,
                     'app_id' => META_APP_ID,
                     'phone_number_id' => $phoneNumberId,
                     'waba_id' => $wabaId,
@@ -251,17 +267,17 @@ class WaOnboarding
                     'access_token' => $accessToken,
                     'app_secret' => META_APP_SECRET,
                     'api_version' => META_GRAPH_VERSION,
-                    'id_tenant' => $idTenant
+                    'id' => $existing['id']
                 ]);
             } else {
                 $stmt = $dbMaster->prepare("
                     INSERT INTO tenants_whatsapp_config (
-                        id_tenant, app_id, phone_number_id, wa_business_account_id,
+                        id_tenant, nombre, app_id, phone_number_id, wa_business_account_id,
                         business_id, config_id_usado, es_coexistence, estado_onboarding,
                         fecha_onboarding, fecha_ultima_actividad, display_phone_number,
                         access_token, verify_token, app_secret, api_version, activo
                     ) VALUES (
-                        :id_tenant, :app_id, :phone_number_id, :waba_id,
+                        :id_tenant, :nombre, :app_id, :phone_number_id, :waba_id,
                         :business_id, :config_id, :es_coexistence, 'active',
                         NOW(), NOW(), :display_phone_number,
                         :access_token, :verify_token, :app_secret, :api_version, 1
@@ -269,6 +285,7 @@ class WaOnboarding
                 ");
                 $stmt->execute([
                     'id_tenant' => $idTenant,
+                    'nombre' => $nombre !== '' ? $nombre : ($displayPhone ?: 'Principal'),
                     'app_id' => META_APP_ID,
                     'phone_number_id' => $phoneNumberId,
                     'waba_id' => $wabaId,
@@ -298,11 +315,20 @@ class WaOnboarding
 
     /**
      * POST /wa-onboarding/desconectar
-     * Marca el onboarding como offboarded y desactiva el registro.
+     * Recibe id (la línea). Marca esa línea como offboarded y la desactiva;
+     * las demás líneas del tenant siguen conectadas.
      */
     public static function desconectar()
     {
         try {
+            $data = self::getData();
+            $idLinea = $data['id'] ?? null;
+
+            if (!$idLinea) {
+                Flight::json(['error' => 'Escoge la línea que vas a desconectar'], 400);
+                return;
+            }
+
             $dbMaster = self::getMasterDb();
             $idTenant = self::getTenantId($dbMaster);
 
@@ -312,8 +338,9 @@ class WaOnboarding
                     activo = 0,
                     fecha_ultima_actividad = NOW()
                 WHERE id_tenant = :id_tenant
+                AND id = :id
             ");
-            $stmt->execute(['id_tenant' => $idTenant]);
+            $stmt->execute(['id_tenant' => $idTenant, 'id' => $idLinea]);
 
             if ($stmt->rowCount() > 0) {
                 Flight::json(['success' => true]);
