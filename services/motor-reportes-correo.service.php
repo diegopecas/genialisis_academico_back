@@ -8,9 +8,23 @@ reportes_correo_colaboradores. Cada tipo de reporte (tipos_reporte_correo)
 tiene su propio armado aquí, identificado por su código:
 
   RESUMEN_COORDINACION  Resumen general del jardín con tres columnas (hoy,
-                        semana y mes) y lo que hay que tener presente:
-                        estudiantes que llevan días sin venir y cartera
-                        vencida de estudiantes.
+                        semana y mes), las clases ejecutadas por docente, el
+                        cuadro de indicadores trabajados del corte por grupo
+                        y área, y lo que hay que tener presente: estudiantes
+                        que llevan días sin venir y cartera vencida de
+                        estudiantes.
+
+  RESUMEN_DOCENTE       Resumen para el colaborador que también es docente,
+                        solo con lo suyo: clases ejecutadas y sin calificar
+                        completas (hoy, semana y mes), franjas de hoy sin
+                        ejecutar, asistencia de hoy de sus grupos,
+                        estudiantes de sus grupos que llevan días sin venir
+                        e indicadores del corte de sus grupos y áreas. Sus
+                        grupos y áreas salen de area_academica_x_grupo (el
+                        área que dicta en cada grupo) y de docentes_x_grupos
+                        (los grupos donde está asignado). Si el colaborador
+                        no es docente activo, el envío queda fallido en el
+                        historial con ese motivo.
 
 Lo dispara el cron (cron/reportes-correo.php, un proceso por tenant) y el
 botón "Enviar ahora" del listado. El cron no repite un reporte que ya salió
@@ -22,6 +36,14 @@ Los umbrales del reporte salen de configuracion_global (valor_numero):
   reporte_correo_max_ausentes   Máximo de estudiantes que se listan.
   reporte_correo_dias_cartera   Antigüedad mínima en días de la cartera vencida.
   reporte_correo_top_cartera    Cantidad de estudiantes con mayor cartera.
+  reporte_correo_max_indicadores Indicadores sin trabajar que se listan por
+                                grupo, de su área más atrasada.
+
+Un indicador cuenta como trabajado en el corte si el grupo tuvo al menos una
+clase ejecutada, en un sprint de ese corte, con una actividad asociada a ese
+indicador. El corte es el vigente a la fecha del reporte. (El reporte de
+cobertura curricular cuenta también las clases programadas; aquí solo las
+ejecutadas.)
 
 Los días hábiles se cuentan con el campo dia_habil del calendario global,
 igual que el tab académico del dashboard: no cuentan festivos, sábados ni
@@ -35,6 +57,7 @@ lanza excepción hacia afuera: los errores quedan en el historial y en el log.
 class MotorReportesCorreo
 {
     const CODIGO_RESUMEN_COORDINACION = 'RESUMEN_COORDINACION';
+    const CODIGO_RESUMEN_DOCENTE = 'RESUMEN_DOCENTE';
 
     const ORIGEN_CRON = 'CRON';
     const ORIGEN_MANUAL = 'MANUAL';
@@ -54,6 +77,8 @@ class MotorReportesCorreo
     const COLOR_ROSA = '#f8e4e1';
     const COLOR_ROSA_TEXTO = '#9a4a3f';
     const COLOR_CIELO = '#e4eef6';
+    const COLOR_AMARILLO = '#fbf1d6';
+    const COLOR_MENTA_TEXTO = '#2f6b4f';
 
     /**
      * Envía todos los reportes activos del tenant para una fecha. Lo llama el cron.
@@ -110,8 +135,10 @@ class MotorReportesCorreo
 
     /**
      * Arma el reporte de una asociación, lo envía y deja el historial.
-     * $cache guarda el reporte ya armado por código de tipo, para no repetir
-     * las consultas cuando varios colaboradores reciben el mismo reporte.
+     * $cache guarda el reporte ya armado por código de tipo (y por
+     * colaborador en los reportes personales, como el docente), para no
+     * repetir las consultas cuando varios colaboradores reciben el mismo
+     * reporte.
      */
     private static function enviarSuscripcion(PDO $db, array $suscripcion, $fecha, $origen, array &$cache)
     {
@@ -123,13 +150,18 @@ class MotorReportesCorreo
                 $error = 'El colaborador no tiene un correo válido registrado.';
             } else {
                 $codigo = $suscripcion['codigo_tipo'];
-                if (!isset($cache[$codigo])) {
-                    $cache[$codigo] = self::armarReporte($db, $codigo, $fecha);
+                $llave = $codigo === self::CODIGO_RESUMEN_DOCENTE
+                    ? $codigo . '|' . $suscripcion['id_colaborador']
+                    : $codigo;
+                if (!isset($cache[$llave])) {
+                    $cache[$llave] = self::armarReporte($db, $suscripcion, $fecha);
                 }
-                $reporte = $cache[$codigo];
+                $reporte = $cache[$llave];
 
                 if ($reporte === null) {
                     $error = 'El tipo de reporte ' . $codigo . ' no tiene armado en el sistema.';
+                } elseif (!empty($reporte['error'])) {
+                    $error = $reporte['error'];
                 } else {
                     $html = str_replace('{{NOMBRE_COLABORADOR}}', self::e($suscripcion['primer_nombre']), $reporte['html']);
                     $envio = ConfiguracionCorreo::enviar($db, array($correo), $reporte['asunto'], $html);
@@ -217,17 +249,27 @@ class MotorReportesCorreo
     // =========================================================
 
     /**
-     * Devuelve {asunto, html} del tipo de reporte, o null si el código no
+     * Devuelve {asunto, html} del tipo de reporte de la asociación, {error}
+     * si no se puede armar para ese colaborador, o null si el código no
      * tiene armado. El html lleva {{NOMBRE_COLABORADOR}} para el saludo.
      */
-    private static function armarReporte(PDO $db, $codigo, $fecha)
+    private static function armarReporte(PDO $db, array $suscripcion, $fecha)
     {
-        switch ($codigo) {
+        switch ($suscripcion['codigo_tipo']) {
             case self::CODIGO_RESUMEN_COORDINACION:
                 $datos = self::datosResumenCoordinacion($db, $fecha);
                 return array(
                     'asunto' => 'Resumen del día ' . self::fechaCorta($fecha) . ' - ' . $datos['institucion'],
                     'html' => self::htmlResumenCoordinacion($datos)
+                );
+            case self::CODIGO_RESUMEN_DOCENTE:
+                $datos = self::datosResumenDocente($db, $suscripcion['id_colaborador'], $fecha);
+                if ($datos === null) {
+                    return array('error' => 'El colaborador no está registrado como docente activo.');
+                }
+                return array(
+                    'asunto' => 'Tu resumen del día ' . self::fechaCorta($fecha) . ' - ' . $datos['institucion'],
+                    'html' => self::htmlResumenDocente($datos)
                 );
             default:
                 return null;
@@ -288,6 +330,7 @@ class MotorReportesCorreo
         $maxAusentes = self::configNumero($db, 'reporte_correo_max_ausentes', 20);
         $diasCartera = self::configNumero($db, 'reporte_correo_dias_cartera', 30);
         $topCartera = self::configNumero($db, 'reporte_correo_top_cartera', 10);
+        $maxIndicadores = self::configNumero($db, 'reporte_correo_max_indicadores', 3);
 
         $ausentes = self::estudiantesSinVenir($db, $fecha, $diasAusencia);
         $cartera = self::carteraVencidaEstudiantes($db, $fecha, $diasCartera);
@@ -299,6 +342,8 @@ class MotorReportesCorreo
             'colaboradores' => $operativo['colaboradores'],
             'academico_hoy' => $academico,
             'periodos' => $periodos,
+            'clases_docentes' => self::clasesPorDocente($db, $fecha, $inicioSemana, $inicioMes),
+            'indicadores' => self::indicadoresCorte($db, $fecha, $maxIndicadores, null),
             'pendientes_aprobar' => self::solicitudesPendientes($db),
             'dias_ausencia' => $diasAusencia,
             'ausentes_total' => count($ausentes),
@@ -431,9 +476,22 @@ class MotorReportesCorreo
      * ese día son 0; si no, se cuentan los días hábiles desde el día siguiente
      * a su última asistencia (o a su fecha de ingreso si nunca ha venido)
      * hasta la fecha. Ordenados de más a menos días.
+     *
+     * Si llega $idsGrupos, solo los estudiantes de esos grupos (lo usa el
+     * reporte docente); null es todo el jardín.
      */
-    private static function estudiantesSinVenir(PDO $db, $fecha, $umbral)
+    private static function estudiantesSinVenir(PDO $db, $fecha, $umbral, $idsGrupos = null)
     {
+        $filtroGrupos = '';
+        $paramsGrupos = array();
+        if ($idsGrupos !== null) {
+            if (empty($idsGrupos)) {
+                return array();
+            }
+            list($filtroGrupos, $paramsGrupos) = self::filtroIn('exg.id_grupo', 'grp', $idsGrupos);
+            $filtroGrupos = ' AND ' . $filtroGrupos;
+        }
+
         $stmt = $db->prepare("SELECT sub.id_estudiante, sub.nombre, sub.nombre_grupo, sub.ultima_asistencia,
                     (SELECT COUNT(*) FROM calendarios cal
                      WHERE cal.dia_habil = 1
@@ -451,7 +509,7 @@ class MotorReportesCorreo
                     INNER JOIN personas p ON p.id = e.id_persona
                     INNER JOIN estudiantes_x_grupos exg ON exg.id_estudiante = e.id AND exg.activo = 1
                     INNER JOIN grupos g ON g.id = exg.id_grupo
-                    WHERE e.activo = 1 AND e.id_tenant = :id_tenant
+                    WHERE e.activo = 1 AND e.id_tenant = :id_tenant" . $filtroGrupos . "
                     GROUP BY e.id, p.primer_nombre, p.primer_apellido, e.fecha_ingreso
                 ) sub
                 WHERE COALESCE(sub.ultima_asistencia, sub.fecha_ingreso) IS NOT NULL
@@ -464,6 +522,9 @@ class MotorReportesCorreo
         $stmt->bindValue(':fecha_ultima', $fecha);
         $stmt->bindValue(':fecha_hoy', $fecha);
         $stmt->bindValue(':umbral', (int) $umbral, PDO::PARAM_INT);
+        foreach ($paramsGrupos as $llave => $valor) {
+            $stmt->bindValue($llave, $valor);
+        }
         $stmt->execute();
 
         $filas = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -526,6 +587,346 @@ class MotorReportesCorreo
         unset($f);
 
         return array('total' => $total, 'estudiantes' => $filas);
+    }
+
+    /**
+     * Clases ejecutadas por cada docente activo hoy, en la semana y en el
+     * mes, según el docente que quedó en la clase. Salen los docentes que
+     * tienen grupo o área asignada, o alguna clase en el periodo.
+     */
+    private static function clasesPorDocente(PDO $db, $fecha, $inicioSemana, $inicioMes)
+    {
+        $desde = min($inicioSemana, $inicioMes);
+
+        $stmt = $db->prepare("SELECT d.id,
+                       TRIM(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido)) AS nombre,
+                       COALESCE(SUM(DATE(t.fecha_ejecucion) = :hoy), 0) AS hoy,
+                       COALESCE(SUM(DATE(t.fecha_ejecucion) >= :inicio_semana), 0) AS semana,
+                       COALESCE(SUM(DATE(t.fecha_ejecucion) >= :inicio_mes), 0) AS mes
+                FROM docentes d
+                INNER JOIN personas p ON p.id = d.id_persona
+                LEFT JOIN tareas_x_sprints t ON t.id_docente = d.id
+                      AND t.id_tenant = d.id_tenant
+                      AND t.id_estado_tarea = :ejecutada
+                      AND DATE(t.fecha_ejecucion) BETWEEN :desde AND :hasta
+                WHERE d.id_tenant = :id_tenant
+                  AND d.activo = 1
+                GROUP BY d.id, p.primer_nombre, p.primer_apellido
+                HAVING COUNT(t.id) > 0
+                    OR EXISTS (SELECT 1 FROM area_academica_x_grupo axg
+                               WHERE axg.id_docente = d.id AND axg.id_tenant = :id_tenant_axg)
+                    OR EXISTS (SELECT 1 FROM docentes_x_grupos dxg
+                               WHERE dxg.id_docente = d.id AND dxg.activo = 1 AND dxg.id_tenant = :id_tenant_dxg)
+                ORDER BY mes DESC, nombre");
+        $stmt->bindValue(':hoy', $fecha);
+        $stmt->bindValue(':inicio_semana', $inicioSemana);
+        $stmt->bindValue(':inicio_mes', $inicioMes);
+        $stmt->bindValue(':ejecutada', self::ESTADO_TAREA_EJECUTADA, PDO::PARAM_INT);
+        $stmt->bindValue(':desde', $desde);
+        $stmt->bindValue(':hasta', $fecha);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->bindValue(':id_tenant_axg', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->bindValue(':id_tenant_dxg', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+
+        $filas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($filas as &$f) {
+            $f['hoy'] = (int) $f['hoy'];
+            $f['semana'] = (int) $f['semana'];
+            $f['mes'] = (int) $f['mes'];
+        }
+        unset($f);
+        return $filas;
+    }
+
+    /** Corte académico vigente a la fecha, o null */
+    private static function corteVigente(PDO $db, $fecha)
+    {
+        $stmt = $db->prepare("SELECT id, nombre, fecha_inicio, fecha_fin FROM cortes_academicos
+                              WHERE :fecha BETWEEN fecha_inicio AND fecha_fin
+                                AND id_tenant = :id_tenant
+                              ORDER BY fecha_inicio DESC
+                              LIMIT 1");
+        $stmt->bindValue(':fecha', $fecha);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+        $fila = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $fila ?: null;
+    }
+
+    /**
+     * Indicadores del corte vigente por grupo y área: cuántos tiene cada
+     * grupo en cada área (según los grados del grupo) y cuántos ya se
+     * trabajaron. Por grupo se toma el área más atrasada y se listan hasta
+     * $maxIndicadores de sus indicadores sin trabajar.
+     *
+     * Solo grupos con estudiantes activos. Si llega $filtro (reporte
+     * docente) se limita a sus pares grupo-área ('pares': "idGrupo|idArea")
+     * y a todas las áreas de los grupos donde está asignado ('grupos').
+     *
+     * @return array {corte, grupos, areas, celdas[idArea][idGrupo] {total, trabajados}, atrasados}
+     */
+    private static function indicadoresCorte(PDO $db, $fecha, $maxIndicadores, $filtro)
+    {
+        $vacio = array('corte' => self::corteVigente($db, $fecha), 'grupos' => array(), 'areas' => array(), 'celdas' => array(), 'atrasados' => array());
+        if ($vacio['corte'] === null) {
+            return $vacio;
+        }
+
+        $stmt = $db->prepare("SELECT g.id AS id_grupo, g.nombre AS nombre_grupo, g.orden AS orden_grupo,
+                       a.id AS id_area, a.nombre AS nombre_area,
+                       il.id AS id_indicador, il.nombre AS nombre_indicador,
+                       (SELECT COUNT(DISTINCT t.id)
+                        FROM actividades_academicas_x_indicadores_logros x
+                        INNER JOIN tareas_x_sprints t ON t.id_actividad_academica = x.id_actividad_academica
+                              AND t.id_grupo = g.id
+                              AND t.id_estado_tarea = :ejecutada
+                              AND t.id_tenant = g.id_tenant
+                        INNER JOIN sprints s ON s.id = t.id_sprint AND s.id_corte_academico = :id_corte_sprint
+                        WHERE x.id_indicador_logro = il.id) AS veces
+                FROM grupos g
+                INNER JOIN grados_x_grupo gxg ON gxg.id_grupo = g.id AND gxg.id_tenant = g.id_tenant
+                INNER JOIN logros l ON l.id_grado = gxg.id_grado
+                      AND l.id_corte_academico = :id_corte
+                      AND l.id_tenant = g.id_tenant
+                INNER JOIN indicadores_logros il ON il.id_logro = l.id
+                INNER JOIN areas_academicas a ON a.id = l.id_area_academica
+                WHERE g.id_tenant = :id_tenant
+                  AND EXISTS (SELECT 1 FROM estudiantes_x_grupos exg
+                              INNER JOIN estudiantes e ON e.id = exg.id_estudiante AND e.activo = 1
+                              WHERE exg.id_grupo = g.id AND exg.activo = 1)
+                ORDER BY g.orden, g.nombre, a.nombre, il.nombre");
+        $stmt->bindValue(':ejecutada', self::ESTADO_TAREA_EJECUTADA, PDO::PARAM_INT);
+        $stmt->bindValue(':id_corte_sprint', $vacio['corte']['id']);
+        $stmt->bindValue(':id_corte', $vacio['corte']['id']);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+
+        $grupos = array();
+        $areas = array();
+        $celdas = array();
+        $sinTrabajar = array();
+        $vistos = array();
+
+        while ($f = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            if ($filtro !== null
+                && !isset($filtro['pares'][$f['id_grupo'] . '|' . $f['id_area']])
+                && !isset($filtro['grupos'][$f['id_grupo']])) {
+                continue;
+            }
+
+            // Un indicador puede venir dos veces si el grupo tiene varios grados
+            $llave = $f['id_area'] . '|' . $f['id_grupo'] . '|' . $f['id_indicador'];
+            if (isset($vistos[$llave])) {
+                continue;
+            }
+            $vistos[$llave] = true;
+
+            $grupos[$f['id_grupo']] = $f['nombre_grupo'];
+            $areas[$f['id_area']] = $f['nombre_area'];
+            if (!isset($celdas[$f['id_area']][$f['id_grupo']])) {
+                $celdas[$f['id_area']][$f['id_grupo']] = array('total' => 0, 'trabajados' => 0);
+            }
+            $celdas[$f['id_area']][$f['id_grupo']]['total']++;
+            if ((int) $f['veces'] > 0) {
+                $celdas[$f['id_area']][$f['id_grupo']]['trabajados']++;
+            } else {
+                $sinTrabajar[$f['id_grupo']][$f['id_area']][] = $f['nombre_indicador'];
+            }
+        }
+        asort($areas);
+
+        // Por grupo, el área con menor porcentaje (si empata, la de más indicadores)
+        $atrasados = array();
+        foreach ($grupos as $idGrupo => $nombreGrupo) {
+            $peor = null;
+            foreach ($areas as $idArea => $nombreArea) {
+                if (!isset($celdas[$idArea][$idGrupo])) {
+                    continue;
+                }
+                $c = $celdas[$idArea][$idGrupo];
+                if ($c['trabajados'] >= $c['total']) {
+                    continue;
+                }
+                $pct = $c['trabajados'] / $c['total'];
+                if ($peor === null || $pct < $peor['pct'] || ($pct == $peor['pct'] && $c['total'] > $peor['total'])) {
+                    $peor = array('id_area' => $idArea, 'pct' => $pct, 'total' => $c['total']);
+                }
+            }
+            if ($peor === null) {
+                continue;
+            }
+            $c = $celdas[$peor['id_area']][$idGrupo];
+            $atrasados[] = array(
+                'nombre_grupo' => $nombreGrupo,
+                'nombre_area' => $areas[$peor['id_area']],
+                'trabajados' => $c['trabajados'],
+                'total' => $c['total'],
+                'sin_trabajar' => array_slice($sinTrabajar[$idGrupo][$peor['id_area']], 0, max(0, $maxIndicadores)),
+                'sin_trabajar_total' => count($sinTrabajar[$idGrupo][$peor['id_area']])
+            );
+        }
+
+        return array('corte' => $vacio['corte'], 'grupos' => $grupos, 'areas' => $areas, 'celdas' => $celdas, 'atrasados' => $atrasados);
+    }
+
+    // =========================================================
+    // RESUMEN DOCENTE: DATOS
+    // =========================================================
+
+    /**
+     * Datos del resumen del docente que corresponde al colaborador, o null
+     * si el colaborador no es docente activo.
+     */
+    public static function datosResumenDocente(PDO $db, $idColaborador, $fecha)
+    {
+        $stmt = $db->prepare("SELECT d.id, TRIM(CONCAT_WS(' ', p.primer_nombre, p.primer_apellido)) AS nombre
+                              FROM docentes d
+                              INNER JOIN personas p ON p.id = d.id_persona
+                              WHERE d.id_colaborador = :id_colaborador
+                                AND d.activo = 1
+                                AND d.id_tenant = :id_tenant
+                              LIMIT 1");
+        $stmt->bindValue(':id_colaborador', $idColaborador);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+        $docente = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$docente) {
+            return null;
+        }
+        $idDocente = $docente['id'];
+
+        $inicioSemana = date('Y-m-d', strtotime('monday this week', strtotime($fecha)));
+        $inicioMes = date('Y-m-01', strtotime($fecha));
+
+        // Lo que dicta: área por grupo, y grupos donde está asignado
+        $stmt = $db->prepare("SELECT id_grupo, id_area_academica FROM area_academica_x_grupo
+                              WHERE id_docente = :id_docente AND id_tenant = :id_tenant");
+        $stmt->bindValue(':id_docente', $idDocente);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+        $pares = array();
+        $idsGrupos = array();
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $f) {
+            $pares[$f['id_grupo'] . '|' . $f['id_area_academica']] = true;
+            $idsGrupos[$f['id_grupo']] = true;
+        }
+
+        $stmt = $db->prepare("SELECT id_grupo FROM docentes_x_grupos
+                              WHERE id_docente = :id_docente AND activo = 1 AND id_tenant = :id_tenant");
+        $stmt->bindValue(':id_docente', $idDocente);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+        $gruposAsignados = array();
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $idGrupo) {
+            $gruposAsignados[$idGrupo] = true;
+            $idsGrupos[$idGrupo] = true;
+        }
+        $idsGrupos = array_keys($idsGrupos);
+
+        $periodos = array(
+            'hoy' => self::clasesDocente($db, $idDocente, $fecha, $fecha),
+            'semana' => self::clasesDocente($db, $idDocente, $inicioSemana, $fecha),
+            'mes' => self::clasesDocente($db, $idDocente, $inicioMes, $fecha)
+        );
+
+        // Franjas de hoy sin ejecutar en las áreas que dicta, con la regla del dashboard
+        $academico = DashboardGerencial::resumenAcademicoContexto($db, $fecha);
+        $franjasSinEjecutar = array();
+        $franjasHoy = 0;
+        foreach (DashboardGerencial::franjasAcademicasContexto($db, $fecha) as $f) {
+            if (!isset($pares[$f['id_grupo'] . '|' . $f['id_area_academica']])) {
+                continue;
+            }
+            $franjasHoy++;
+            if ($f['estado'] === 'sin_ejecutar') {
+                $franjasSinEjecutar[] = $f;
+            }
+        }
+
+        $diasAusencia = self::configNumero($db, 'reporte_correo_dias_ausencia', 2);
+        $maxAusentes = self::configNumero($db, 'reporte_correo_max_ausentes', 20);
+        $maxIndicadores = self::configNumero($db, 'reporte_correo_max_indicadores', 3);
+        $ausentes = self::estudiantesSinVenir($db, $fecha, $diasAusencia, $idsGrupos);
+
+        return array(
+            'fecha' => $fecha,
+            'institucion' => self::configTexto($db, 'institucion_nombre', 'Jardín'),
+            'docente' => $docente['nombre'],
+            'tiene_asignacion' => !empty($idsGrupos),
+            'inicio_semana' => $inicioSemana,
+            'inicio_mes' => $inicioMes,
+            'periodos' => $periodos,
+            'dia_habil' => !empty($academico['dia_habil']),
+            'franjas_hoy' => $franjasHoy,
+            'franjas_sin_ejecutar' => $franjasSinEjecutar,
+            'asistencia_grupos' => self::asistenciaGrupos($db, $fecha, $idsGrupos),
+            'dias_ausencia' => $diasAusencia,
+            'ausentes_total' => count($ausentes),
+            'ausentes' => array_slice($ausentes, 0, max(0, $maxAusentes)),
+            'indicadores' => self::indicadoresCorte($db, $fecha, $maxIndicadores, array('pares' => $pares, 'grupos' => $gruposAsignados))
+        );
+    }
+
+    /**
+     * Clases que el docente ejecutó en el rango y cuántas de ellas no tienen
+     * calificados a todos los estudiantes del grupo (solo grupos calificables).
+     */
+    private static function clasesDocente(PDO $db, $idDocente, $desde, $hasta)
+    {
+        $stmt = $db->prepare("SELECT COUNT(*) AS ejecutadas,
+                       COALESCE(SUM(g.calificable = 1
+                                    AND COALESCE(t.total_estudiantes_calificados, 0) < COALESCE(t.total_estudiantes_grupo, 0)), 0) AS sin_calificar
+                FROM tareas_x_sprints t
+                LEFT JOIN grupos g ON g.id = t.id_grupo
+                WHERE t.id_docente = :id_docente
+                  AND t.id_estado_tarea = :ejecutada
+                  AND DATE(t.fecha_ejecucion) BETWEEN :desde AND :hasta
+                  AND t.id_tenant = :id_tenant");
+        $stmt->bindValue(':id_docente', $idDocente);
+        $stmt->bindValue(':ejecutada', self::ESTADO_TAREA_EJECUTADA, PDO::PARAM_INT);
+        $stmt->bindValue(':desde', $desde);
+        $stmt->bindValue(':hasta', $hasta);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+        $fila = $stmt->fetch(PDO::FETCH_ASSOC);
+        return array('ejecutadas' => (int) $fila['ejecutadas'], 'sin_calificar' => (int) $fila['sin_calificar']);
+    }
+
+    /** Estudiantes activos de cada grupo y cuántos asistieron en la fecha */
+    private static function asistenciaGrupos(PDO $db, $fecha, array $idsGrupos)
+    {
+        if (empty($idsGrupos)) {
+            return array();
+        }
+        list($filtro, $params) = self::filtroIn('g.id', 'grp', $idsGrupos);
+
+        $stmt = $db->prepare("SELECT g.nombre,
+                       COUNT(DISTINCT e.id) AS total,
+                       COUNT(DISTINCT ae.id_estudiante) AS asistieron
+                FROM grupos g
+                INNER JOIN estudiantes_x_grupos exg ON exg.id_grupo = g.id AND exg.activo = 1
+                INNER JOIN estudiantes e ON e.id = exg.id_estudiante AND e.activo = 1
+                LEFT JOIN asistencia_estudiantes ae ON ae.id_estudiante = e.id
+                      AND DATE(ae.fecha_ingreso) = :fecha
+                      AND ae.id_tenant = g.id_tenant
+                WHERE g.id_tenant = :id_tenant AND " . $filtro . "
+                GROUP BY g.id, g.nombre, g.orden
+                ORDER BY g.orden, g.nombre");
+        $stmt->bindValue(':fecha', $fecha);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        foreach ($params as $llave => $valor) {
+            $stmt->bindValue($llave, $valor);
+        }
+        $stmt->execute();
+
+        $filas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($filas as &$f) {
+            $f['total'] = (int) $f['total'];
+            $f['asistieron'] = (int) $f['asistieron'];
+        }
+        unset($f);
+        return $filas;
     }
 
     // =========================================================
@@ -635,7 +1036,8 @@ class MotorReportesCorreo
             . '<tr><td style="height:16px;"></td></tr>'
             . '<tr><td>'
             . $avisos
-            . '<div style="' . $estiloSeccion . '"><h2 style="' . $estiloTitulo . '">✨ Lo que pasó</h2>' . $tablaIndicadores . '</div>'
+            . '<div style="' . $estiloSeccion . '"><h2 style="' . $estiloTitulo . '">✨ Lo que pasó</h2>' . $tablaIndicadores . self::seccionClasesDocentes($d['clases_docentes']) . '</div>'
+            . '<div style="' . $estiloSeccion . '"><h2 style="' . $estiloTitulo . '">🎯 Indicadores del corte</h2>' . self::seccionIndicadores($d['indicadores']) . '</div>'
             . '<div style="' . $estiloSeccion . '"><h2 style="' . $estiloTitulo . '">👀 Para tener presente</h2>' . $seccionAusentes . $seccionCartera . '</div>'
             . '</td></tr>'
             . '<tr><td align="center" style="padding:6px 0 0;font-size:12px;color:' . self::COLOR_SUAVE . ';">'
@@ -710,6 +1112,201 @@ class MotorReportesCorreo
             . '</table>';
     }
 
+    /** Clases ejecutadas por docente; en rosa quien no lleva clases en el mes */
+    private static function seccionClasesDocentes(array $filas)
+    {
+        $titulo = '<div style="font-weight:600;margin:16px 0 8px;">👩‍🏫 Clases ejecutadas por docente</div>';
+        if (empty($filas)) {
+            return $titulo . self::aviso(self::COLOR_CIELO, self::COLOR_TEXTO, 'No hay docentes activos con grupos o áreas asignadas.');
+        }
+
+        $html = '';
+        foreach ($filas as $f) {
+            $estilo = $f['mes'] === 0 ? 'color:' . self::COLOR_ROSA_TEXTO . ';' : '';
+            $html .= '<tr>'
+                . self::td('<span style="' . $estilo . '">' . self::e($f['nombre']) . '</span>')
+                . self::td('<b>' . $f['hoy'] . '</b>', 'center')
+                . self::td($f['semana'], 'center')
+                . self::td($f['mes'], 'center')
+                . '</tr>';
+        }
+
+        return $titulo
+            . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:13px;">'
+            . '<tr>' . self::th('Docente') . self::th('Hoy', 'center') . self::th('Semana', 'center') . self::th('Mes', 'center') . '</tr>'
+            . $html
+            . '</table>';
+    }
+
+    /**
+     * Cuadro compacto de indicadores trabajados del corte: áreas en filas y
+     * grupos en columnas, con el porcentaje en color; debajo, por grupo, su
+     * área más atrasada con algunos indicadores sin trabajar.
+     */
+    private static function seccionIndicadores(array $ind)
+    {
+        if ($ind['corte'] === null) {
+            return self::aviso(self::COLOR_CIELO, self::COLOR_TEXTO, '🗓️ No hay un corte académico vigente para esta fecha.');
+        }
+        $corte = $ind['corte'];
+        $subtitulo = '<div style="font-size:12px;color:' . self::COLOR_SUAVE . ';margin:0 0 8px;">'
+            . self::e($corte['nombre']) . ', del ' . self::e(self::fechaCorta($corte['fecha_inicio'])) . ' al ' . self::e(self::fechaCorta($corte['fecha_fin']))
+            . '. Porcentaje de indicadores trabajados en clases ejecutadas.</div>';
+
+        if (empty($ind['grupos'])) {
+            return $subtitulo . self::aviso(self::COLOR_CIELO, self::COLOR_TEXTO, 'No hay indicadores de este corte para los grupos.');
+        }
+
+        $cabecera = '<tr>' . self::th('Área');
+        foreach ($ind['grupos'] as $nombreGrupo) {
+            $cabecera .= self::th($nombreGrupo, 'center');
+        }
+        $cabecera .= '</tr>';
+
+        $filas = '';
+        foreach ($ind['areas'] as $idArea => $nombreArea) {
+            $filas .= '<tr><td style="padding:5px 6px;border-bottom:1px solid ' . self::COLOR_BORDE . ';font-size:11px;">' . self::e($nombreArea) . '</td>';
+            foreach ($ind['grupos'] as $idGrupo => $nombreGrupo) {
+                if (!isset($ind['celdas'][$idArea][$idGrupo])) {
+                    $filas .= '<td align="center" style="padding:5px 4px;border-bottom:1px solid ' . self::COLOR_BORDE . ';color:' . self::COLOR_SUAVE . ';">—</td>';
+                    continue;
+                }
+                $c = $ind['celdas'][$idArea][$idGrupo];
+                $pct = (int) round(($c['trabajados'] / $c['total']) * 100);
+                $fondo = $pct < 40 ? self::COLOR_ROSA : ($pct < 70 ? self::COLOR_AMARILLO : self::COLOR_MENTA);
+                $filas .= '<td align="center" style="padding:5px 4px;border-bottom:1px solid ' . self::COLOR_BORDE . ';background:' . $fondo . ';">'
+                    . '<div style="font-weight:700;font-size:13px;">' . $pct . '%</div>'
+                    . '<div style="font-size:10px;color:' . self::COLOR_SUAVE . ';">' . $c['trabajados'] . '/' . $c['total'] . '</div>'
+                    . '</td>';
+            }
+            $filas .= '</tr>';
+        }
+
+        $cuadro = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:12px;margin-bottom:10px;">'
+            . $cabecera . $filas . '</table>';
+
+        $atrasados = '';
+        foreach ($ind['atrasados'] as $a) {
+            $nombres = array();
+            foreach ($a['sin_trabajar'] as $nombre) {
+                $nombres[] = self::e(self::recortar($nombre, 70));
+            }
+            $mas = $a['sin_trabajar_total'] > count($a['sin_trabajar'])
+                ? ' <span style="color:' . self::COLOR_SUAVE . ';">(y ' . ($a['sin_trabajar_total'] - count($a['sin_trabajar'])) . ' más)</span>'
+                : '';
+            $atrasados .= '<div style="font-size:12px;padding:5px 0;border-bottom:1px dashed ' . self::COLOR_BORDE . ';">'
+                . '<b>' . self::e($a['nombre_grupo']) . '</b> · ' . self::e($a['nombre_area'])
+                . ' <span style="color:' . self::COLOR_SUAVE . ';">(' . $a['trabajados'] . ' de ' . $a['total'] . ')</span><br>'
+                . '<span style="color:' . self::COLOR_SUAVE . ';">Sin trabajar:</span> ' . implode(' · ', $nombres) . $mas
+                . '</div>';
+        }
+        if ($atrasados !== '') {
+            $atrasados = '<div style="font-weight:600;font-size:13px;margin:4px 0 4px;">Lo más atrasado por grupo</div>' . $atrasados;
+        } else {
+            $atrasados = self::aviso(self::COLOR_MENTA, self::COLOR_MENTA_TEXTO, 'Todos los indicadores del corte ya se trabajaron. 🎉');
+        }
+
+        return $subtitulo . $cuadro . $atrasados;
+    }
+
+    // =========================================================
+    // RESUMEN DOCENTE: HTML
+    // =========================================================
+
+    private static function htmlResumenDocente(array $d)
+    {
+        $p = $d['periodos'];
+
+        $avisos = '';
+        if (!$d['tiene_asignacion']) {
+            $avisos .= self::aviso(self::COLOR_CIELO, self::COLOR_TEXTO,
+                '📌 No tienes grupos ni áreas asignados en el sistema. Pídele a coordinación que te los asigne para ver aquí lo de tus grupos.');
+        }
+        if (!$d['dia_habil']) {
+            $avisos .= self::aviso(self::COLOR_CIELO, self::COLOR_TEXTO, '🗓️ Hoy no es día hábil en el calendario.');
+        } elseif (!empty($d['franjas_sin_ejecutar'])) {
+            $lista = array();
+            foreach ($d['franjas_sin_ejecutar'] as $f) {
+                $lista[] = self::e($f['nombre_grupo']) . ' · ' . self::e($f['nombre_area']) . ' <span style="color:' . self::COLOR_SUAVE . ';">'
+                    . self::e($f['hora_inicial']) . ' a ' . self::e($f['hora_final']) . '</span>';
+            }
+            $avisos .= self::aviso(self::COLOR_ROSA, self::COLOR_ROSA_TEXTO,
+                '⏰ Hoy quedaron <b>' . self::plural(count($d['franjas_sin_ejecutar']), 'franja', 'franjas') . ' sin ejecutar</b>:<br>' . implode('<br>', $lista));
+        } elseif ($d['franjas_hoy'] > 0) {
+            $avisos .= self::aviso(self::COLOR_MENTA, self::COLOR_MENTA_TEXTO, '✅ Ninguna de tus franjas de hoy quedó sin ejecutar.');
+        }
+
+        $tablaClases = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:14px;">'
+            . '<tr>' . self::th('Indicador') . self::th('Hoy', 'center') . self::th('Semana', 'center') . self::th('Mes', 'center') . '</tr>'
+            . self::filaIndicador('📚', 'Clases ejecutadas',
+                self::celdaValor($p['hoy']['ejecutadas'], ''),
+                self::celdaValor($p['semana']['ejecutadas'], ''),
+                self::celdaValor($p['mes']['ejecutadas'], ''))
+            . self::filaIndicador('✏️', 'Sin calificar completas',
+                self::celdaValor($p['hoy']['sin_calificar'], ''),
+                self::celdaValor($p['semana']['sin_calificar'], ''),
+                self::celdaValor($p['mes']['sin_calificar'], ''))
+            . '</table>';
+
+        $asistencia = '';
+        if (empty($d['asistencia_grupos'])) {
+            $asistencia = self::aviso(self::COLOR_CIELO, self::COLOR_TEXTO, 'Tus grupos no tienen estudiantes activos.');
+        } else {
+            $filas = '';
+            foreach ($d['asistencia_grupos'] as $g) {
+                $pct = $g['total'] > 0 ? round(($g['asistieron'] / $g['total']) * 100) : 0;
+                $filas .= '<tr>'
+                    . self::td(self::e($g['nombre']))
+                    . self::td('<b>' . $g['asistieron'] . '</b> de ' . $g['total'], 'center')
+                    . self::td($pct . '%', 'center')
+                    . '</tr>';
+            }
+            $asistencia = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:13px;">'
+                . '<tr>' . self::th('Grupo') . self::th('Asistieron', 'center') . self::th('%', 'center') . '</tr>'
+                . $filas . '</table>';
+        }
+
+        $cuerpo = $avisos
+            . self::seccion('✨ Tus clases', $tablaClases
+                . '<div style="font-size:12px;color:' . self::COLOR_SUAVE . ';margin-top:8px;">Sin calificar completas: clases ejecutadas en grupos calificables donde faltan estudiantes por calificar.</div>')
+            . self::seccion('🧒 Asistencia de hoy en tus grupos', $asistencia)
+            . self::seccion('👀 Para tener presente', self::seccionAusentes($d)
+                . '<div style="font-weight:600;margin:12px 0 4px;">🎯 Indicadores del corte en tus grupos y áreas</div>'
+                . self::seccionIndicadores($d['indicadores']));
+
+        $pie = 'Semana desde el lunes ' . self::e(self::fechaCorta($d['inicio_semana'])) . ' · Mes desde el ' . self::e(self::fechaCorta($d['inicio_mes'])) . '.<br>Enviado por Genialisis.';
+
+        return self::plantillaCorreo($d['institucion'], 'Tu resumen del día', $d['fecha'],
+            'Hola, {{NOMBRE_COLABORADOR}}. Esto fue lo que pasó hoy en tus clases y tus grupos, con lo acumulado de la semana y del mes.',
+            $cuerpo, $pie);
+    }
+
+    /** Sección blanca con título, como las del resumen de coordinación */
+    private static function seccion($titulo, $html)
+    {
+        return '<div style="background:#ffffff;border:1px solid ' . self::COLOR_BORDE . ';border-radius:14px;padding:16px 12px 10px;margin:0 0 16px;">'
+            . '<h2 style="margin:0 0 12px;font-size:17px;color:' . self::COLOR_TEXTO . ';">' . $titulo . '</h2>' . $html . '</div>';
+    }
+
+    /** Encabezado glaseado, cuerpo y pie del correo, con estilos en línea */
+    private static function plantillaCorreo($institucion, $titulo, $fecha, $intro, $cuerpo, $pie)
+    {
+        return '<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>'
+            . '<body style="margin:0;padding:0;background:' . self::COLOR_FONDO . ';font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:' . self::COLOR_TEXTO . ';">'
+            . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:' . self::COLOR_FONDO . ';"><tr><td align="center" style="padding:16px 8px;">'
+            . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;">'
+            . '<tr><td style="background-color:' . self::COLOR_DORADO_CLARO . ';background-image:linear-gradient(135deg,' . self::COLOR_DORADO_CLARO . ',' . self::COLOR_CIELO . ');border:1px solid ' . self::COLOR_BORDE . ';border-radius:16px;padding:22px 22px 18px;">'
+            . '<div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:' . self::COLOR_DORADO . ';font-weight:600;">' . self::e($institucion) . '</div>'
+            . '<div style="font-size:24px;font-weight:700;margin:4px 0 6px;">' . self::e($titulo) . '</div>'
+            . '<div style="font-size:14px;color:' . self::COLOR_SUAVE . ';">' . self::e(ucfirst(self::fechaLarga($fecha))) . '</div>'
+            . '<div style="font-size:15px;margin-top:14px;">' . $intro . '</div>'
+            . '</td></tr>'
+            . '<tr><td style="height:16px;"></td></tr>'
+            . '<tr><td>' . $cuerpo . '</td></tr>'
+            . '<tr><td align="center" style="padding:6px 0 0;font-size:12px;color:' . self::COLOR_SUAVE . ';">' . $pie . '</td></tr>'
+            . '</table></td></tr></table></body></html>';
+    }
+
     private static function filaIndicador($icono, $nombre, $hoy, $semana, $mes)
     {
         $borde = 'border-bottom:1px solid ' . self::COLOR_BORDE . ';';
@@ -749,6 +1346,24 @@ class MotorReportesCorreo
     // AYUDANTES
     // =========================================================
 
+    /**
+     * Arma "campo IN (:prefijo_0, :prefijo_1, ...)" con sus parámetros, para
+     * listas de ids que se enlazan uno por uno.
+     *
+     * @return array [sql, params]
+     */
+    private static function filtroIn($campo, $prefijo, array $valores)
+    {
+        $marcas = array();
+        $params = array();
+        foreach (array_values($valores) as $i => $valor) {
+            $marca = ':' . $prefijo . '_' . $i;
+            $marcas[] = $marca;
+            $params[$marca] = $valor;
+        }
+        return array($campo . ' IN (' . implode(', ', $marcas) . ')', $params);
+    }
+
     private static function configNumero(PDO $db, $clave, $porDefecto)
     {
         $stmt = $db->prepare("SELECT valor_numero FROM configuracion_global
@@ -779,6 +1394,13 @@ class MotorReportesCorreo
     private static function decimal($valor)
     {
         return number_format((float) $valor, 1, ',', '.');
+    }
+
+    /** Corta un texto largo con puntos suspensivos */
+    private static function recortar($texto, $max)
+    {
+        $texto = trim((string) $texto);
+        return mb_strlen($texto) > $max ? rtrim(mb_substr($texto, 0, $max - 1)) . '…' : $texto;
     }
 
     private static function plural($n, $singular, $plural)

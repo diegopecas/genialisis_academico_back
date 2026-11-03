@@ -132,6 +132,34 @@ class DashboardGerencial
         ];
     }
 
+    /**
+     * Franjas del horario de los grupos para una fecha, con su estado
+     * (ejecutada, en_curso, fuera_hora, por_venir o sin_ejecutar), sin
+     * las actividades. Lo usa el reporte por correo de cada docente para
+     * saber qué franjas suyas quedaron sin ejecutar, con la misma regla
+     * del tab académico.
+     */
+    public static function franjasAcademicasContexto($db, $fecha)
+    {
+        self::setTimeZone();
+        $r = self::calcularEjecucionAcademica($db, $fecha, self::MODO_ACADEMICO_GRUPOS);
+
+        $franjas = [];
+        foreach ($r['franjas'] as $f) {
+            $franjas[] = [
+                'id_grupo' => $f['id_destino'],
+                'nombre_grupo' => $f['nombre_destino'],
+                'id_area_academica' => $f['id_area_academica'],
+                'nombre_area' => $f['nombre_area'],
+                'nombre_franja' => $f['nombre_franja'],
+                'hora_inicial' => $f['hora_inicial'],
+                'hora_final' => $f['hora_final'],
+                'estado' => $f['estado']
+            ];
+        }
+        return $franjas;
+    }
+
     // =========================================================
     // DETALLE ASISTENCIA ESTUDIANTES
     // =========================================================
