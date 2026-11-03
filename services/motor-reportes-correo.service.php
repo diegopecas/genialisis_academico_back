@@ -30,6 +30,18 @@ Lo dispara el cron (cron/reportes-correo.php, un proceso por tenant) y el
 botón "Enviar ahora" del listado. El cron no repite un reporte que ya salió
 bien ese día para el mismo colaborador; el envío manual siempre sale.
 
+El cron corre todos los días, también sábados, domingos y festivos, pero
+solo envía si ese día pasó algo (ver huboNovedad): así los jardines que
+trabajan el fin de semana reciben su reporte y los demás no reciben correos
+vacíos. Los que no salen por eso no quedan en el historial.
+
+El recaudo cuenta los pagos por la fecha en que se registraron en el
+sistema (fecha_registro), no por la fecha del comprobante: un pago del 31
+registrado hoy sale en el reporte de hoy. Aparte se muestran, cuando hay
+movimiento en el mes: los pagos registrados en el período con comprobante de
+antes del período ("de otros días"), los tipos de pago que no son ingreso
+(descuentos, castigos de cartera) y las anulaciones de pagos y de cobros.
+
 Los umbrales del reporte salen de configuracion_global (valor_numero):
   reporte_correo_dias_ausencia  Días hábiles sin venir a partir de los cuales
                                 el estudiante sale en la lista.
@@ -44,6 +56,11 @@ clase ejecutada, en un sprint de ese corte, con una actividad asociada a ese
 indicador. El corte es el vigente a la fecha del reporte. (El reporte de
 cobertura curricular cuenta también las clases programadas; aquí solo las
 ejecutadas.)
+
+La asistencia de niños cuenta solo a los permanentes (estudiantes.permanente
+= 1, los que tienen contrato): los temporales van por días y faltar no es
+inasistencia. De los temporales solo se dice cuántos vinieron hoy, y no salen
+en la lista de los que llevan días sin venir.
 
 Los días hábiles se cuentan con el campo dia_habil del calendario global,
 igual que el tab académico del dashboard: no cuentan festivos, sábados ni
@@ -89,16 +106,30 @@ class MotorReportesCorreo
      */
     public static function ejecutar(PDO $db, $fecha)
     {
-        $resultado = array('evaluados' => 0, 'enviados' => 0, 'fallidos' => 0, 'omitidos' => 0);
+        $resultado = array('evaluados' => 0, 'enviados' => 0, 'fallidos' => 0, 'omitidos' => 0, 'sin_novedad' => 0);
 
         $suscripciones = self::suscripcionesActivas($db, null);
         $cache = array();
+        $novedades = array();
 
         foreach ($suscripciones as $suscripcion) {
             $resultado['evaluados']++;
 
             if (self::yaEnviado($db, $suscripcion['id'], $fecha)) {
                 $resultado['omitidos']++;
+                continue;
+            }
+
+            // Si ese día no pasó nada, no se manda (el general se pregunta una
+            // sola vez; el docente, por colaborador)
+            $llave = $suscripcion['codigo_tipo'] === self::CODIGO_RESUMEN_DOCENTE
+                ? $suscripcion['codigo_tipo'] . '|' . $suscripcion['id_colaborador']
+                : $suscripcion['codigo_tipo'];
+            if (!isset($novedades[$llave])) {
+                $novedades[$llave] = self::huboNovedad($db, $suscripcion, $fecha);
+            }
+            if (!$novedades[$llave]) {
+                $resultado['sin_novedad']++;
                 continue;
             }
 
@@ -208,6 +239,98 @@ class MotorReportesCorreo
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
+    /**
+     * true si ese día pasó algo que justifique el correo.
+     *
+     * Resumen de coordinación: hubo asistencia de estudiantes, se registró
+     * algún pago (incluidos descuentos y castigos), se anuló algún pago o
+     * cobro, se ejecutó alguna clase, se registró alguna observación o
+     * solicitud, o algún colaborador marcó ingreso.
+     *
+     * Resumen docente: el docente ejecutó alguna clase o vino algún
+     * estudiante de sus grupos.
+     *
+     * Un tipo sin regla propia se envía siempre.
+     */
+    private static function huboNovedad(PDO $db, array $suscripcion, $fecha)
+    {
+        switch ($suscripcion['codigo_tipo']) {
+            case self::CODIGO_RESUMEN_COORDINACION:
+                $consultas = array(
+                    "SELECT 1 FROM asistencia_estudiantes WHERE id_tenant = :id_tenant AND DATE(fecha_ingreso) = :fecha LIMIT 1",
+                    "SELECT 1 FROM pagos_recibidos WHERE id_tenant = :id_tenant AND DATE(fecha_registro) = :fecha LIMIT 1",
+                    "SELECT 1 FROM tareas_x_sprints WHERE id_tenant = :id_tenant AND id_estado_tarea = " . self::ESTADO_TAREA_EJECUTADA . " AND DATE(fecha_ejecucion) = :fecha LIMIT 1",
+                    "SELECT 1 FROM observaciones_estudiantes WHERE id_tenant = :id_tenant AND DATE(fecha_registro) = :fecha LIMIT 1",
+                    "SELECT 1 FROM solicitudes WHERE id_tenant = :id_tenant AND DATE(fecha_registro) = :fecha LIMIT 1",
+                    "SELECT 1 FROM registros_asistencia_colaboradores WHERE id_tenant = :id_tenant AND fecha = :fecha LIMIT 1",
+                    "SELECT 1 FROM pagos_recibidos WHERE id_tenant = :id_tenant AND anulado = 1 AND DATE(fecha_anulacion) = :fecha LIMIT 1",
+                    "SELECT 1 FROM cuentas_por_cobrar WHERE id_tenant = :id_tenant AND anulado = 1 AND DATE(fecha_anulacion) = :fecha LIMIT 1"
+                );
+                foreach ($consultas as $sql) {
+                    $stmt = $db->prepare($sql);
+                    $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $stmt->bindValue(':fecha', $fecha);
+                    $stmt->execute();
+                    if ($stmt->fetchColumn()) {
+                        return true;
+                    }
+                }
+                return false;
+
+            case self::CODIGO_RESUMEN_DOCENTE:
+                // Si no es docente activo se intenta igual los días en que pasó
+                // algo en el jardín, para que quede fallido en el historial con
+                // su motivo
+                $stmt = $db->prepare("SELECT id FROM docentes
+                                      WHERE id_colaborador = :id_colaborador AND activo = 1 AND id_tenant = :id_tenant
+                                      LIMIT 1");
+                $stmt->bindValue(':id_colaborador', $suscripcion['id_colaborador']);
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmt->execute();
+                $idDocente = $stmt->fetchColumn();
+                if (!$idDocente) {
+                    return self::huboNovedad($db, array('codigo_tipo' => self::CODIGO_RESUMEN_COORDINACION) + $suscripcion, $fecha);
+                }
+
+                $stmt = $db->prepare("SELECT 1 FROM tareas_x_sprints
+                                      WHERE id_docente = :id_docente
+                                        AND id_estado_tarea = :ejecutada
+                                        AND DATE(fecha_ejecucion) = :fecha
+                                        AND id_tenant = :id_tenant
+                                      LIMIT 1");
+                $stmt->bindValue(':id_docente', $idDocente);
+                $stmt->bindValue(':ejecutada', self::ESTADO_TAREA_EJECUTADA, PDO::PARAM_INT);
+                $stmt->bindValue(':fecha', $fecha);
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmt->execute();
+                if ($stmt->fetchColumn()) {
+                    return true;
+                }
+
+                $stmt = $db->prepare("SELECT 1
+                                      FROM asistencia_estudiantes ae
+                                      INNER JOIN estudiantes_x_grupos exg ON exg.id_estudiante = ae.id_estudiante AND exg.activo = 1
+                                      WHERE ae.id_tenant = :id_tenant
+                                        AND DATE(ae.fecha_ingreso) = :fecha
+                                        AND (exg.id_grupo IN (SELECT axg.id_grupo FROM area_academica_x_grupo axg
+                                                              WHERE axg.id_docente = :id_docente_axg AND axg.id_tenant = :id_tenant_axg)
+                                          OR exg.id_grupo IN (SELECT dxg.id_grupo FROM docentes_x_grupos dxg
+                                                              WHERE dxg.id_docente = :id_docente_dxg AND dxg.activo = 1 AND dxg.id_tenant = :id_tenant_dxg))
+                                      LIMIT 1");
+                $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmt->bindValue(':fecha', $fecha);
+                $stmt->bindValue(':id_docente_axg', $idDocente);
+                $stmt->bindValue(':id_tenant_axg', TenantContext::id(), PDO::PARAM_INT);
+                $stmt->bindValue(':id_docente_dxg', $idDocente);
+                $stmt->bindValue(':id_tenant_dxg', TenantContext::id(), PDO::PARAM_INT);
+                $stmt->execute();
+                return (bool) $stmt->fetchColumn();
+
+            default:
+                return true;
+        }
+    }
+
     /** true si el reporte ya salió bien ese día para esa asociación */
     private static function yaEnviado(PDO $db, $idSuscripcion, $fecha)
     {
@@ -299,7 +422,8 @@ class MotorReportesCorreo
         $operativo = DashboardGerencial::resumenOperativoContexto($db, $fecha);
         $academico = DashboardGerencial::resumenAcademicoContexto($db, $fecha);
 
-        $totalActivos = (int) $operativo['asistencia']['total_activos'];
+        // Solo permanentes: el dashboard ya calcula el porcentaje sobre ellos
+        $totalActivos = (int) $operativo['asistencia']['total_activos_permanentes'];
 
         $periodos = array();
         foreach ($rangos as $clave => $rango) {
@@ -312,6 +436,10 @@ class MotorReportesCorreo
                 'desde' => $desde,
                 'hasta' => $hasta,
                 'recaudo' => self::recaudo($db, $desde, $hasta),
+                'otros_dias' => self::pagosDeOtrosDias($db, $desde, $hasta),
+                'no_ingreso' => self::pagosNoIngreso($db, $desde, $hasta),
+                'pagos_anulados' => self::pagosAnulados($db, $desde, $hasta),
+                'cobros_anulados' => self::cobrosAnulados($db, $desde, $hasta),
                 'dias_habiles' => $diasHabiles,
                 'promedio_asistencia' => $promedio,
                 'porcentaje_asistencia' => $totalActivos > 0 ? round(($promedio / $totalActivos) * 100) : 0,
@@ -323,7 +451,8 @@ class MotorReportesCorreo
         }
 
         // Hoy se cuenta exacto (no promedio) con los mismos números del dashboard
-        $periodos['hoy']['asistieron_hoy'] = (int) $operativo['asistencia']['total_asistieron'];
+        $periodos['hoy']['asistieron_hoy'] = (int) $operativo['asistencia']['total_asistieron_permanentes'];
+        $periodos['hoy']['temporales_hoy'] = (int) $operativo['asistencia']['total_asistieron_temporales'];
         $periodos['hoy']['porcentaje_asistencia'] = round((float) $operativo['asistencia']['porcentaje']);
 
         $diasAusencia = self::configNumero($db, 'reporte_correo_dias_ausencia', 2);
@@ -368,14 +497,14 @@ class MotorReportesCorreo
 
     /**
      * Suma de días-estudiante con asistencia en días hábiles del rango, contando
-     * a cada estudiante activo (en grupo activo) una vez por día.
+     * a cada estudiante activo y permanente (en grupo activo) una vez por día.
      */
     private static function diasAsistenciaEstudiantes(PDO $db, $desde, $hasta)
     {
         $stmt = $db->prepare("SELECT COUNT(*) FROM (
                     SELECT DISTINCT ae.id_estudiante, DATE(ae.fecha_ingreso) AS dia
                     FROM asistencia_estudiantes ae
-                    INNER JOIN estudiantes e ON e.id = ae.id_estudiante AND e.activo = 1
+                    INNER JOIN estudiantes e ON e.id = ae.id_estudiante AND e.activo = 1 AND e.permanente = 1
                     INNER JOIN calendarios cal ON cal.fecha = DATE(ae.fecha_ingreso) AND cal.dia_habil = 1
                     WHERE ae.id_tenant = :id_tenant
                       AND DATE(ae.fecha_ingreso) BETWEEN :desde AND :hasta
@@ -389,15 +518,102 @@ class MotorReportesCorreo
         return (int) $stmt->fetchColumn();
     }
 
-    /** Pagos de ingreso no anulados con fecha en el rango (mismo filtro del dashboard) */
+    /**
+     * Pagos de ingreso no anulados registrados en el sistema en el rango
+     * (fecha_registro). El dashboard filtra por la fecha del pago; aquí cuenta
+     * cuándo se registró, que es lo que mueve la cartera ese día.
+     */
     private static function recaudo(PDO $db, $desde, $hasta)
     {
         $stmt = $db->prepare("SELECT COUNT(*) AS cantidad, COALESCE(SUM(pr.valor_recibido), 0) AS total
                               FROM pagos_recibidos pr
                               INNER JOIN tipos_pagos tp ON tp.id = pr.id_tipo_pago AND tp.es_ingreso = 1
                               WHERE (pr.anulado = 0 OR pr.anulado IS NULL)
-                                AND DATE(pr.fecha) BETWEEN :desde AND :hasta
+                                AND DATE(pr.fecha_registro) BETWEEN :desde AND :hasta
                                 AND pr.id_tenant = :id_tenant");
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->bindValue(':desde', $desde);
+        $stmt->bindValue(':hasta', $hasta);
+        $stmt->execute();
+        $fila = $stmt->fetch(PDO::FETCH_ASSOC);
+        return array('cantidad' => (int) $fila['cantidad'], 'total' => (float) $fila['total']);
+    }
+
+    /**
+     * Pagos de ingreso registrados en el rango cuya fecha del comprobante es
+     * de antes del rango (se registraron tarde).
+     */
+    private static function pagosDeOtrosDias(PDO $db, $desde, $hasta)
+    {
+        $stmt = $db->prepare("SELECT COUNT(*) AS cantidad, COALESCE(SUM(pr.valor_recibido), 0) AS total
+                              FROM pagos_recibidos pr
+                              INNER JOIN tipos_pagos tp ON tp.id = pr.id_tipo_pago AND tp.es_ingreso = 1
+                              WHERE (pr.anulado = 0 OR pr.anulado IS NULL)
+                                AND DATE(pr.fecha_registro) BETWEEN :desde AND :hasta
+                                AND DATE(pr.fecha) < :desde_comprobante
+                                AND pr.id_tenant = :id_tenant");
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->bindValue(':desde', $desde);
+        $stmt->bindValue(':hasta', $hasta);
+        $stmt->bindValue(':desde_comprobante', $desde);
+        $stmt->execute();
+        $fila = $stmt->fetch(PDO::FETCH_ASSOC);
+        return array('cantidad' => (int) $fila['cantidad'], 'total' => (float) $fila['total']);
+    }
+
+    /**
+     * Pagos no anulados de los tipos que no son ingreso (descuentos, castigos
+     * de cartera...), registrados en el rango, por nombre del tipo. Los tipos
+     * salen de tipos_pagos, así que uno nuevo aparece solo.
+     */
+    private static function pagosNoIngreso(PDO $db, $desde, $hasta)
+    {
+        $stmt = $db->prepare("SELECT tp.nombre, COUNT(pr.id) AS cantidad, COALESCE(SUM(pr.valor_recibido), 0) AS total
+                              FROM tipos_pagos tp
+                              LEFT JOIN pagos_recibidos pr ON pr.id_tipo_pago = tp.id
+                                    AND (pr.anulado = 0 OR pr.anulado IS NULL)
+                                    AND DATE(pr.fecha_registro) BETWEEN :desde AND :hasta
+                                    AND pr.id_tenant = tp.id_tenant
+                              WHERE tp.es_ingreso = 0
+                                AND tp.id_tenant = :id_tenant
+                              GROUP BY tp.id, tp.nombre
+                              ORDER BY tp.nombre");
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->bindValue(':desde', $desde);
+        $stmt->bindValue(':hasta', $hasta);
+        $stmt->execute();
+
+        $tipos = array();
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $f) {
+            $tipos[$f['nombre']] = array('cantidad' => (int) $f['cantidad'], 'total' => (float) $f['total']);
+        }
+        return $tipos;
+    }
+
+    /** Pagos anulados en el rango, por la fecha de anulación */
+    private static function pagosAnulados(PDO $db, $desde, $hasta)
+    {
+        $stmt = $db->prepare("SELECT COUNT(*) AS cantidad, COALESCE(SUM(valor_recibido), 0) AS total
+                              FROM pagos_recibidos
+                              WHERE anulado = 1
+                                AND DATE(fecha_anulacion) BETWEEN :desde AND :hasta
+                                AND id_tenant = :id_tenant");
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->bindValue(':desde', $desde);
+        $stmt->bindValue(':hasta', $hasta);
+        $stmt->execute();
+        $fila = $stmt->fetch(PDO::FETCH_ASSOC);
+        return array('cantidad' => (int) $fila['cantidad'], 'total' => (float) $fila['total']);
+    }
+
+    /** Cobros (cuentas por cobrar) anulados en el rango, por la fecha de anulación */
+    private static function cobrosAnulados(PDO $db, $desde, $hasta)
+    {
+        $stmt = $db->prepare("SELECT COUNT(*) AS cantidad, COALESCE(SUM(valor), 0) AS total
+                              FROM cuentas_por_cobrar
+                              WHERE anulado = 1
+                                AND DATE(fecha_anulacion) BETWEEN :desde AND :hasta
+                                AND id_tenant = :id_tenant");
         $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
         $stmt->bindValue(':desde', $desde);
         $stmt->bindValue(':hasta', $hasta);
@@ -471,7 +687,8 @@ class MotorReportesCorreo
     }
 
     /**
-     * Estudiantes activos que llevan más de $umbral días hábiles sin venir a
+     * Estudiantes activos y permanentes (los temporales van por días) que
+     * llevan más de $umbral días hábiles sin venir a
      * la fecha. Misma regla del reporte de indicadores de asistencia: si vino
      * ese día son 0; si no, se cuentan los días hábiles desde el día siguiente
      * a su última asistencia (o a su fecha de ingreso si nunca ha venido)
@@ -509,7 +726,7 @@ class MotorReportesCorreo
                     INNER JOIN personas p ON p.id = e.id_persona
                     INNER JOIN estudiantes_x_grupos exg ON exg.id_estudiante = e.id AND exg.activo = 1
                     INNER JOIN grupos g ON g.id = exg.id_grupo
-                    WHERE e.activo = 1 AND e.id_tenant = :id_tenant" . $filtroGrupos . "
+                    WHERE e.activo = 1 AND e.permanente = 1 AND e.id_tenant = :id_tenant" . $filtroGrupos . "
                     GROUP BY e.id, p.primer_nombre, p.primer_apellido, e.fecha_ingreso
                 ) sub
                 WHERE COALESCE(sub.ultima_asistencia, sub.fecha_ingreso) IS NOT NULL
@@ -893,7 +1110,10 @@ class MotorReportesCorreo
         return array('ejecutadas' => (int) $fila['ejecutadas'], 'sin_calificar' => (int) $fila['sin_calificar']);
     }
 
-    /** Estudiantes activos de cada grupo y cuántos asistieron en la fecha */
+    /**
+     * Estudiantes activos permanentes de cada grupo, cuántos de ellos
+     * asistieron en la fecha y cuántos temporales vinieron.
+     */
     private static function asistenciaGrupos(PDO $db, $fecha, array $idsGrupos)
     {
         if (empty($idsGrupos)) {
@@ -902,8 +1122,9 @@ class MotorReportesCorreo
         list($filtro, $params) = self::filtroIn('g.id', 'grp', $idsGrupos);
 
         $stmt = $db->prepare("SELECT g.nombre,
-                       COUNT(DISTINCT e.id) AS total,
-                       COUNT(DISTINCT ae.id_estudiante) AS asistieron
+                       COUNT(DISTINCT CASE WHEN e.permanente = 1 THEN e.id END) AS total,
+                       COUNT(DISTINCT CASE WHEN e.permanente = 1 THEN ae.id_estudiante END) AS asistieron,
+                       COUNT(DISTINCT CASE WHEN e.permanente = 0 THEN ae.id_estudiante END) AS temporales
                 FROM grupos g
                 INNER JOIN estudiantes_x_grupos exg ON exg.id_grupo = g.id AND exg.activo = 1
                 INNER JOIN estudiantes e ON e.id = exg.id_estudiante AND e.activo = 1
@@ -924,6 +1145,7 @@ class MotorReportesCorreo
         foreach ($filas as &$f) {
             $f['total'] = (int) $f['total'];
             $f['asistieron'] = (int) $f['asistieron'];
+            $f['temporales'] = (int) $f['temporales'];
         }
         unset($f);
         return $filas;
@@ -954,10 +1176,40 @@ class MotorReportesCorreo
             self::celdaValor(self::pesos($p['mes']['recaudo']['total']), self::plural($p['mes']['recaudo']['cantidad'], 'pago', 'pagos'))
         );
 
+        // Movimientos de cartera: solo salen si hubo algo en el mes
+        $filaMovimiento = function ($icono, $nombre, $clave, $tipo = null) use ($p) {
+            $dato = function ($periodo) use ($p, $clave, $tipo) {
+                return $tipo === null ? $p[$periodo][$clave] : $p[$periodo][$clave][$tipo];
+            };
+            if ($dato('mes')['cantidad'] === 0) {
+                return null;
+            }
+            $celda = function ($periodo) use ($dato) {
+                $v = $dato($periodo);
+                return $v['cantidad'] === 0
+                    ? self::celdaValor('—', '')
+                    : self::celdaValor(self::pesos($v['total']), self::plural($v['cantidad'], 'registro', 'registros'));
+            };
+            return self::filaIndicador($icono, $nombre, $celda('hoy'), $celda('semana'), $celda('mes'));
+        };
+
+        $movimientos = array($filaMovimiento('📅', 'Pagos de otros días', 'otros_dias'));
+        foreach (array_keys($p['mes']['no_ingreso']) as $tipo) {
+            $movimientos[] = $filaMovimiento('🏷️', $tipo, 'no_ingreso', $tipo);
+        }
+        $movimientos[] = $filaMovimiento('❌', 'Pagos anulados', 'pagos_anulados');
+        $movimientos[] = $filaMovimiento('❌', 'Cobros anulados', 'cobros_anulados');
+        foreach ($movimientos as $fila) {
+            if ($fila !== null) {
+                $filas[] = $fila;
+            }
+        }
+
         $filas[] = self::filaIndicador(
             '🧒',
-            'Asistencia de niños',
-            self::celdaValor($hoy['asistieron_hoy'] . ' de ' . $d['total_activos'], $hoy['porcentaje_asistencia'] . '%'),
+            'Asistencia de niños permanentes',
+            self::celdaValor($hoy['asistieron_hoy'] . ' de ' . $d['total_activos'],
+                $hoy['porcentaje_asistencia'] . '%' . ($hoy['temporales_hoy'] > 0 ? ' · +' . self::plural($hoy['temporales_hoy'], 'temporal', 'temporales') : '')),
             self::celdaValor(self::decimal($p['semana']['promedio_asistencia']) . ' al día', $p['semana']['porcentaje_asistencia'] . '% prom.'),
             self::celdaValor(self::decimal($p['mes']['promedio_asistencia']) . ' al día', $p['mes']['porcentaje_asistencia'] . '% prom.')
         );
@@ -1042,14 +1294,14 @@ class MotorReportesCorreo
             . '</td></tr>'
             . '<tr><td align="center" style="padding:6px 0 0;font-size:12px;color:' . self::COLOR_SUAVE . ';">'
             . 'Semana desde el lunes ' . self::e(self::fechaCorta($p['semana']['desde'])) . ' · Mes desde el ' . self::e(self::fechaCorta($p['mes']['desde'])) . '. '
-            . 'Los promedios de asistencia cuentan solo días hábiles.<br>Enviado por Genialisis.'
+            . 'La asistencia cuenta solo niños permanentes y sus promedios, solo días hábiles. El recaudo cuenta los pagos por la fecha en que se registraron.<br>Enviado por Genialisis.'
             . '</td></tr>'
             . '</table></td></tr></table></body></html>';
     }
 
     private static function seccionAusentes(array $d)
     {
-        $titulo = '<div style="font-weight:600;margin:0 0 8px;">🚸 Estudiantes con más de '
+        $titulo = '<div style="font-weight:600;margin:0 0 8px;">🚸 Estudiantes permanentes con más de '
             . self::plural($d['dias_ausencia'], 'día hábil', 'días hábiles') . ' sin venir</div>';
 
         if ($d['ausentes_total'] === 0) {
@@ -1254,15 +1506,18 @@ class MotorReportesCorreo
         } else {
             $filas = '';
             foreach ($d['asistencia_grupos'] as $g) {
-                $pct = $g['total'] > 0 ? round(($g['asistieron'] / $g['total']) * 100) : 0;
+                $pct = $g['total'] > 0 ? round(($g['asistieron'] / $g['total']) * 100) . '%' : '—';
+                $temporales = $g['temporales'] > 0
+                    ? '<div style="font-size:11px;color:' . self::COLOR_SUAVE . ';">+' . self::plural($g['temporales'], 'temporal', 'temporales') . '</div>'
+                    : '';
                 $filas .= '<tr>'
                     . self::td(self::e($g['nombre']))
-                    . self::td('<b>' . $g['asistieron'] . '</b> de ' . $g['total'], 'center')
-                    . self::td($pct . '%', 'center')
+                    . self::td('<b>' . $g['asistieron'] . '</b> de ' . $g['total'] . $temporales, 'center')
+                    . self::td($pct, 'center')
                     . '</tr>';
             }
             $asistencia = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:13px;">'
-                . '<tr>' . self::th('Grupo') . self::th('Asistieron', 'center') . self::th('%', 'center') . '</tr>'
+                . '<tr>' . self::th('Grupo') . self::th('Permanentes', 'center') . self::th('%', 'center') . '</tr>'
                 . $filas . '</table>';
         }
 

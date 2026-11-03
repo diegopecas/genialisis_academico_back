@@ -160,6 +160,18 @@ class DashboardGerencial
         return $franjas;
     }
 
+    /**
+     * Ejecución académica completa de los grupos para una fecha: franjas con
+     * su estado y sus actividades, y las clases fuera de horario, con la
+     * misma regla del tab académico. La usa el reporte de ejecución del
+     * horario por grupo (EjecucionHorarioGrupo).
+     */
+    public static function ejecucionAcademicaGruposContexto($db, $fecha)
+    {
+        self::setTimeZone();
+        return self::calcularEjecucionAcademica($db, $fecha, self::MODO_ACADEMICO_GRUPOS);
+    }
+
     // =========================================================
     // DETALLE ASISTENCIA ESTUDIANTES
     // =========================================================
@@ -556,7 +568,9 @@ class DashboardGerencial
 
             $presentesAhora = isset($mapPresentesAhora[$idGrupo]) ? $mapPresentesAhora[$idGrupo] : 0;
 
-            $porcentaje = $activos > 0 ? round(($asistieron / $activos) * 100, 2) : 0;
+            // El porcentaje cuenta solo permanentes: los temporales van por días
+            // y faltar no es inasistencia. Los que vinieron igual se muestran.
+            $porcentaje = $activosPerm > 0 ? round(($asPerm / $activosPerm) * 100, 2) : 0;
 
             $porGrupo[] = [
                 'id_grupo' => $idGrupo,
@@ -583,8 +597,9 @@ class DashboardGerencial
             $totalPresentesAhora += $presentesAhora;
         }
 
-        $porcentajeGeneral = $totalActivos > 0
-            ? round(($totalAsistieron / $totalActivos) * 100, 2)
+        // Igual que por grupo: el porcentaje general es el de los permanentes
+        $porcentajeGeneral = $totalActivosPermanentes > 0
+            ? round(($totalAsistieronPermanentes / $totalActivosPermanentes) * 100, 2)
             : 0;
 
         $porcentajePermanentes = $totalActivosPermanentes > 0
@@ -2021,10 +2036,18 @@ class DashboardGerencial
     //     guarda franja, así que se cruza por curso, día de la semana y hora
     //     de inicio.
     // Una actividad está "en horario" si se inició dentro de la ventana
-    // [hora_inicial, hora_final] de su franja ese mismo día. Todo lo demás va
-    // a la sección "Por fuera del horario" con su motivo.
+    // [hora_inicial, hora_final] de su franja ese mismo día, con una
+    // tolerancia de minutos antes del inicio y después del fin
+    // (configuracion_global.horario_tolerancia_minutos, 15 por defecto). Todo
+    // lo demás va a la sección "Por fuera del horario" con su motivo.
     const MODO_ACADEMICO_GRUPOS = 'grupos';
     const MODO_ACADEMICO_CURSOS = 'cursos';
+
+    /** Tolerancia por defecto, en minutos, si el jardín no la tiene configurada. */
+    const TOLERANCIA_HORARIO_DEFECTO = 15;
+
+    /** Tolerancia vigente; se lee al calcular la ejecución académica. */
+    private static $toleranciaHorario = self::TOLERANCIA_HORARIO_DEFECTO;
 
     /** Estados de tareas_x_sprints usados por el tab académico. */
     const ESTADO_TAREA_EJECUTADA = 2;
@@ -2109,6 +2132,7 @@ class DashboardGerencial
      */
     private static function calcularEjecucionAcademica($db, $fecha, $modo)
     {
+        self::$toleranciaHorario = self::leerToleranciaHorario($db);
         $diaSemana = (int)date('N', strtotime($fecha));
         $hoy = date('Y-m-d');
         $esHoy = ($fecha === $hoy);
@@ -2590,17 +2614,31 @@ class DashboardGerencial
     }
 
     /**
-     * Minutos por fuera de la ventana [inicio, fin]: 0 si la hora cae dentro,
-     * negativo si fue antes del inicio, positivo si fue después del fin.
+     * Minutos por fuera de la ventana [inicio, fin]: 0 si la hora cae dentro
+     * o a no más de la tolerancia de sus bordes, negativo si fue antes del
+     * inicio, positivo si fue después del fin.
      */
     private static function minutosFueraDeVentana($hora, $inicio, $fin)
     {
         $m = self::minutosDelDia($hora);
         $mi = self::minutosDelDia($inicio);
         $mf = self::minutosDelDia($fin);
-        if ($m < $mi) return $m - $mi;
-        if ($m > $mf) return $m - $mf;
-        return 0;
+        $diferencia = 0;
+        if ($m < $mi) $diferencia = $m - $mi;
+        if ($m > $mf) $diferencia = $m - $mf;
+        return abs($diferencia) <= self::$toleranciaHorario ? 0 : $diferencia;
+    }
+
+    /** Tolerancia del jardín en minutos (configuracion_global), o la de por defecto. */
+    private static function leerToleranciaHorario($db)
+    {
+        $stmt = $db->prepare("SELECT valor_numero FROM configuracion_global
+                              WHERE clave = 'horario_tolerancia_minutos' AND id_tenant = :id_tenant
+                              LIMIT 1");
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+        $valor = $stmt->fetchColumn();
+        return ($valor === false || $valor === null) ? self::TOLERANCIA_HORARIO_DEFECTO : max(0, (int)$valor);
     }
 
     /** 'HH:MM[:SS]' → minutos desde la medianoche. */

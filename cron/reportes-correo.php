@@ -15,6 +15,10 @@
  *
  * Un reporte que ya salio bien ese dia para el mismo colaborador no se
  * vuelve a enviar, asi que correrlo dos veces no duplica correos.
+ *
+ * Se programa todos los dias (tambien sabados, domingos y festivos): el
+ * motor solo envia si ese dia paso algo, asi que los jardines que no
+ * trabajan el fin de semana no reciben correos vacios.
  */
 
 // Solo CLI: si alguien lo pide por web, se corta.
@@ -103,14 +107,15 @@ try {
     $resultado = MotorReportesCorreo::ejecutar($db, $fecha);
 
     $mensaje = sprintf(
-        "[%s] tenant=%s fecha=%s evaluados=%d enviados=%d fallidos=%d omitidos=%d",
+        "[%s] tenant=%s fecha=%s evaluados=%d enviados=%d fallidos=%d omitidos=%d sin_novedad=%d",
         $marca,
         $tenant,
         $fecha,
         $resultado['evaluados'],
         $resultado['enviados'],
         $resultado['fallidos'],
-        $resultado['omitidos']
+        $resultado['omitidos'],
+        $resultado['sin_novedad']
     );
 
     echo $mensaje . "\n";
