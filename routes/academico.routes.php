@@ -164,6 +164,7 @@ Flight::route('DELETE /modalidades-cursos-extra', [ModalidadesCursosExtra::class
 // CURSOS EXTRACURRICULARES
 Flight::route('GET /cursos-extra', [CursosExtra::class, 'getAll']);
 Flight::route('GET /cursos-extra-activos', [CursosExtra::class, 'getActivos']);
+Flight::route('GET /cursos-extra-inscritos-activos', [CursosExtra::class, 'getInscritosActivos']); // reporte de cursos extra
 Flight::route('GET /cursos-extra/@id', [CursosExtra::class, 'getById']);
 Flight::route('GET /cursos-extra/anio/@anio', [CursosExtra::class, 'getByAnio']);
 Flight::route('POST /cursos-extra', [CursosExtra::class, 'new']);

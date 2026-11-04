@@ -279,6 +279,54 @@ class CursosExtra
     }
 
     /**
+     * Inscripciones vigentes de todos los cursos, para el reporte de cursos
+     * extra (una pestana por curso). Trae lo mismo que getInscritos mas el
+     * curso y su cupo; los retirados no salen.
+     */
+    public static function getInscritosActivos()
+    {
+        $db = Flight::db();
+        $sentence = $db->prepare("SELECT exce.id, exce.id_estudiante, exce.id_curso_extra, exce.fecha_inscripcion, exce.fecha_retiro, exce.anio, exce.activo,
+        ce.nombre AS nombre_curso, ce.cupo_maximo, ce.fecha_inicio AS curso_fecha_inicio, ce.fecha_fin AS curso_fecha_fin,
+        e.id_persona,
+        p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido,
+        CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.segundo_nombre, ''), ' ', IFNULL(p.primer_apellido, ''), ' ', IFNULL(p.segundo_apellido, '')) AS nombre_completo,
+        g.id AS id_grupo, g.nombre AS nombre_grupo,
+        niv.nombre AS nombre_nivel,
+        (SELECT COUNT(*) FROM cuentas_cobrar_x_curso_extra ccxce
+         WHERE ccxce.id_estudiante_x_curso_extra = exce.id AND ccxce.id_tenant = exce.id_tenant) AS total_cuentas,
+        (SELECT IFNULL(SUM(cpc.valor), 0)
+           FROM cuentas_cobrar_x_curso_extra ccxce
+           INNER JOIN cuentas_por_cobrar cpc ON cpc.id = ccxce.id_cuenta_por_cobrar
+          WHERE ccxce.id_estudiante_x_curso_extra = exce.id
+            AND ccxce.id_tenant = exce.id_tenant
+            AND cpc.id_tenant = exce.id_tenant
+            AND (cpc.anulado = 0 OR cpc.anulado IS NULL)) AS valor_cobrado,
+        (SELECT IFNULL(SUM(cp.valor_aplicado), 0)
+           FROM cuentas_cobrar_x_curso_extra ccxce
+           INNER JOIN cuentas_por_cobrar cpc ON cpc.id = ccxce.id_cuenta_por_cobrar
+           INNER JOIN cuenta_pagada cp ON cp.id_cuenta_por_cobrar = cpc.id
+          WHERE ccxce.id_estudiante_x_curso_extra = exce.id
+            AND ccxce.id_tenant = exce.id_tenant
+            AND cpc.id_tenant = exce.id_tenant
+            AND cp.id_tenant = exce.id_tenant
+            AND (cpc.anulado = 0 OR cpc.anulado IS NULL)) AS valor_pagado
+        FROM estudiantes_x_cursos_extra exce
+        INNER JOIN cursos_extra ce ON ce.id = exce.id_curso_extra AND ce.id_tenant = exce.id_tenant
+        INNER JOIN estudiantes e ON exce.id_estudiante = e.id
+        INNER JOIN personas p ON e.id_persona = p.id
+        LEFT JOIN estudiantes_x_grupos eg ON eg.id_estudiante = e.id AND eg.activo = 1
+        LEFT JOIN grupos g ON g.id = eg.id_grupo
+        LEFT JOIN niveles_area_academica niv ON niv.id = exce.id_nivel
+        WHERE exce.activo = 1 AND exce.id_tenant = :id_tenant
+        ORDER BY ce.nombre, p.primer_apellido, p.primer_nombre");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $response = $sentence->fetchAll();
+        Flight::json($response);
+    }
+
+    /**
      * Estudiantes que todavia no estan inscritos al curso.
      *
      * Devuelve tambien el grupo (para el filtro de la pantalla de inscripcion)
