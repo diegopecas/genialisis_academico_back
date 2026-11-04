@@ -853,8 +853,29 @@ class SolicitudesInscripcionPublica
     public static function getAll()
     {
         $db = Flight::db();
+        // total_cobro y saldo_cobro: lo que se cobro al aprobar (las cuentas de
+        // sus links de pago) y lo que falta por pagar. Con eso la pantalla
+        // separa las aprobadas en por pagar, pago parcial y pagadas.
         $sentence = $db->prepare("SELECT s.*,
         ce.nombre AS nombre_curso,
+        (SELECT COALESCE(SUM(c.valor), 0)
+           FROM links_pago lp
+           INNER JOIN links_pago_detalle d ON d.id_link_pago = lp.id AND d.id_tenant = lp.id_tenant
+           INNER JOIN cuentas_por_cobrar c ON c.id = d.id_cuenta_por_cobrar AND c.id_tenant = d.id_tenant
+          WHERE lp.id_solicitud_inscripcion_publica = s.id AND lp.id_tenant = s.id_tenant
+            AND (c.anulado = 0 OR c.anulado IS NULL)) AS total_cobro,
+        (SELECT COALESCE(SUM(c.valor - COALESCE(pg.aplicado, 0)), 0)
+           FROM links_pago lp
+           INNER JOIN links_pago_detalle d ON d.id_link_pago = lp.id AND d.id_tenant = lp.id_tenant
+           INNER JOIN cuentas_por_cobrar c ON c.id = d.id_cuenta_por_cobrar AND c.id_tenant = d.id_tenant
+           LEFT JOIN (SELECT cp.id_cuenta_por_cobrar,
+                             SUM(CASE WHEN pr.anulado = 0 OR pr.anulado IS NULL THEN cp.valor_aplicado ELSE 0 END) AS aplicado
+                        FROM cuenta_pagada cp
+                        LEFT JOIN pagos_recibidos pr ON pr.id = cp.id_pago_recibido
+                       WHERE cp.id_tenant = :id_tenant_pagos
+                       GROUP BY cp.id_cuenta_por_cobrar) pg ON pg.id_cuenta_por_cobrar = c.id
+          WHERE lp.id_solicitud_inscripcion_publica = s.id AND lp.id_tenant = s.id_tenant
+            AND (c.anulado = 0 OR c.anulado IS NULL)) AS saldo_cobro,
         CASE
             WHEN pi.razon_social IS NOT NULL AND pi.razon_social != '' THEN pi.razon_social
             ELSE CONCAT(IFNULL(pi.primer_nombre, ''), ' ', IFNULL(pi.primer_apellido, ''))
@@ -869,6 +890,7 @@ class SolicitudesInscripcionPublica
         WHERE s.id_tenant = :id_tenant
         ORDER BY s.fecha_registro DESC");
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_pagos', TenantContext::id(), PDO::PARAM_INT);
         $sentence->execute();
         $response = $sentence->fetchAll();
         Flight::json($response);
