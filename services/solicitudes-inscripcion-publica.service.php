@@ -854,28 +854,41 @@ class SolicitudesInscripcionPublica
     {
         $db = Flight::db();
         // total_cobro y saldo_cobro: lo que se cobro al aprobar (las cuentas de
-        // sus links de pago) y lo que falta por pagar. Con eso la pantalla
+        // sus links de pago y las cuotas de sus planes de pago, sin repetir la
+        // primera cuota, que esta en los dos) y lo que falta por pagar. Con eso la pantalla
         // separa las aprobadas en por pagar, pago parcial y pagadas.
         $sentence = $db->prepare("SELECT s.*,
         ce.nombre AS nombre_curso,
         (SELECT COALESCE(SUM(c.valor), 0)
-           FROM links_pago lp
-           INNER JOIN links_pago_detalle d ON d.id_link_pago = lp.id AND d.id_tenant = lp.id_tenant
-           INNER JOIN cuentas_por_cobrar c ON c.id = d.id_cuenta_por_cobrar AND c.id_tenant = d.id_tenant
-          WHERE lp.id_solicitud_inscripcion_publica = s.id AND lp.id_tenant = s.id_tenant
-            AND (c.anulado = 0 OR c.anulado IS NULL)) AS total_cobro,
+           FROM cuentas_por_cobrar c
+          WHERE c.id_tenant = s.id_tenant AND (c.anulado = 0 OR c.anulado IS NULL)
+            AND c.id IN (SELECT d.id_cuenta_por_cobrar
+                           FROM links_pago lp
+                           INNER JOIN links_pago_detalle d ON d.id_link_pago = lp.id AND d.id_tenant = lp.id_tenant
+                          WHERE lp.id_solicitud_inscripcion_publica = s.id AND lp.id_tenant = s.id_tenant
+                         UNION
+                         SELECT pc.id_cuenta_por_cobrar
+                           FROM planes_pago pp
+                           INNER JOIN planes_pago_cuotas pc ON pc.id_plan_pago = pp.id AND pc.id_tenant = pp.id_tenant
+                          WHERE pp.id_solicitud_inscripcion_publica = s.id AND pp.id_tenant = s.id_tenant)) AS total_cobro,
         (SELECT COALESCE(SUM(c.valor - COALESCE(pg.aplicado, 0)), 0)
-           FROM links_pago lp
-           INNER JOIN links_pago_detalle d ON d.id_link_pago = lp.id AND d.id_tenant = lp.id_tenant
-           INNER JOIN cuentas_por_cobrar c ON c.id = d.id_cuenta_por_cobrar AND c.id_tenant = d.id_tenant
+           FROM cuentas_por_cobrar c
            LEFT JOIN (SELECT cp.id_cuenta_por_cobrar,
                              SUM(CASE WHEN pr.anulado = 0 OR pr.anulado IS NULL THEN cp.valor_aplicado ELSE 0 END) AS aplicado
                         FROM cuenta_pagada cp
                         LEFT JOIN pagos_recibidos pr ON pr.id = cp.id_pago_recibido
                        WHERE cp.id_tenant = :id_tenant_pagos
                        GROUP BY cp.id_cuenta_por_cobrar) pg ON pg.id_cuenta_por_cobrar = c.id
-          WHERE lp.id_solicitud_inscripcion_publica = s.id AND lp.id_tenant = s.id_tenant
-            AND (c.anulado = 0 OR c.anulado IS NULL)) AS saldo_cobro,
+          WHERE c.id_tenant = s.id_tenant AND (c.anulado = 0 OR c.anulado IS NULL)
+            AND c.id IN (SELECT d.id_cuenta_por_cobrar
+                           FROM links_pago lp
+                           INNER JOIN links_pago_detalle d ON d.id_link_pago = lp.id AND d.id_tenant = lp.id_tenant
+                          WHERE lp.id_solicitud_inscripcion_publica = s.id AND lp.id_tenant = s.id_tenant
+                         UNION
+                         SELECT pc.id_cuenta_por_cobrar
+                           FROM planes_pago pp
+                           INNER JOIN planes_pago_cuotas pc ON pc.id_plan_pago = pp.id AND pc.id_tenant = pp.id_tenant
+                          WHERE pp.id_solicitud_inscripcion_publica = s.id AND pp.id_tenant = s.id_tenant)) AS saldo_cobro,
         CASE
             WHEN pi.razon_social IS NOT NULL AND pi.razon_social != '' THEN pi.razon_social
             ELSE CONCAT(IFNULL(pi.primer_nombre, ''), ' ', IFNULL(pi.primer_apellido, ''))
@@ -1045,7 +1058,9 @@ class SolicitudesInscripcionPublica
                     }
                     $valoresElegidos[$l['id']] = array(
                         'valor' => round((float) $l['valor'], 2),
-                        'motivo' => isset($l['motivo_descuento']) && is_string($l['motivo_descuento']) ? trim($l['motivo_descuento']) : ''
+                        'motivo' => isset($l['motivo_descuento']) && is_string($l['motivo_descuento']) ? trim($l['motivo_descuento']) : '',
+                        // Plan de cuotas de la linea; sin el, se cobra de contado
+                        'cuotas' => isset($l['cuotas']) && is_array($l['cuotas']) ? $l['cuotas'] : null
                     );
                 }
             }
@@ -1286,6 +1301,7 @@ class SolicitudesInscripcionPublica
             // lo que trajo la solicitud del portal ---
             $idLink = null;
             $lineasNoEncontradas = 0;
+            $planesCreados = 0;
             if (isset($data['lineas_cobro']) && is_array($data['lineas_cobro'])) {
                 $idsElegidos = array_keys($valoresElegidos);
             } else {
@@ -1316,6 +1332,24 @@ class SolicitudesInscripcionPublica
                             return;
                         }
                     }
+                    // En cuotas: una cuenta por cuota y en el link solo va la
+                    // primera, que se cobra de inmediato
+                    $datosCuotas = isset($valoresElegidos[$linea['id']]) ? $valoresElegidos[$linea['id']]['cuotas'] : null;
+                    if ($datosCuotas !== null) {
+                        $plan = PlanesPago::validar($datosCuotas, $valorCobrar, $linea['nombre_producto']);
+                        if (isset($plan['error'])) {
+                            $db->rollBack();
+                            Flight::json(array('error' => $plan['error']), 400);
+                            return;
+                        }
+                        $creado = PlanesPago::crearDeLineaCurso($db, $id, $idInscripcion, $idPersonaEst, $linea, $curso['nombre'],
+                            $valorTarifa, $valorCobrar, $motivo, $plan, $userData->id ?? null);
+                        $total += $creado['valor_primera'];
+                        $planesCreados++;
+                        $detalleLink[] = array('id_cuenta_por_cobrar' => $creado['id_cuenta_primera'], 'id_tarifa_curso_extra_detalle' => $linea['id']);
+                        continue;
+                    }
+
                     $idCuenta = CuentasPorCobrar::crearCuentaCursoExtra(
                         $db,
                         $idInscripcion,
@@ -1364,6 +1398,7 @@ class SolicitudesInscripcionPublica
                 'id_inscripcion' => $idInscripcion,
                 'horarios_asignados' => $horariosAsignados,
                 'lineas_no_encontradas' => $lineasNoEncontradas,
+                'planes_cuotas' => $planesCreados,
                 'mensaje' => 'Solicitud aprobada. El estudiante quedó inscrito; las cuentas por cobrar se generan desde la inscripción.'
             );
             if ($idLink !== null) {

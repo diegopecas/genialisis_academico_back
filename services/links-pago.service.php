@@ -18,6 +18,20 @@
  *    nunca se registra dos veces. Por transferencia, el pago se registra a
  *    mano desde los pagos del estudiante.
  *
+ * Cobros de cuentas por cobrar (cobro programado):
+ * - Cualquier cuenta con saldo de un estudiante (una cuota, una pension) se
+ *   puede cobrar con un link: a mano desde la pantalla Cobros programados
+ *   (origen cobro_manual) o solo, con el cron cron/cobros-automaticos.php
+ *   (origen cobro_programado), que cada dia arma un cobro por estudiante
+ *   con las cuentas que vencen en los proximos dias. Lo prenden los
+ *   parametros cobro_automatico_activo y cobro_automatico_dias_antes de
+ *   configuracion_global.
+ * - Una cuenta va en un solo cobro: si ya esta en un link no se vuelve a
+ *   cobrar sola; desde la pantalla se reenvia el correo.
+ * - Las cuentas ya vencidas y las de intereses de mora no salen solas.
+ * - El pago se aplica al saldo de cada cuenta, de la mas antigua a la mas
+ *   nueva.
+ *
  * Configuracion en la base (ya no en el .env.php):
  * - configuracion_pasarela_pago: proveedor, URL del API, llaves cifradas,
  *   modo pruebas, tipo de pago con que se registran, vigencia del link y
@@ -29,6 +43,8 @@
 class LinksPago
 {
     const PREFIJO_REFERENCIA = 'GEN-';
+    // Origen de los cobros que no salen de una aprobacion
+    const ORIGENES_COBRO = array('cobro_programado', 'cobro_manual');
 
     // ==================== DESDE LA APROBACION ====================
 
@@ -49,16 +65,19 @@ class LinksPago
         $proveedor = PasarelasPago::para($config) !== null ? $config['proveedor'] : 'transferencia';
 
         $sentence = $db->prepare("INSERT INTO links_pago
-            (id, id_tenant, proveedor, id_solicitud_inscripcion_publica, id_estudiante_x_curso_extra,
+            (id, id_tenant, proveedor, origen, id_solicitud_inscripcion_publica, id_estudiante_x_curso_extra, id_estudiante,
              referencia, descripcion, valor, estado, correo_destino, id_usuario)
             VALUES
-            (:id, :id_tenant, :proveedor, :id_solicitud, :id_inscripcion,
+            (:id, :id_tenant, :proveedor, 'aprobacion', :id_solicitud, :id_inscripcion,
+             (SELECT x.id_estudiante FROM estudiantes_x_cursos_extra x WHERE x.id = :id_inscripcion2 AND x.id_tenant = :id_tenant2),
              :referencia, :descripcion, :valor, 'pendiente', :correo, :id_usuario)");
         $sentence->bindValue(':id', $id);
         $sentence->bindValue(':proveedor', $proveedor);
         $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant2', TenantContext::id(), PDO::PARAM_INT);
         $sentence->bindValue(':id_solicitud', $id_solicitud);
         $sentence->bindValue(':id_inscripcion', $id_inscripcion);
+        $sentence->bindValue(':id_inscripcion2', $id_inscripcion);
         $sentence->bindValue(':referencia', self::PREFIJO_REFERENCIA . $id);
         $sentence->bindValue(':descripcion', $descripcion);
         $sentence->bindValue(':valor', $valor);
@@ -119,6 +138,201 @@ class LinksPago
             'error' => $link['ultimo_error'],
             'error_correo' => $link['error_correo']
         );
+    }
+
+    // ==================== COBROS DE CUENTAS POR COBRAR ====================
+
+    /**
+     * Registra un cobro en estado pendiente por el saldo de unas cuentas de
+     * un estudiante. No llama a la pasarela ni abre transaccion; despues se
+     * llama generarYEnviar.
+     *
+     * @param array $cuentas [ {id, saldo} ] con saldo mayor que cero
+     * @param string $origen cobro_programado | cobro_manual
+     * @return string id del link
+     */
+    public static function registrarCobro($db, $id_estudiante, $cuentas, $correo_destino, $origen, $id_usuario)
+    {
+        $id = Uuid::generar();
+        $config = ConfiguracionPasarelaPago::paraUso($db);
+        $proveedor = PasarelasPago::para($config) !== null ? $config['proveedor'] : 'transferencia';
+        $valor = 0;
+        foreach ($cuentas as $c) {
+            $valor += round((float) $c['saldo'], 2);
+        }
+        $descripcion = mb_substr(self::nombreInstitucion() . ' · ' .
+            (count($cuentas) === 1 && !empty($cuentas[0]['detalle']) ? $cuentas[0]['detalle'] : 'Pago de ' . count($cuentas) . ' cuentas'), 0, 100);
+
+        $sentence = $db->prepare("INSERT INTO links_pago
+            (id, id_tenant, proveedor, origen, id_estudiante, referencia, descripcion, valor, estado, correo_destino, id_usuario)
+            VALUES
+            (:id, :id_tenant, :proveedor, :origen, :id_estudiante, :referencia, :descripcion, :valor, 'pendiente', :correo, :id_usuario)");
+        $sentence->bindValue(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':proveedor', $proveedor);
+        $sentence->bindValue(':origen', $origen);
+        $sentence->bindValue(':id_estudiante', $id_estudiante);
+        $sentence->bindValue(':referencia', self::PREFIJO_REFERENCIA . $id);
+        $sentence->bindValue(':descripcion', $descripcion);
+        $sentence->bindValue(':valor', $valor);
+        $sentence->bindValue(':correo', $correo_destino);
+        $sentence->bindValue(':id_usuario', $id_usuario);
+        $sentence->execute();
+
+        $stmtDetalle = $db->prepare("INSERT INTO links_pago_detalle
+            (id, id_tenant, id_link_pago, id_cuenta_por_cobrar, id_tarifa_curso_extra_detalle, valor_cobrado)
+            VALUES (:id, :id_tenant, :id_link, :id_cuenta, NULL, :valor)");
+        foreach ($cuentas as $c) {
+            $stmtDetalle->bindValue(':id', Uuid::generar());
+            $stmtDetalle->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtDetalle->bindValue(':id_link', $id);
+            $stmtDetalle->bindValue(':id_cuenta', $c['id']);
+            $stmtDetalle->bindValue(':valor', round((float) $c['saldo'], 2));
+            $stmtDetalle->execute();
+        }
+
+        return $id;
+    }
+
+    /**
+     * Cobro automatico del dia (lo llama cron/cobros-automaticos.php). Si
+     * esta prendido, arma un cobro por estudiante con las cuentas con saldo
+     * que vencen entre hoy y dentro de cobro_automatico_dias_antes dias y
+     * que no estan en ningun cobro, y le manda el correo. Sin intereses de
+     * mora ni cuentas vencidas.
+     *
+     * @return array {activo, dias, cobros, cuentas, enviados, sin_correo, errores}
+     */
+    public static function ejecutarCobrosAutomaticos($db)
+    {
+        $parametros = self::parametrosCobro($db);
+        $resumen = array('activo' => $parametros['activo'], 'dias' => $parametros['dias'], 'cobros' => 0, 'cuentas' => 0,
+            'enviados' => 0, 'sin_correo' => 0, 'errores' => 0);
+        if (!$parametros['activo']) {
+            return $resumen;
+        }
+
+        $hoy = date('Y-m-d');
+        $hasta = date('Y-m-d', strtotime($hoy . ' +' . $parametros['dias'] . ' days'));
+        $filas = self::cuentasCobrables($db, "x.saldo > 0 AND x.id_link IS NULL AND x.es_mora = 0 AND x.fecha BETWEEN :desde AND :hasta",
+            array(':desde' => $hoy, ':hasta' => $hasta));
+
+        // Un cobro por estudiante con todas sus cuentas de la ventana
+        $porEstudiante = array();
+        foreach ($filas as $f) {
+            if (empty($f['correo_destino'])) {
+                $resumen['sin_correo']++;
+                error_log('LinksPago: cobro automatico sin correo para el estudiante ' . $f['id_estudiante'] . ' (cuenta ' . $f['id_cuenta'] . ').');
+                continue;
+            }
+            $porEstudiante[$f['id_estudiante']]['correo'] = $f['correo_destino'];
+            $porEstudiante[$f['id_estudiante']]['cuentas'][] = array('id' => $f['id_cuenta'], 'saldo' => $f['saldo'], 'detalle' => $f['detalle']);
+        }
+
+        foreach ($porEstudiante as $idEstudiante => $grupo) {
+            try {
+                $db->beginTransaction();
+                $idLink = self::registrarCobro($db, $idEstudiante, $grupo['cuentas'], $grupo['correo'], 'cobro_programado', null);
+                $db->commit();
+            } catch (Exception $e) {
+                if ($db->inTransaction()) {
+                    $db->rollBack();
+                }
+                $resumen['errores']++;
+                error_log('LinksPago: no se pudo armar el cobro automatico del estudiante ' . $idEstudiante . ': ' . $e->getMessage());
+                continue;
+            }
+            $resumen['cobros']++;
+            $resumen['cuentas'] += count($grupo['cuentas']);
+            $resultado = self::generarYEnviar($db, $idLink);
+            if (!empty($resultado['correo_enviado'])) {
+                $resumen['enviados']++;
+            } else {
+                $resumen['errores']++;
+            }
+        }
+        return $resumen;
+    }
+
+    /**
+     * Cuentas por cobrar de estudiantes con su saldo, el correo al que se
+     * cobran (el del acudiente responsable de pago o, si no hay, el del
+     * estudiante) y el cobro mas reciente en el que van, filtradas por una
+     * condicion sobre esas columnas (alias x).
+     */
+    private static function cuentasCobrables($db, $condicion, $parametros)
+    {
+        $sentence = $db->prepare("SELECT x.* FROM (
+            SELECT c.id AS id_cuenta, c.detalle, c.fecha, c.valor, c.es_mora,
+                   ROUND(c.valor - COALESCE(pg.aplicado, 0), 2) AS saldo,
+                   e.id AS id_estudiante,
+                   CONCAT_WS(' ', p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido) AS estudiante,
+                   COALESCE(
+                       (SELECT TRIM(pa.correo_electronico)
+                          FROM acudientes a
+                          INNER JOIN personas pa ON pa.id = a.id_persona AND pa.id_tenant = a.id_tenant
+                         WHERE a.id_estudiante = e.id AND a.es_responsable_pago = 1 AND a.activo = 1 AND a.id_tenant = c.id_tenant
+                           AND pa.correo_electronico IS NOT NULL AND TRIM(pa.correo_electronico) <> ''
+                         LIMIT 1),
+                       NULLIF(TRIM(p.correo_electronico), '')) AS correo_destino,
+                   lk.id AS id_link, lk.estado AS estado_link, lk.origen, lk.proveedor, lk.url,
+                   lk.fecha_correo, lk.error_correo, lk.fecha_pago
+              FROM cuentas_por_cobrar c
+              INNER JOIN (SELECT id_persona, MIN(id) AS id FROM estudiantes WHERE id_tenant = :id_tenant_est GROUP BY id_persona) e
+                      ON e.id_persona = c.id_persona
+              INNER JOIN personas p ON p.id = c.id_persona AND p.id_tenant = c.id_tenant
+              LEFT JOIN (SELECT cp.id_cuenta_por_cobrar,
+                                SUM(CASE WHEN pr.anulado = 0 OR pr.anulado IS NULL THEN cp.valor_aplicado ELSE 0 END) AS aplicado
+                           FROM cuenta_pagada cp
+                           LEFT JOIN pagos_recibidos pr ON pr.id = cp.id_pago_recibido
+                          WHERE cp.id_tenant = :id_tenant_pagos
+                          GROUP BY cp.id_cuenta_por_cobrar) pg ON pg.id_cuenta_por_cobrar = c.id
+              LEFT JOIN links_pago lk ON lk.id = (
+                       SELECT d.id_link_pago
+                         FROM links_pago_detalle d
+                         INNER JOIN links_pago l2 ON l2.id = d.id_link_pago AND l2.id_tenant = d.id_tenant
+                        WHERE d.id_cuenta_por_cobrar = c.id AND d.id_tenant = c.id_tenant
+                        ORDER BY l2.fecha_registro DESC
+                        LIMIT 1)
+             WHERE c.id_tenant = :id_tenant AND (c.anulado = 0 OR c.anulado IS NULL)
+            ) x
+            WHERE " . $condicion . "
+            ORDER BY x.fecha, x.estudiante");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_est', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->bindValue(':id_tenant_pagos', TenantContext::id(), PDO::PARAM_INT);
+        foreach ($parametros as $nombre => $valor) {
+            $sentence->bindValue($nombre, $valor);
+        }
+        $sentence->execute();
+        return $sentence->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /** Parametros del cobro automatico en configuracion_global */
+    private static function parametrosCobro($db)
+    {
+        $sentence = $db->prepare("SELECT clave, valor_texto, valor_numero FROM configuracion_global
+            WHERE id_tenant = :id_tenant AND clave IN ('cobro_automatico_activo', 'cobro_automatico_dias_antes')");
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $activo = false;
+        $dias = null;
+        foreach ($sentence->fetchAll(PDO::FETCH_ASSOC) as $fila) {
+            if ($fila['clave'] === 'cobro_automatico_activo') {
+                $texto = strtolower(trim((string) $fila['valor_texto']));
+                $activo = $texto === 'true' || $texto === '1' || (int) $fila['valor_numero'] === 1;
+            } elseif ($fila['valor_numero'] !== null && (int) $fila['valor_numero'] >= 0) {
+                $dias = (int) $fila['valor_numero'];
+            }
+        }
+        // Sin el numero de dias no se cobra solo
+        if ($dias === null) {
+            if ($activo) {
+                error_log('LinksPago: cobro_automatico_activo esta prendido pero falta cobro_automatico_dias_antes; no se cobra.');
+            }
+            $activo = false;
+        }
+        return array('activo' => $activo, 'dias' => $dias);
     }
 
     // ==================== ENDPOINTS ====================
@@ -348,11 +562,12 @@ class LinksPago
         try {
             $db->beginTransaction();
 
-            $stmt = $db->prepare("SELECT lp.*, exce.id_estudiante, exce.id_curso_extra, ce.fecha_inicio AS curso_fecha_inicio,
-                       s.fecha_inicio_clases
+            // Los cobros de cuentas no tienen inscripcion: el estudiante va en el link
+            $stmt = $db->prepare("SELECT lp.*, COALESCE(lp.id_estudiante, exce.id_estudiante) AS id_estudiante,
+                       exce.id_curso_extra, ce.fecha_inicio AS curso_fecha_inicio, s.fecha_inicio_clases
                 FROM links_pago lp
-                INNER JOIN estudiantes_x_cursos_extra exce ON exce.id = lp.id_estudiante_x_curso_extra AND exce.id_tenant = lp.id_tenant
-                INNER JOIN cursos_extra ce ON ce.id = exce.id_curso_extra AND ce.id_tenant = lp.id_tenant
+                LEFT JOIN estudiantes_x_cursos_extra exce ON exce.id = lp.id_estudiante_x_curso_extra AND exce.id_tenant = lp.id_tenant
+                LEFT JOIN cursos_extra ce ON ce.id = exce.id_curso_extra AND ce.id_tenant = lp.id_tenant
                 LEFT JOIN solicitudes_inscripcion_publica s ON s.id = lp.id_solicitud_inscripcion_publica AND s.id_tenant = lp.id_tenant
                 WHERE lp.id = :id AND lp.id_tenant = :id_tenant
                 FOR UPDATE");
@@ -360,20 +575,26 @@ class LinksPago
             $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmt->execute();
             $link = $stmt->fetch(PDO::FETCH_ASSOC);
-            if (!$link) {
+            if (!$link || empty($link['id_estudiante'])) {
                 $db->rollBack();
-                return array('error' => 'El link o su inscripción no existen.');
+                return array('error' => 'El link o su estudiante no existen.');
             }
             if ($link['estado'] === 'pagado') {
                 $db->commit();
                 return array('ok' => true, 'ya_pagado' => true);
             }
 
-            $stmtCuentas = $db->prepare("SELECT lpd.id_cuenta_por_cobrar, lpd.id_tarifa_curso_extra_detalle, c.valor
+            // Saldo de cada cuenta: si ya tenia un abono, solo se aplica lo que falta
+            $stmtCuentas = $db->prepare("SELECT lpd.id_cuenta_por_cobrar, lpd.id_tarifa_curso_extra_detalle, c.valor,
+                       ROUND(c.valor - COALESCE((SELECT SUM(cp.valor_aplicado)
+                                                   FROM cuenta_pagada cp
+                                                   LEFT JOIN pagos_recibidos pr ON pr.id = cp.id_pago_recibido
+                                                  WHERE cp.id_cuenta_por_cobrar = c.id AND cp.id_tenant = c.id_tenant
+                                                    AND (pr.anulado = 0 OR pr.anulado IS NULL)), 0), 2) AS saldo
                 FROM links_pago_detalle lpd
                 INNER JOIN cuentas_por_cobrar c ON c.id = lpd.id_cuenta_por_cobrar AND c.id_tenant = lpd.id_tenant
                 WHERE lpd.id_link_pago = :id_link AND lpd.id_tenant = :id_tenant
-                ORDER BY c.valor DESC");
+                ORDER BY c.fecha, c.valor DESC");
             $stmtCuentas->bindValue(':id_link', $id_link);
             $stmtCuentas->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $stmtCuentas->execute();
@@ -381,11 +602,11 @@ class LinksPago
 
             $valorPagado = $valor !== null ? (float) $valor : (float) $link['valor'];
 
-            // Se aplica a cada cuenta hasta donde alcance lo pagado
+            // Se aplica al saldo de cada cuenta (la mas antigua primero) hasta donde alcance lo pagado
             $restante = $valorPagado;
             $cuentas = array();
             foreach ($lineas as $linea) {
-                $aplicar = min((float) $linea['valor'], $restante);
+                $aplicar = min(max(0, (float) $linea['saldo']), $restante);
                 if ($aplicar <= 0) {
                     break;
                 }
@@ -433,7 +654,8 @@ class LinksPago
                 LEFT JOIN tipos_cobro_producto tcp ON tcp.id = ps.id_tipo_cobro
                 WHERE d.id = :id AND d.id_tenant = :id_tenant");
             foreach ($lineas as $linea) {
-                if (empty($linea['id_tarifa_curso_extra_detalle'])) {
+                // Solo las lineas de tarifa de un cobro con inscripcion (aprobacion)
+                if (empty($linea['id_tarifa_curso_extra_detalle']) || empty($link['id_estudiante_x_curso_extra'])) {
                     continue;
                 }
                 $stmtLinea->bindValue(':id', $linea['id_tarifa_curso_extra_detalle']);
@@ -552,6 +774,124 @@ class LinksPago
     }
 
     /**
+     * GET /links-pago/cobros-programados?filtro=proximos|vencidas|todas
+     * Lo de la pantalla Cobros programados: los parametros del cobro
+     * automatico y las cuentas con su estado de cobro.
+     * - proximos: con saldo y que vencen entre hoy y dentro de los dias del parametro
+     * - vencidas: con saldo y fecha anterior a hoy
+     * - todas: con saldo, mas las ya pagadas que se cobraron con un link de cobro
+     */
+    public static function cobrosProgramados()
+    {
+        JWTService::requerirAutenticacion();
+        $db = Flight::db();
+        $parametros = self::parametrosCobro($db);
+        $dias = $parametros['dias'] !== null ? $parametros['dias'] : 0;
+        $hoy = date('Y-m-d');
+        $hasta = date('Y-m-d', strtotime($hoy . ' +' . $dias . ' days'));
+        $filtro = Flight::request()->query['filtro'] ?? 'proximos';
+
+        if ($filtro === 'vencidas') {
+            $filas = self::cuentasCobrables($db, "x.saldo > 0 AND x.fecha < :hoy", array(':hoy' => $hoy));
+        } elseif ($filtro === 'todas') {
+            $filas = self::cuentasCobrables($db, "(x.saldo > 0 OR x.origen IN ('cobro_programado', 'cobro_manual'))", array());
+        } else {
+            $filas = self::cuentasCobrables($db, "x.saldo > 0 AND x.fecha BETWEEN :desde AND :hasta", array(':desde' => $hoy, ':hasta' => $hasta));
+        }
+
+        foreach ($filas as &$f) {
+            $f['saldo'] = max(0, (float) $f['saldo']);
+            $f['fecha_envio'] = null;
+            if ($f['saldo'] <= 0 || $f['estado_link'] === 'pagado') {
+                $f['estado_cobro'] = 'pagado';
+            } elseif ($f['id_link'] !== null) {
+                if ($f['estado_link'] !== 'activo') {
+                    $f['estado_cobro'] = 'error';
+                } elseif (empty($f['fecha_correo']) && !empty($f['error_correo'])) {
+                    $f['estado_cobro'] = 'error_correo';
+                } else {
+                    $f['estado_cobro'] = 'enviado';
+                }
+            } elseif (empty($f['correo_destino'])) {
+                $f['estado_cobro'] = 'sin_correo';
+            } elseif ($f['fecha'] < $hoy) {
+                $f['estado_cobro'] = 'vencida';
+            } elseif ((int) $f['es_mora'] === 1) {
+                $f['estado_cobro'] = 'mora';
+            } elseif ($f['fecha'] <= $hasta) {
+                $f['estado_cobro'] = 'por_enviar';
+            } else {
+                $f['estado_cobro'] = 'programado';
+                $f['fecha_envio'] = date('Y-m-d', strtotime($f['fecha'] . ' -' . $dias . ' days'));
+            }
+            // Lo que se puede hacer con cada una en la pantalla
+            $conSaldo = $f['saldo'] > 0;
+            $f['puede_enviar'] = $conSaldo && $f['id_link'] === null && !empty($f['correo_destino']) ? 1 : 0;
+            $f['puede_reenviar'] = $conSaldo && $f['estado_link'] === 'activo' ? 1 : 0;
+            $f['puede_reintentar'] = $conSaldo && in_array($f['estado_link'], array('pendiente', 'error'), true) ? 1 : 0;
+            $f['puede_copiar'] = $conSaldo && $f['estado_link'] === 'activo' && !empty($f['url']) ? 1 : 0;
+        }
+        unset($f);
+
+        Flight::json(array(
+            'activo' => $parametros['activo'],
+            'dias_antes' => $parametros['dias'],
+            'filas' => $filas
+        ));
+    }
+
+    /**
+     * PUT /links-pago/enviar-cobro  { id_cuenta }
+     * Cobra ya una cuenta con saldo que no esta en ningun cobro: arma el
+     * link (o los datos para transferir) y manda el correo.
+     */
+    public static function enviarCobro()
+    {
+        $userData = JWTService::requerirAutenticacion();
+        $db = Flight::db();
+        $idCuenta = Flight::request()->data['id_cuenta'] ?? null;
+        if (!$idCuenta || !is_string($idCuenta)) {
+            Flight::json(array('error' => 'Falta la cuenta por cobrar.'), 400);
+            return;
+        }
+
+        $filas = self::cuentasCobrables($db, "x.id_cuenta = :id_cuenta", array(':id_cuenta' => $idCuenta));
+        if (empty($filas)) {
+            Flight::json(array('error' => 'La cuenta no existe, está anulada o no es de un estudiante.'), 404);
+            return;
+        }
+        $f = $filas[0];
+        if ((float) $f['saldo'] <= 0) {
+            Flight::json(array('error' => 'La cuenta ya está pagada.'), 400);
+            return;
+        }
+        if ($f['id_link'] !== null) {
+            Flight::json(array('error' => 'La cuenta ya está en un cobro; reenvía ese correo.'), 400);
+            return;
+        }
+        if (empty($f['correo_destino'])) {
+            Flight::json(array('error' => 'Ni el acudiente responsable de pago ni el estudiante tienen correo.'), 400);
+            return;
+        }
+
+        try {
+            $db->beginTransaction();
+            $idLink = self::registrarCobro($db, $f['id_estudiante'],
+                array(array('id' => $f['id_cuenta'], 'saldo' => $f['saldo'], 'detalle' => $f['detalle'])),
+                $f['correo_destino'], 'cobro_manual', $userData->id ?? null);
+            $db->commit();
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log('LinksPago: no se pudo armar el cobro de la cuenta ' . $idCuenta . ': ' . $e->getMessage());
+            Flight::json(array('error' => 'No se pudo armar el cobro.'), 500);
+            return;
+        }
+        Flight::json(self::generarYEnviar($db, $idLink));
+    }
+
+    /**
      * Cuentas para transferir: los medios de pago del tenant que tienen
      * numero de cuenta, en el orden en que se muestran.
      */
@@ -587,8 +927,10 @@ class LinksPago
             $datos = self::datosCorreo($db, $link);
             // Las cuentas van siempre: con pasarela, por si prefiere transferir
             $datos['cuentas'] = self::cuentasBancarias($db);
+            $esCobro = in_array($link['origen'], self::ORIGENES_COBRO, true);
             $resultado = ConfiguracionCorreo::enviar($db, array($link['correo_destino']),
-                'Tu inscripción a ' . $datos['curso'] . ' fue aprobada', self::htmlCorreo($datos, $link));
+                $esCobro ? 'Recordatorio de pago · ' . $datos['institucion'] : 'Tu inscripción a ' . $datos['curso'] . ' fue aprobada',
+                $esCobro ? self::htmlCobro($datos, $link) : self::htmlCorreo($datos, $link));
             $error = $resultado['error'];
         }
 
@@ -608,10 +950,14 @@ class LinksPago
 
     /**
      * Lo que va en el correo: a quien se saluda, el participante, el curso,
-     * los horarios asignados y las lineas que se cobran.
+     * los horarios asignados, las lineas que se cobran y, si hay planes de
+     * cuotas, las cuotas que quedan para despues.
      */
     private static function datosCorreo($db, $link)
     {
+        if (in_array($link['origen'], self::ORIGENES_COBRO, true)) {
+            return self::datosCobro($db, $link);
+        }
         $stmt = $db->prepare("SELECT ce.nombre AS curso,
                    TRIM(CONCAT(IFNULL(p.primer_nombre, ''), ' ', IFNULL(p.primer_apellido, ''))) AS participante,
                    s.acu_primer_nombre, s.est_primer_nombre, s.fecha_inicio_clases
@@ -656,7 +1002,9 @@ class LinksPago
             'curso' => isset($fila['curso']) ? $fila['curso'] : '',
             'fecha_inicio_clases' => !empty($fila['fecha_inicio_clases']) ? $fila['fecha_inicio_clases'] : null,
             'horarios' => $stmtHorarios->fetchAll(PDO::FETCH_ASSOC),
-            'lineas' => $stmtLineas->fetchAll(PDO::FETCH_ASSOC)
+            'lineas' => $stmtLineas->fetchAll(PDO::FETCH_ASSOC),
+            // Si algo se partio en cuotas, las que quedan para despues
+            'cuotas' => PlanesPago::cuotasSiguientesDeLink($db, $link['id'])
         );
     }
 
@@ -684,26 +1032,7 @@ class LinksPago
 
         // Como pagar: boton de la pasarela (y las cuentas por si prefiere
         // transferir), o solo las cuentas
-        $cuentas = '';
-        foreach (isset($d['cuentas']) ? $d['cuentas'] : array() as $c) {
-            $cuentas .= '<div style="margin:0 0 10px;padding:10px 12px;border:1px solid #eee;border-radius:10px">' .
-                '<strong>' . $e($c['nombre']) . '</strong><br>Cuenta ' . $e($c['numero_cuenta']) .
-                (!empty($c['descripcion']) ? '<br><span style="font-size:13px;color:#555">' . $e($c['descripcion']) . '</span>' : '') .
-                '</div>';
-        }
-        if ($link['proveedor'] === 'transferencia') {
-            $bloquePago = '<p style="margin:22px 0 8px;font-weight:bold">Cómo pagar</p>' .
-                ($cuentas !== '' ? '<p style="margin:0 0 10px">Haz la transferencia a cualquiera de estas cuentas:</p>' . $cuentas
-                    : '<p style="margin:0 0 10px">Te enviamos los datos para el pago por WhatsApp.</p>') .
-                '<p style="margin:12px 0 0;font-size:13px;color:#555">Cuando pagues, responde este correo con el comprobante y el nombre del participante. Si tienes alguna pregunta, también puedes responder este correo.</p>';
-        } else {
-            $bloquePago = '<p style="margin:22px 0;text-align:center"><a href="' . $e($link['url']) . '" style="display:inline-block;background:#1f8f3a;color:#fff;text-decoration:none;padding:13px 26px;border-radius:999px;font-weight:bold">Pagar ahora</a></p>' .
-                '<p style="margin:0;font-size:13px;color:#555">El pago se hace en la página segura de la pasarela. Cuando se confirme, el plan queda activo. Si tienes alguna pregunta, responde este correo.</p>' .
-                ($cuentas !== ''
-                    ? '<p style="margin:22px 0 8px;font-weight:bold">¿Prefieres transferir?</p>' .
-                      '<p style="margin:0 0 10px">También puedes pagar a cualquiera de estas cuentas y responder este correo con el comprobante y el nombre del participante:</p>' . $cuentas
-                    : '');
-        }
+        $bloquePago = self::bloqueComoPagar($d, $link, 'Cuando se confirme, el plan queda activo.');
 
         // Fecha de inicio de clases puesta en la aprobacion, en formato 3 de noviembre de 2026
         $bloqueInicio = '';
@@ -727,9 +1056,115 @@ class LinksPago
             $bloqueHorarios .
             '<p style="margin:18px 0 6px;font-weight:bold">Lo que vas a pagar</p>' .
             '<table style="width:100%;border-collapse:collapse;font-size:14px">' . $filas .
-            '<tr><td style="padding:8px 0;font-weight:bold">Total</td><td style="padding:8px 0;text-align:right;font-weight:bold">' . $pesos($link['valor']) . '</td></tr></table>' .
+            '<tr><td style="padding:8px 0;font-weight:bold">' . (!empty($d['cuotas']) ? 'Total de este pago' : 'Total') . '</td><td style="padding:8px 0;text-align:right;font-weight:bold">' . $pesos($link['valor']) . '</td></tr></table>' .
+            self::bloqueCuotas($d, 'Las siguientes cuotas') .
             $bloquePago .
             '</div></div></body></html>';
+    }
+
+    /**
+     * Boton de la pasarela (y las cuentas por si prefiere transferir), o
+     * solo las cuentas para transferir.
+     *
+     * @param string $confirmacion lo que pasa cuando se confirma el pago en linea
+     */
+    private static function bloqueComoPagar($d, $link, $confirmacion)
+    {
+        $e = function ($t) { return htmlspecialchars((string) $t, ENT_QUOTES, 'UTF-8'); };
+        $cuentas = '';
+        foreach (isset($d['cuentas']) ? $d['cuentas'] : array() as $c) {
+            $cuentas .= '<div style="margin:0 0 10px;padding:10px 12px;border:1px solid #eee;border-radius:10px">' .
+                '<strong>' . $e($c['nombre']) . '</strong><br>Cuenta ' . $e($c['numero_cuenta']) .
+                (!empty($c['descripcion']) ? '<br><span style="font-size:13px;color:#555">' . $e($c['descripcion']) . '</span>' : '') .
+                '</div>';
+        }
+        if ($link['proveedor'] === 'transferencia') {
+            return '<p style="margin:22px 0 8px;font-weight:bold">Cómo pagar</p>' .
+                ($cuentas !== '' ? '<p style="margin:0 0 10px">Haz la transferencia a cualquiera de estas cuentas:</p>' . $cuentas
+                    : '<p style="margin:0 0 10px">Te enviamos los datos para el pago por WhatsApp.</p>') .
+                '<p style="margin:12px 0 0;font-size:13px;color:#555">Cuando pagues, responde este correo con el comprobante y el nombre del participante. Si tienes alguna pregunta, también puedes responder este correo.</p>';
+        }
+        return '<p style="margin:22px 0;text-align:center"><a href="' . $e($link['url']) . '" style="display:inline-block;background:#1f8f3a;color:#fff;text-decoration:none;padding:13px 26px;border-radius:999px;font-weight:bold">Pagar ahora</a></p>' .
+            '<p style="margin:0;font-size:13px;color:#555">El pago se hace en la página segura de la pasarela. ' . $e($confirmacion) . ' Si tienes alguna pregunta, responde este correo.</p>' .
+            ($cuentas !== ''
+                ? '<p style="margin:22px 0 8px;font-weight:bold">¿Prefieres transferir?</p>' .
+                  '<p style="margin:0 0 10px">También puedes pagar a cualquiera de estas cuentas y responder este correo con el comprobante y el nombre del participante:</p>' . $cuentas
+                : '');
+    }
+
+    /**
+     * Lo que va en el correo de un cobro de cuentas: a quien se saluda
+     * (acudiente responsable de pago o el estudiante), el participante y las
+     * cuentas con su fecha y lo que se cobra de cada una. Trae las mismas
+     * claves que datosCorreo para que sirva en los avisos de pago.
+     */
+    private static function datosCobro($db, $link)
+    {
+        $stmt = $db->prepare("SELECT CONCAT_WS(' ', p.primer_nombre, p.primer_apellido) AS participante, p.primer_nombre,
+                   (SELECT pa.primer_nombre
+                      FROM acudientes a
+                      INNER JOIN personas pa ON pa.id = a.id_persona AND pa.id_tenant = a.id_tenant
+                     WHERE a.id_estudiante = e.id AND a.es_responsable_pago = 1 AND a.activo = 1 AND a.id_tenant = e.id_tenant
+                     LIMIT 1) AS acudiente
+            FROM estudiantes e
+            INNER JOIN personas p ON p.id = e.id_persona AND p.id_tenant = e.id_tenant
+            WHERE e.id = :id_estudiante AND e.id_tenant = :id_tenant");
+        $stmt->bindValue(':id_estudiante', $link['id_estudiante']);
+        $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmt->execute();
+        $fila = $stmt->fetch(PDO::FETCH_ASSOC) ?: array();
+
+        $stmtLineas = $db->prepare("SELECT c.detalle, c.fecha, COALESCE(lpd.valor_cobrado, c.valor) AS valor
+            FROM links_pago_detalle lpd
+            INNER JOIN cuentas_por_cobrar c ON c.id = lpd.id_cuenta_por_cobrar AND c.id_tenant = lpd.id_tenant
+            WHERE lpd.id_link_pago = :id_link AND lpd.id_tenant = :id_tenant
+            ORDER BY c.fecha");
+        $stmtLineas->bindValue(':id_link', $link['id']);
+        $stmtLineas->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $stmtLineas->execute();
+
+        $saludo = !empty($fila['acudiente']) ? $fila['acudiente'] : (!empty($fila['primer_nombre']) ? $fila['primer_nombre'] : '');
+        return array(
+            'institucion' => self::nombreInstitucion(),
+            'saludo' => $saludo,
+            'participante' => isset($fila['participante']) ? $fila['participante'] : '',
+            'curso' => '',
+            'fecha_inicio_clases' => null,
+            'horarios' => array(),
+            'lineas' => $stmtLineas->fetchAll(PDO::FETCH_ASSOC),
+            'cuotas' => array()
+        );
+    }
+
+    /** Correo de un cobro de cuentas: cada cuenta con su fecha, el total y como pagar */
+    private static function htmlCobro($d, $link)
+    {
+        $e = function ($t) { return htmlspecialchars((string) $t, ENT_QUOTES, 'UTF-8'); };
+        $pesos = function ($v) { return '$' . number_format((float) $v, 0, ',', '.'); };
+        $meses = array(1 => 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto',
+            'septiembre', 'octubre', 'noviembre', 'diciembre');
+        $hoy = date('Y-m-d');
+
+        $filas = '';
+        $vencida = false;
+        foreach ($d['lineas'] as $l) {
+            $t = strtotime($l['fecha']);
+            $vencida = $vencida || $l['fecha'] < $hoy;
+            $filas .= '<tr><td style="padding:6px 0;border-bottom:1px solid #eee">' . $e($l['detalle']) .
+                '<br><span style="font-size:12px;color:#777">' . ($l['fecha'] < $hoy ? 'Venció el ' : 'Vence el ') .
+                (int) date('j', $t) . ' de ' . $meses[(int) date('n', $t)] . ' de ' . date('Y', $t) . '</span></td>' .
+                '<td style="padding:6px 0;border-bottom:1px solid #eee;text-align:right;white-space:nowrap">' . $pesos($l['valor']) . '</td></tr>';
+        }
+        $saludo = $d['saludo'] !== '' ? 'Hola, ' . $e($d['saludo']) . '.' : 'Hola.';
+
+        $cuerpo = '<p style="margin:0 0 10px">' . $saludo . '</p>' .
+            '<p style="margin:0">' . ($vencida ? 'Te recordamos que está pendiente' : 'Te recordamos que se acerca') .
+            ' el pago de <strong>' . $e($d['participante']) . '</strong>:</p>' .
+            '<table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:12px">' . $filas .
+            '<tr><td style="padding:8px 0;font-weight:bold">Total</td><td style="padding:8px 0;text-align:right;font-weight:bold">' . $pesos($link['valor']) . '</td></tr></table>' .
+            self::bloqueComoPagar($d, $link, 'Cuando se confirme, el pago queda registrado.');
+
+        return self::plantillaCorreo($d['institucion'], $vencida ? 'Tienes un pago pendiente' : 'Tienes un pago próximo', $cuerpo);
     }
 
     // ==================== AVISOS DE PAGO RECIBIDO ====================
@@ -754,7 +1189,7 @@ class LinksPago
 
             if (!empty($link['correo_destino'])) {
                 $resultado = ConfiguracionCorreo::enviar($db, array($link['correo_destino']),
-                    'Recibimos tu pago de ' . $datos['curso'], self::htmlPagoPersona($datos));
+                    'Recibimos tu pago' . ($datos['curso'] !== '' ? ' de ' . $datos['curso'] : ''), self::htmlPagoPersona($datos));
                 if ($resultado['error'] !== null) {
                     error_log('LinksPago: no salio el correo de pago recibido del link ' . $id_link . ': ' . $resultado['error']);
                 }
@@ -764,7 +1199,7 @@ class LinksPago
             $correoInstitucion = $config && !empty($config['responder_a']) ? $config['responder_a'] : null;
             if ($correoInstitucion) {
                 $resultado = ConfiguracionCorreo::enviar($db, array($correoInstitucion),
-                    'Llegó un pago: ' . $datos['participante'] . ' · ' . $datos['curso'], self::htmlPagoInstitucion($datos, $link));
+                    'Llegó un pago: ' . $datos['participante'] . ($datos['curso'] !== '' ? ' · ' . $datos['curso'] : ''), self::htmlPagoInstitucion($datos, $link));
                 if ($resultado['error'] !== null) {
                     error_log('LinksPago: no salio el aviso de pago a la institucion del link ' . $id_link . ': ' . $resultado['error']);
                 }
@@ -782,9 +1217,12 @@ class LinksPago
         $saludo = $d['saludo'] !== '' ? 'Hola, ' . $e($d['saludo']) . '.' : 'Hola.';
 
         $cuerpo = '<p style="margin:0 0 10px">' . $saludo . '</p>' .
-            '<p style="margin:0">Recibimos el pago de la inscripción de <strong>' . $e($d['participante']) . '</strong> a <strong>' . $e($d['curso']) . '</strong>. ¡Gracias!</p>' .
+            ($d['curso'] !== ''
+                ? '<p style="margin:0">Recibimos el pago de la inscripción de <strong>' . $e($d['participante']) . '</strong> a <strong>' . $e($d['curso']) . '</strong>. ¡Gracias!</p>'
+                : '<p style="margin:0">Recibimos el pago de <strong>' . $e($d['participante']) . '</strong>. ¡Gracias!</p>') .
             self::bloqueInicioClases($d) .
             self::tablaPago($d) .
+            self::bloqueCuotas($d, 'Te recordamos las siguientes cuotas') .
             '<p style="margin:18px 0 0;font-size:13px;color:#555">Guarda este correo como constancia. Si tienes alguna pregunta, responde este correo.</p>';
 
         return self::plantillaCorreo($d['institucion'], 'Recibimos tu pago', $cuerpo);
@@ -794,7 +1232,9 @@ class LinksPago
     {
         $e = function ($t) { return htmlspecialchars((string) $t, ENT_QUOTES, 'UTF-8'); };
 
-        $cuerpo = '<p style="margin:0">Llegó el pago de <strong>' . $e($d['participante']) . '</strong> por <strong>' . $e($d['curso']) . '</strong> con ' . $e(ucfirst($link['proveedor'])) . '. Ya quedó registrado en Genialisis y, si es un paquete de sesiones, quedó activo.</p>' .
+        $cuerpo = ($d['curso'] !== ''
+                ? '<p style="margin:0">Llegó el pago de <strong>' . $e($d['participante']) . '</strong> por <strong>' . $e($d['curso']) . '</strong> con ' . $e(ucfirst($link['proveedor'])) . '. Ya quedó registrado en Genialisis y, si es un paquete de sesiones, quedó activo.</p>'
+                : '<p style="margin:0">Llegó el pago de <strong>' . $e($d['participante']) . '</strong> con ' . $e(ucfirst($link['proveedor'])) . '. Ya quedó registrado en Genialisis.</p>') .
             self::bloqueInicioClases($d) .
             self::tablaPago($d) .
             (!empty($link['correo_destino']) ? '<p style="margin:14px 0 0;font-size:13px;color:#555">Correo de quien pagó: ' . $e($link['correo_destino']) . '</p>' : '');
@@ -820,6 +1260,28 @@ class LinksPago
             '<tr><td style="padding:4px 0;color:#555">Fecha</td><td style="padding:4px 0;text-align:right;color:#555;white-space:nowrap">' . $e($d['fecha_pago']) . '</td></tr>' .
             ($d['referencia_pago'] !== '' ? '<tr><td style="padding:4px 0;color:#555">Referencia del pago</td><td style="padding:4px 0;text-align:right;color:#555">' . $e($d['referencia_pago']) . '</td></tr>' : '') .
             '</table>';
+    }
+
+    // Cuotas que quedan para despues (planes de cuotas), con su fecha y valor
+    private static function bloqueCuotas($d, $titulo)
+    {
+        if (empty($d['cuotas'])) {
+            return '';
+        }
+        $e = function ($t) { return htmlspecialchars((string) $t, ENT_QUOTES, 'UTF-8'); };
+        $pesos = function ($v) { return '$' . number_format((float) $v, 0, ',', '.'); };
+        $meses = array(1 => 'ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic');
+
+        $filas = '';
+        foreach ($d['cuotas'] as $c) {
+            $t = strtotime($c['fecha_vencimiento']);
+            $filas .= '<tr><td style="padding:6px 0;border-bottom:1px solid #eee">' . $e($c['detalle']) . '</td>' .
+                '<td style="padding:6px 8px;border-bottom:1px solid #eee;white-space:nowrap;color:#555">' . (int) date('j', $t) . ' ' . $meses[(int) date('n', $t)] . ' ' . date('Y', $t) . '</td>' .
+                '<td style="padding:6px 0;border-bottom:1px solid #eee;text-align:right;white-space:nowrap">' . $pesos($c['valor']) . '</td></tr>';
+        }
+        return '<p style="margin:18px 0 6px;font-weight:bold">' . $e($titulo) . '</p>' .
+            '<table style="width:100%;border-collapse:collapse;font-size:14px">' . $filas . '</table>' .
+            '<p style="margin:6px 0 0;font-size:13px;color:#555">Cada cuota se paga a más tardar en su fecha.</p>';
     }
 
     // Fecha de inicio de clases puesta en la aprobacion, en formato 3 de noviembre de 2026
