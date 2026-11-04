@@ -285,6 +285,34 @@ class ReservasFijasCursosExtra
     }
 
     /**
+     * Termina las reservas fijas vigentes de una inscripcion: quedan
+     * inactivas y se liberan sus reservas desde hoy que siguen solo
+     * reservadas, asi el cupo del horario queda libre. Lo ya registrado
+     * (asistio, no asistio) no se toca. Corre dentro de la transaccion de
+     * quien llama.
+     *
+     * @return int cuantas reservas fijas termino
+     */
+    public static function terminarDeInscripcion($db, $id_inscripcion)
+    {
+        $sentence = $db->prepare("SELECT id FROM reservas_fijas_cursos_extra
+            WHERE id_estudiante_x_curso_extra = :id_inscripcion AND id_tenant = :id_tenant AND activo = 1");
+        $sentence->bindValue(':id_inscripcion', $id_inscripcion);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        $ids = array_column($sentence->fetchAll(PDO::FETCH_ASSOC), 'id');
+
+        $inactivar = $db->prepare("UPDATE reservas_fijas_cursos_extra SET activo = 0 WHERE id = :id AND id_tenant = :id_tenant");
+        foreach ($ids as $id) {
+            $inactivar->bindValue(':id', $id);
+            $inactivar->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $inactivar->execute();
+            self::liberarReservas($db, $id, date('Y-m-d'));
+        }
+        return count($ids);
+    }
+
+    /**
      * Cancela las reservas de la reserva fija en sesiones desde $desde que
      * siguen en RESERVADA.
      */

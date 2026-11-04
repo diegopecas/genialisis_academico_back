@@ -1621,6 +1621,147 @@ class SolicitudesInscripcionPublica
         }
     }
 
+    /**
+     * PUT /solicitudes-inscripcion-publica/cancelar-no-pago { id, motivo }
+     * Una solicitud aprobada que nunca se pago: retira la inscripcion,
+     * termina sus reservas fijas (el cupo queda libre), anula las cuentas que
+     * se crearon al aprobar (las del link y las cuotas de los planes) y deja
+     * anulados los links, para que un pago tardio no se registre solo
+     * (LinksPago avisa a la institucion). La solicitud queda cancelada.
+     *
+     * No se deja si ya hay algun pago, ni si la inscripcion tiene otros
+     * cobros fuera de la solicitud: en esos casos se retira desde la
+     * inscripcion del estudiante.
+     */
+    public static function cancelarPorNoPago()
+    {
+        $userData = JWTService::requerirAutenticacion();
+        $db = Flight::db();
+        $data = Flight::request()->data;
+        $id = isset($data['id']) && is_string($data['id']) ? $data['id'] : '';
+        $motivo = isset($data['motivo']) && is_scalar($data['motivo']) ? trim((string) $data['motivo']) : '';
+        if ($id === '') {
+            Flight::json(array('error' => 'Falta el ID de la solicitud'), 400);
+            return;
+        }
+
+        try {
+            $db->beginTransaction();
+
+            $stmt = $db->prepare("SELECT id, estado, id_inscripcion_creada FROM solicitudes_inscripcion_publica
+                WHERE id = :id AND id_tenant = :id_tenant FOR UPDATE");
+            $stmt->bindValue(':id', $id);
+            $stmt->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmt->execute();
+            $sol = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$sol || $sol['estado'] !== 'aprobada') {
+                $db->rollBack();
+                Flight::json(array('error' => 'Solo se cancela una solicitud aprobada.'), 400);
+                return;
+            }
+            $idInscripcion = $sol['id_inscripcion_creada'];
+
+            // Cuentas que se crearon al aprobar: las de sus links y las cuotas de sus planes
+            $stmtCuentas = $db->prepare("SELECT d.id_cuenta_por_cobrar AS id
+                    FROM links_pago lp
+                    INNER JOIN links_pago_detalle d ON d.id_link_pago = lp.id AND d.id_tenant = lp.id_tenant
+                   WHERE lp.id_solicitud_inscripcion_publica = :id_1 AND lp.id_tenant = :id_tenant_1
+                UNION
+                SELECT pc.id_cuenta_por_cobrar
+                    FROM planes_pago pp
+                    INNER JOIN planes_pago_cuotas pc ON pc.id_plan_pago = pp.id AND pc.id_tenant = pp.id_tenant
+                   WHERE pp.id_solicitud_inscripcion_publica = :id_2 AND pp.id_tenant = :id_tenant_2");
+            $stmtCuentas->bindValue(':id_1', $id);
+            $stmtCuentas->bindValue(':id_2', $id);
+            $stmtCuentas->bindValue(':id_tenant_1', TenantContext::id(), PDO::PARAM_INT);
+            $stmtCuentas->bindValue(':id_tenant_2', TenantContext::id(), PDO::PARAM_INT);
+            $stmtCuentas->execute();
+            $idsSolicitud = array_column($stmtCuentas->fetchAll(PDO::FETCH_ASSOC), 'id');
+
+            // Cuentas vigentes de la inscripcion: si hay alguna que no salio de la
+            // solicitud, la inscripcion tiene otros cobros y no se toca desde aqui
+            $idsInscripcion = array();
+            if (!empty($idInscripcion)) {
+                $stmtInsc = $db->prepare("SELECT x.id_cuenta_por_cobrar AS id
+                    FROM cuentas_cobrar_x_curso_extra x
+                    INNER JOIN cuentas_por_cobrar c ON c.id = x.id_cuenta_por_cobrar AND c.id_tenant = x.id_tenant
+                    WHERE x.id_estudiante_x_curso_extra = :id_inscripcion AND x.id_tenant = :id_tenant
+                      AND (c.anulado = 0 OR c.anulado IS NULL)");
+                $stmtInsc->bindValue(':id_inscripcion', $idInscripcion);
+                $stmtInsc->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmtInsc->execute();
+                $idsInscripcion = array_column($stmtInsc->fetchAll(PDO::FETCH_ASSOC), 'id');
+            }
+            if (count(array_diff($idsInscripcion, $idsSolicitud)) > 0) {
+                $db->rollBack();
+                Flight::json(array('error' => 'La inscripción tiene otros cobros además de los de esta solicitud. Retírala desde la inscripción del estudiante.'), 400);
+                return;
+            }
+
+            // Con un solo peso pagado ya no es "no pago"
+            $ids = array_values(array_unique(array_merge($idsSolicitud, $idsInscripcion)));
+            if (!empty($ids)) {
+                $marcas = array();
+                foreach ($ids as $i => $idCuenta) {
+                    $marcas[] = ':c' . $i;
+                }
+                $stmtPagos = $db->prepare("SELECT COALESCE(SUM(cp.valor_aplicado), 0) AS pagado
+                    FROM cuenta_pagada cp
+                    LEFT JOIN pagos_recibidos pr ON pr.id = cp.id_pago_recibido
+                    WHERE cp.id_cuenta_por_cobrar IN (" . implode(', ', $marcas) . ") AND cp.id_tenant = :id_tenant
+                      AND (pr.anulado = 0 OR pr.anulado IS NULL)");
+                foreach ($ids as $i => $idCuenta) {
+                    $stmtPagos->bindValue(':c' . $i, $idCuenta);
+                }
+                $stmtPagos->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                $stmtPagos->execute();
+                $pagado = (float) $stmtPagos->fetch(PDO::FETCH_ASSOC)['pagado'];
+                if ($pagado > 0) {
+                    $db->rollBack();
+                    Flight::json(array('error' => 'Ya tiene pagos por $' . number_format($pagado, 0, ',', '.') .
+                        '. Si de todas formas se retira, hazlo desde la inscripción del estudiante.'), 400);
+                    return;
+                }
+            }
+
+            $idUsuario = $userData->id ?? null;
+            $cuentasAnuladas = CuentasPorCobrar::anularVarias($db, $ids, $idUsuario);
+            $linksAnulados = LinksPago::anularDeSolicitud($db, $id);
+            $reservasTerminadas = 0;
+            $inscripcionRetirada = false;
+            if (!empty($idInscripcion)) {
+                $reservasTerminadas = ReservasFijasCursosExtra::terminarDeInscripcion($db, $idInscripcion);
+                $inscripcionRetirada = EstudiantesXCursosExtra::retirar($db, $idInscripcion, date('Y-m-d'));
+            }
+
+            $stmtSol = $db->prepare("UPDATE solicitudes_inscripcion_publica SET
+                    estado = 'cancelada', motivo_rechazo = :motivo, id_usuario_resolvio = :id_usuario, fecha_resolucion = NOW()
+                WHERE id = :id AND id_tenant = :id_tenant");
+            $stmtSol->bindValue(':motivo', mb_substr($motivo !== '' ? $motivo : 'No pagó', 0, 2000));
+            $stmtSol->bindValue(':id_usuario', $idUsuario);
+            $stmtSol->bindValue(':id', $id);
+            $stmtSol->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $stmtSol->execute();
+
+            $db->commit();
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log('Error al cancelar la solicitud de inscripcion por no pago: ' . $e->getMessage());
+            Flight::json(array('error' => 'No se pudo cancelar la solicitud.'), 500);
+            return;
+        }
+
+        Flight::json(array(
+            'id' => $id,
+            'cuentas_anuladas' => $cuentasAnuladas,
+            'links_anulados' => $linksAnulados,
+            'reservas_terminadas' => $reservasTerminadas,
+            'inscripcion_retirada' => $inscripcionRetirada
+        ));
+    }
+
     public static function delete()
     {
         try {
@@ -1632,10 +1773,10 @@ class SolicitudesInscripcionPublica
                 return;
             }
 
-            // Una solicitud aprobada no se borra: es la trazabilidad de como
-            // entro ese estudiante.
+            // Una solicitud aprobada (o cancelada despues de aprobarla) no se
+            // borra: es la trazabilidad de como entro ese estudiante.
             $sentence = $db->prepare("DELETE FROM solicitudes_inscripcion_publica
-                                      WHERE id = :id AND estado <> 'aprobada' AND id_tenant = :id_tenant");
+                                      WHERE id = :id AND estado NOT IN ('aprobada', 'cancelada') AND id_tenant = :id_tenant");
             $sentence->bindParam(':id', $id);
             $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
             $sentence->execute();

@@ -110,8 +110,8 @@ class PaquetesEstudiantesCursosExtra
 
     /**
      * Crea el paquete de sesiones que se compro con una linea de la tarifa
-     * (numero de sesiones y vigencia en dias de esa linea). Lo usa el registro
-     * del pago de un link de Bold. No abre transaccion: la abre quien llama.
+     * (numero de sesiones y vigencia en dias de esa linea). Lo usa
+     * crearPorCuentasPagadas. No abre transaccion: la abre quien llama.
      *
      * @return string|null id del paquete, o null si la linea no trae sesiones
      */
@@ -143,6 +143,85 @@ class PaquetesEstudiantesCursosExtra
         $sentence->execute();
 
         return $id;
+    }
+
+    /**
+     * Crea los paquetes de sesiones de las cuentas que ya quedaron pagadas y
+     * que salieron de una linea por paquete de un cobro con inscripcion (la
+     * aprobacion de una solicitud). Sirve igual si pagaron con el link o si
+     * el pago se registro a mano en los pagos del estudiante.
+     *
+     * No crea nada si la cuenta ya tiene paquete, si le falta saldo por
+     * pagar, si esta anulada, si el link esta anulado o si la inscripcion ya
+     * no esta activa.
+     *
+     * Arranca en la fecha de inicio de clases que se puso al aprobar; si ya
+     * paso (pagaron tarde), arranca el dia del pago. Sin esa fecha: un curso
+     * sin fecha de inicio es permanente y el paquete arranca hoy.
+     *
+     * No abre transaccion: la abre quien llama, si la necesita.
+     *
+     * @param array $ids_cuentas ids de cuentas_por_cobrar recien pagadas
+     * @return int cuantos paquetes creo
+     */
+    public static function crearPorCuentasPagadas($db, array $ids_cuentas, $observaciones)
+    {
+        $ids = array_values(array_unique(array_filter($ids_cuentas, 'is_string')));
+        if (empty($ids)) {
+            return 0;
+        }
+        $marcas = array();
+        foreach ($ids as $i => $idCuenta) {
+            $marcas[] = ':c' . $i;
+        }
+
+        $sentence = $db->prepare("
+            SELECT lpd.id_cuenta_por_cobrar, lp.id_estudiante_x_curso_extra,
+                   d.numero_sesiones, d.vigencia_dias,
+                   ce.fecha_inicio AS curso_fecha_inicio, s.fecha_inicio_clases
+            FROM links_pago_detalle lpd
+            INNER JOIN links_pago lp ON lp.id = lpd.id_link_pago AND lp.id_tenant = lpd.id_tenant
+            INNER JOIN estudiantes_x_cursos_extra exce ON exce.id = lp.id_estudiante_x_curso_extra AND exce.id_tenant = lp.id_tenant
+            INNER JOIN cursos_extra ce ON ce.id = exce.id_curso_extra AND ce.id_tenant = exce.id_tenant
+            LEFT JOIN solicitudes_inscripcion_publica s ON s.id = lp.id_solicitud_inscripcion_publica AND s.id_tenant = lp.id_tenant
+            INNER JOIN tarifas_cursos_extra_detalle d ON d.id = lpd.id_tarifa_curso_extra_detalle AND d.id_tenant = lpd.id_tenant
+            INNER JOIN productos_servicios ps ON ps.id = d.id_producto_servicio AND ps.id_tenant = d.id_tenant
+            INNER JOIN tipos_cobro_producto tcp ON tcp.id = ps.id_tipo_cobro
+            INNER JOIN cuentas_por_cobrar c ON c.id = lpd.id_cuenta_por_cobrar AND c.id_tenant = lpd.id_tenant
+            WHERE lpd.id_cuenta_por_cobrar IN (" . implode(', ', $marcas) . ")
+              AND lpd.id_tenant = :id_tenant
+              AND lp.estado <> 'anulado'
+              AND exce.activo = 1
+              AND tcp.codigo = 'PAQUETE' AND d.numero_sesiones > 0
+              AND (c.anulado = 0 OR c.anulado IS NULL)
+              AND NOT EXISTS (SELECT 1 FROM paquetes_estudiantes_cursos_extra p
+                               WHERE p.id_cuenta_por_cobrar = c.id AND p.id_tenant = c.id_tenant)
+              AND c.valor - COALESCE((SELECT SUM(cp.valor_aplicado)
+                                        FROM cuenta_pagada cp
+                                        LEFT JOIN pagos_recibidos pr ON pr.id = cp.id_pago_recibido
+                                       WHERE cp.id_cuenta_por_cobrar = c.id AND cp.id_tenant = c.id_tenant
+                                         AND (pr.anulado = 0 OR pr.anulado IS NULL)), 0) <= 0
+        ");
+        foreach ($ids as $i => $idCuenta) {
+            $sentence->bindValue(':c' . $i, $idCuenta);
+        }
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+
+        $creados = 0;
+        foreach ($sentence->fetchAll(PDO::FETCH_ASSOC) as $f) {
+            if (!empty($f['fecha_inicio_clases'])) {
+                $fechaInicio = max(date('Y-m-d'), $f['fecha_inicio_clases']);
+            } else {
+                $fechaInicio = $f['curso_fecha_inicio'] !== null ? max(date('Y-m-d'), $f['curso_fecha_inicio']) : date('Y-m-d');
+            }
+            $id = self::crearDesdeTarifa($db, $f['id_estudiante_x_curso_extra'], $f['numero_sesiones'], $f['vigencia_dias'],
+                $fechaInicio, $f['id_cuenta_por_cobrar'], $observaciones);
+            if ($id !== null) {
+                $creados++;
+            }
+        }
+        return $creados;
     }
 
     public static function replace()

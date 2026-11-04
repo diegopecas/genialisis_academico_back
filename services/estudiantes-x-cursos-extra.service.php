@@ -376,4 +376,21 @@ class EstudiantesXCursosExtra
         }
     }
 
+    /**
+     * Retira la inscripcion (inactiva con fecha de retiro). No toca cuentas
+     * ni reservas: eso lo hace quien llama, dentro de su transaccion.
+     *
+     * @return bool true si estaba activa y quedo retirada
+     */
+    public static function retirar($db, $id, $fecha_retiro)
+    {
+        $sentence = $db->prepare("UPDATE estudiantes_x_cursos_extra SET activo = 0, fecha_retiro = :fecha_retiro
+            WHERE id = :id AND id_tenant = :id_tenant AND activo = 1");
+        $sentence->bindValue(':fecha_retiro', $fecha_retiro);
+        $sentence->bindValue(':id', $id);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        return $sentence->rowCount() > 0;
+    }
+
 }

@@ -172,6 +172,8 @@ class CuentaPagada
         $sentence->bindParam(':fecha', $fecha);
 
         $sentence->execute();
+
+        self::crearPaquetes(array($id_cuenta_por_cobrar));
         Flight::json(array('id' => $id));
     }
 
@@ -275,6 +277,7 @@ class CuentaPagada
                 } else {
                     // Si todo salió bien, confirmar la transacción
                     $db->commit();
+                    self::crearPaquetes(array_column($cuentas, 'id_cuenta_por_cobrar'));
                     Flight::json([
                         'success' => true,
                         'message' => count($resultados) . ' cuentas aplicadas correctamente',
@@ -292,6 +295,20 @@ class CuentaPagada
                 'message' => 'Error al procesar las cuentas pagadas',
                 'detalles' => $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Si alguna de las cuentas recien pagadas es de un plan por sesiones de
+     * una solicitud aprobada, crea su paquete, igual que cuando pagan con el
+     * link. El pago ya quedo guardado: si esto falla, queda en el log.
+     */
+    private static function crearPaquetes(array $ids_cuentas)
+    {
+        try {
+            PaquetesEstudiantesCursosExtra::crearPorCuentasPagadas(Flight::db(), $ids_cuentas, 'Pago registrado en los pagos del estudiante');
+        } catch (Exception $e) {
+            error_log('CuentaPagada: no se pudo crear el paquete de sesiones de las cuentas pagadas: ' . $e->getMessage());
         }
     }
 }

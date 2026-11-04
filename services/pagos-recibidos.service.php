@@ -1725,6 +1725,8 @@ class PagosRecibidos
                 $fecha_registro = date('Y-m-d H:i:s');
                 $pagosRegistrados = array();
                 $errores = array();
+                // Cuentas pagadas en el lote, para crear los paquetes de sesiones despues del commit
+                $idsCuentasPagadas = array();
 
                 $stmtPago = $db->prepare("
                     INSERT INTO pagos_recibidos 
@@ -1824,6 +1826,7 @@ class PagosRecibidos
                             $stmtCuenta->bindParam(':fecha', $pago['fecha']);
                             $stmtCuenta->execute();
                             $cuentasInsertadas++;
+                            $idsCuentasPagadas[] = $cuenta['id_cuenta_por_cobrar'];
                         }
 
                         // Asociar reporte de pago pendiente buscando en el array cargado al inicio
@@ -1876,6 +1879,14 @@ class PagosRecibidos
                 }
 
                 $db->commit();
+
+                // Plan por sesiones de una solicitud aprobada: el paquete se crea
+                // igual que cuando pagan con el link. Si falla, el pago ya quedo.
+                try {
+                    PaquetesEstudiantesCursosExtra::crearPorCuentasPagadas($db, $idsCuentasPagadas, 'Pago registrado en los pagos del estudiante');
+                } catch (Exception $ePaquete) {
+                    error_log('PagosRecibidos: no se pudo crear el paquete de sesiones de las cuentas pagadas: ' . $ePaquete->getMessage());
+                }
 
                 Flight::json(array(
                     'success' => true,

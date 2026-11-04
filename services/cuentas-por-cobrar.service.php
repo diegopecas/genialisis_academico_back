@@ -454,6 +454,28 @@ class CuentasPorCobrar
         }
     }
 
+    /**
+     * Anula varias cuentas que aun no estaban anuladas. No revisa pagos: eso
+     * lo hace quien llama, dentro de su transaccion.
+     *
+     * @return int cuantas anulo
+     */
+    public static function anularVarias($db, array $ids, $id_usuario)
+    {
+        $sentence = $db->prepare("UPDATE cuentas_por_cobrar SET
+                anulado = 1, fecha_anulacion = NOW(), id_usuario_anulacion = :id_usuario
+            WHERE id = :id AND id_tenant = :id_tenant AND (anulado = 0 OR anulado IS NULL)");
+        $anuladas = 0;
+        foreach (array_unique($ids) as $id) {
+            $sentence->bindValue(':id_usuario', $id_usuario);
+            $sentence->bindValue(':id', $id);
+            $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+            $sentence->execute();
+            $anuladas += $sentence->rowCount();
+        }
+        return $anuladas;
+    }
+
     public static function delete()
     {
         $userData = JWTService::requerirAutenticacion();

@@ -10,6 +10,7 @@ Flight::route('GET /solicitudes-inscripcion-publica/horarios/@id', [SolicitudesI
 Flight::route('GET /solicitudes-inscripcion-publica/@id', [SolicitudesInscripcionPublica::class, 'getById']);
 Flight::route('PUT /solicitudes-inscripcion-publica/aprobar', [SolicitudesInscripcionPublica::class, 'aprobar']);
 Flight::route('PUT /solicitudes-inscripcion-publica/rechazar', [SolicitudesInscripcionPublica::class, 'rechazar']);
+Flight::route('PUT /solicitudes-inscripcion-publica/cancelar-no-pago', [SolicitudesInscripcionPublica::class, 'cancelarPorNoPago']);
 Flight::route('DELETE /solicitudes-inscripcion-publica', [SolicitudesInscripcionPublica::class, 'delete']);
 
 // PAGINA PUBLICA DE INSCRIPCION (sin token, ver index.php)

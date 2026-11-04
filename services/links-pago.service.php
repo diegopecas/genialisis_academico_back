@@ -17,6 +17,10 @@
  *    las cuentas y, si el plan es por sesiones, el paquete. Un mismo pago
  *    nunca se registra dos veces. Por transferencia, el pago se registra a
  *    mano desde los pagos del estudiante.
+ * 4. Si la solicitud se cancela por no pago, el link queda anulado
+ *    (anularDeSolicitud). Si despues alguien paga por el, el pago NO se
+ *    registra solo: queda la nota en el link y le llega un aviso a la
+ *    institucion para que lo revise.
  *
  * Cobros de cuentas por cobrar (cobro programado):
  * - Cualquier cuenta con saldo de un estudiante (una cuota, una pension) se
@@ -473,6 +477,11 @@ class LinksPago
             Flight::json(array('error' => $resultado['error']), 500);
             return;
         }
+        if (!empty($resultado['anulado'])) {
+            Flight::json(array('id' => $id, 'estado' => 'anulado', 'estado_bold' => $estadoBold,
+                'mensaje' => 'Bold tiene un pago de este link, pero el link está anulado y el pago no se registró. Si corresponde, regístralo desde los pagos del estudiante.'));
+            return;
+        }
         Flight::json(array('id' => $id, 'estado' => 'pagado', 'estado_bold' => $estadoBold,
             'mensaje' => !empty($resultado['ya_pagado']) ? 'El pago ya estaba registrado.' : 'Pago registrado.'));
     }
@@ -547,15 +556,36 @@ class LinksPago
         Flight::json(array('ok' => true));
     }
 
+    // ==================== ANULACION ====================
+
+    /**
+     * Deja anulados los links de una solicitud que no se han pagado. Corre
+     * dentro de la transaccion de quien cancela la solicitud.
+     *
+     * @return int cuantos links anulo
+     */
+    public static function anularDeSolicitud($db, $id_solicitud)
+    {
+        $sentence = $db->prepare("UPDATE links_pago SET estado = 'anulado'
+            WHERE id_solicitud_inscripcion_publica = :id_solicitud AND id_tenant = :id_tenant
+              AND estado <> 'pagado' AND estado <> 'anulado'");
+        $sentence->bindValue(':id_solicitud', $id_solicitud);
+        $sentence->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+        $sentence->execute();
+        return $sentence->rowCount();
+    }
+
     // ==================== PAGO ====================
 
     /**
      * Registra el pago del link: pago recibido aplicado a sus cuentas,
      * paquetes de sesiones de las lineas por paquete y el link en pagado. Si
-     * el link ya estaba pagado no hace nada.
+     * el link ya estaba pagado no hace nada. Si el link esta anulado no
+     * registra el pago: deja la nota en el link y avisa a la institucion
+     * (una sola vez por pago).
      *
      * @param float|null $valor lo que reporta Bold; si no viene, el del link
-     * @return array {ok} | {ok, ya_pagado} | {error}
+     * @return array {ok} | {ok, ya_pagado} | {ok, anulado} | {error}
      */
     private static function registrarPago($db, $id_link, $id_transaccion, $valor, $origen)
     {
@@ -563,12 +593,9 @@ class LinksPago
             $db->beginTransaction();
 
             // Los cobros de cuentas no tienen inscripcion: el estudiante va en el link
-            $stmt = $db->prepare("SELECT lp.*, COALESCE(lp.id_estudiante, exce.id_estudiante) AS id_estudiante,
-                       exce.id_curso_extra, ce.fecha_inicio AS curso_fecha_inicio, s.fecha_inicio_clases
+            $stmt = $db->prepare("SELECT lp.*, COALESCE(lp.id_estudiante, exce.id_estudiante) AS id_estudiante
                 FROM links_pago lp
                 LEFT JOIN estudiantes_x_cursos_extra exce ON exce.id = lp.id_estudiante_x_curso_extra AND exce.id_tenant = lp.id_tenant
-                LEFT JOIN cursos_extra ce ON ce.id = exce.id_curso_extra AND ce.id_tenant = lp.id_tenant
-                LEFT JOIN solicitudes_inscripcion_publica s ON s.id = lp.id_solicitud_inscripcion_publica AND s.id_tenant = lp.id_tenant
                 WHERE lp.id = :id AND lp.id_tenant = :id_tenant
                 FOR UPDATE");
             $stmt->bindValue(':id', $id_link);
@@ -582,6 +609,25 @@ class LinksPago
             if ($link['estado'] === 'pagado') {
                 $db->commit();
                 return array('ok' => true, 'ya_pagado' => true);
+            }
+            if ($link['estado'] === 'anulado') {
+                $valorAnulado = $valor !== null ? (float) $valor : (float) $link['valor'];
+                $yaAvisado = $id_transaccion !== '' && strpos((string) $link['ultimo_error'], $id_transaccion) !== false;
+                if (!$yaAvisado) {
+                    $stmtNota = $db->prepare("UPDATE links_pago SET ultimo_error = :nota WHERE id = :id AND id_tenant = :id_tenant");
+                    $stmtNota->bindValue(':nota', 'Llegó un pago por $' . number_format($valorAnulado, 0, ',', '.') .
+                        ' con el link anulado (pago ' . $id_transaccion . ', ' . date('Y-m-d H:i') . '). ' .
+                        'No se registró: revísalo y, si corresponde, regístralo desde los pagos del estudiante.');
+                    $stmtNota->bindValue(':id', $id_link);
+                    $stmtNota->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
+                    $stmtNota->execute();
+                }
+                $db->commit();
+                error_log('LinksPago: llego un pago (' . $origen . ') por el link anulado ' . $id_link . ' (pago ' . $id_transaccion . '); no se registro.');
+                if (!$yaAvisado) {
+                    self::avisarPagoLinkAnulado($db, $id_link, $id_transaccion, $valorAnulado);
+                }
+                return array('ok' => true, 'anulado' => true);
             }
 
             // Saldo de cada cuenta: si ya tenia un abono, solo se aplica lo que falta
@@ -638,41 +684,11 @@ class LinksPago
                 'referencia_bancaria' => mb_substr($id_transaccion, 0, 100)
             ), $cuentas);
 
-            // Paquete de sesiones por cada linea de tipo paquete.
-            // Arranca en la fecha de inicio de clases que se puso al aprobar;
-            // si ya paso (pagaron tarde), arranca el dia del pago.
-            // Sin esa fecha: un curso sin fecha de inicio es permanente y el
-            // paquete arranca hoy.
-            if (!empty($link['fecha_inicio_clases'])) {
-                $fechaInicio = max(date('Y-m-d'), $link['fecha_inicio_clases']);
-            } else {
-                $fechaInicio = $link['curso_fecha_inicio'] !== null ? max(date('Y-m-d'), $link['curso_fecha_inicio']) : date('Y-m-d');
-            }
-            $stmtLinea = $db->prepare("SELECT d.numero_sesiones, d.vigencia_dias, tcp.codigo AS codigo_tipo_cobro
-                FROM tarifas_cursos_extra_detalle d
-                INNER JOIN productos_servicios ps ON ps.id = d.id_producto_servicio AND ps.id_tenant = d.id_tenant
-                LEFT JOIN tipos_cobro_producto tcp ON tcp.id = ps.id_tipo_cobro
-                WHERE d.id = :id AND d.id_tenant = :id_tenant");
-            foreach ($lineas as $linea) {
-                // Solo las lineas de tarifa de un cobro con inscripcion (aprobacion)
-                if (empty($linea['id_tarifa_curso_extra_detalle']) || empty($link['id_estudiante_x_curso_extra'])) {
-                    continue;
-                }
-                $stmtLinea->bindValue(':id', $linea['id_tarifa_curso_extra_detalle']);
-                $stmtLinea->bindValue(':id_tenant', TenantContext::id(), PDO::PARAM_INT);
-                $stmtLinea->execute();
-                $tarifa = $stmtLinea->fetch(PDO::FETCH_ASSOC);
-                if ($tarifa && $tarifa['codigo_tipo_cobro'] === 'PAQUETE' && (int) $tarifa['numero_sesiones'] > 0) {
-                    PaquetesEstudiantesCursosExtra::crearDesdeTarifa(
-                        $db,
-                        $link['id_estudiante_x_curso_extra'],
-                        $tarifa['numero_sesiones'],
-                        $tarifa['vigencia_dias'],
-                        $fechaInicio,
-                        $linea['id_cuenta_por_cobrar'],
-                        'Pago con ' . ucfirst($link['proveedor'])
-                    );
-                }
+            // Paquetes de sesiones de las lineas por paquete que quedaron pagadas
+            // (solo en los cobros con inscripcion, es decir, de una aprobacion)
+            if (!empty($link['id_estudiante_x_curso_extra'])) {
+                PaquetesEstudiantesCursosExtra::crearPorCuentasPagadas($db, array_column($cuentas, 'id_cuenta_por_cobrar'),
+                    'Pago con ' . ucfirst($link['proveedor']));
             }
 
             $stmtPagado = $db->prepare("UPDATE links_pago SET
@@ -1208,6 +1224,44 @@ class LinksPago
             }
         } catch (Exception $e) {
             error_log('LinksPago: no se pudieron mandar los avisos del pago del link ' . $id_link . ': ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Aviso a la institucion de un pago que llego por un link anulado (la
+     * solicitud se cancelo por no pago). Si el correo no sale queda en el log.
+     */
+    private static function avisarPagoLinkAnulado($db, $id_link, $id_transaccion, $valorPagado)
+    {
+        try {
+            $link = self::obtener($db, $id_link);
+            $config = ConfiguracionCorreo::paraUso($db);
+            $correoInstitucion = $config && !empty($config['responder_a']) ? $config['responder_a'] : null;
+            if (!$link || !$correoInstitucion) {
+                error_log('LinksPago: no se avisa del pago por el link anulado ' . $id_link . ': el Servicio de correo no tiene direccion de respuesta.');
+                return;
+            }
+            $datos = self::datosCorreo($db, $link);
+            $datos['valor_pagado'] = $valorPagado;
+            $datos['referencia_pago'] = $id_transaccion;
+            $datos['fecha_pago'] = date('Y-m-d H:i');
+
+            $e = function ($t) { return htmlspecialchars((string) $t, ENT_QUOTES, 'UTF-8'); };
+            $cuerpo = '<p style="margin:0">Llegó un pago de <strong>' . $e($datos['participante']) . '</strong>' .
+                ($datos['curso'] !== '' ? ' por <strong>' . $e($datos['curso']) . '</strong>' : '') .
+                ' con ' . $e(ucfirst($link['proveedor'])) . ', pero la solicitud se había cancelado por no pago y el link estaba anulado.</p>' .
+                '<p style="margin:12px 0 0;padding:10px 12px;border-radius:8px;background:#fff4e5;border-left:4px solid #e67e22">' .
+                '<strong>El pago no se registró en Genialisis.</strong> Revisa el caso y, si corresponde, vuelve a inscribir al estudiante y registra el pago desde sus pagos, o haz la devolución.</p>' .
+                self::tablaPago($datos) .
+                (!empty($link['correo_destino']) ? '<p style="margin:14px 0 0;font-size:13px;color:#555">Correo de quien pagó: ' . $e($link['correo_destino']) . '</p>' : '');
+
+            $resultado = ConfiguracionCorreo::enviar($db, array($correoInstitucion),
+                'Pago con un link anulado: ' . $datos['participante'], self::plantillaCorreo($datos['institucion'], 'Pago con un link anulado', $cuerpo));
+            if ($resultado['error'] !== null) {
+                error_log('LinksPago: no salio el aviso del pago por el link anulado ' . $id_link . ': ' . $resultado['error']);
+            }
+        } catch (Exception $e) {
+            error_log('LinksPago: no se pudo avisar del pago por el link anulado ' . $id_link . ': ' . $e->getMessage());
         }
     }
 
