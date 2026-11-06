@@ -1185,7 +1185,10 @@ class Calificaciones
     // Pantalla de Operaciones > Actividades: por fecha y grupo se califica
     // a los estudiantes que tuvieron asistencia ese dia, en las franjas del
     // horario (o en areas agregadas fuera del horario). Solo trabaja sobre
-    // el sprint actual y solo para grupos, no para cursos extracurriculares.
+    // el sprint actual.
+    // Tambien califica cursos extracurriculares: ahi los estudiantes son los
+    // que quedaron como Asistio en las clases del curso de ese dia (Clases
+    // del dia) y cada clase es una franja con el area del curso.
     // ===================================================================
 
     /** Sprint actual del tenant, o null si no hay ninguno marcado. */
@@ -1333,86 +1336,8 @@ class Calificaciones
             $stmt->execute();
             $franjas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-            // 3. Tareas del grupo en el sprint actual: pendientes y las del dia.
-            // La fecha del dia es la de ejecucion o, si aun no se finalizo, la de inicio.
-            $stmt = $db->prepare("SELECT
-                    txs.id AS id_tarea_x_sprint,
-                    txs.id_area_academica,
-                    txs.id_estado_tarea,
-                    txs.orden_ejecucion,
-                    txs.id_docente,
-                    txs.id_docente_inicia,
-                    txs.id_horario,
-                    txs.hora_inicial_horario,
-                    txs.hora_final_horario,
-                    txs.fecha_ejecucion,
-                    txs.fecha_ejecucion_inicia,
-                    aa.id AS id_actividad_academica,
-                    aa.titulo,
-                    aa.minutos_duracion,
-                    CASE WHEN DATE(COALESCE(txs.fecha_ejecucion, txs.fecha_ejecucion_inicia)) = :fecha_flag
-                         THEN 1 ELSE 0 END AS es_del_dia
-                FROM tareas_x_sprints txs
-                INNER JOIN actividades_academicas aa ON aa.id = txs.id_actividad_academica
-                WHERE txs.id_grupo = :id_grupo
-                  AND txs.id_sprint = :id_sprint
-                  AND txs.id_tenant = :id_tenant
-                  AND (txs.id_estado_tarea = 1
-                       OR (txs.id_estado_tarea = 2
-                           AND DATE(COALESCE(txs.fecha_ejecucion, txs.fecha_ejecucion_inicia)) = :fecha_ejec))
-                ORDER BY txs.orden_ejecucion ASC, aa.titulo ASC");
-            $stmt->bindValue(':fecha_flag', $fecha);
-            $stmt->bindValue(':fecha_ejec', $fecha);
-            $stmt->bindValue(':id_grupo', $id_grupo);
-            $stmt->bindValue(':id_sprint', $sprint['id']);
-            $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
-            $stmt->execute();
-            $tareas = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-            $idsTareasDia = [];
-            foreach ($tareas as &$tarea) {
-                $tarea['id_estado_tarea'] = (int) $tarea['id_estado_tarea'];
-                $tarea['es_del_dia'] = (int) $tarea['es_del_dia'];
-                if ($tarea['es_del_dia'] === 1) {
-                    $idsTareasDia[] = $tarea['id_tarea_x_sprint'];
-                }
-            }
-            unset($tarea);
-
-            // 4. Calificaciones y participaciones de las tareas del dia
-            $calificaciones = [];
-            $participaciones = [];
-            if (!empty($idsTareasDia)) {
-                $marcas = implode(',', array_fill(0, count($idsTareasDia), '?'));
-
-                $stmt = $db->prepare("SELECT
-                        c.id,
-                        c.id_tarea_x_sprint,
-                        c.id_estudiante,
-                        c.id_parametro_calificacion,
-                        c.id_valor_parametro_calificacion
-                    FROM calificaciones c
-                    WHERE c.id_tarea_x_sprint IN ($marcas)
-                      AND c.id_tenant = ?
-                      AND NOT EXISTS (
-                            SELECT 1 FROM calificaciones c2
-                            WHERE c2.id_tarea_x_sprint = c.id_tarea_x_sprint
-                              AND c2.id_estudiante = c.id_estudiante
-                              AND c2.id_parametro_calificacion = c.id_parametro_calificacion
-                              AND c2.id_tenant = c.id_tenant
-                              AND (c2.fecha_registro > c.fecha_registro
-                                   OR (c2.fecha_registro = c.fecha_registro AND c2.id > c.id))
-                      )");
-                $stmt->execute(array_merge($idsTareasDia, [$idTenant]));
-                $calificaciones = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-                $stmt = $db->prepare("SELECT id, id_tarea_x_sprint, id_estudiante
-                    FROM tareas_x_sprints_x_estudiante
-                    WHERE id_tarea_x_sprint IN ($marcas)
-                      AND id_tenant = ?");
-                $stmt->execute(array_merge($idsTareasDia, [$idTenant]));
-                $participaciones = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            }
+            // 3 y 4. Tareas del grupo en el sprint actual, con lo calificado ese dia
+            $delDia = self::tareasDelDiaRapida($db, 'id_grupo', $id_grupo, $sprint, $fecha);
 
             Flight::json([
                 'sprint' => $sprint,
@@ -1420,9 +1345,9 @@ class Calificaciones
                 'dia_semana' => $diaSemana,
                 'estudiantes' => $estudiantes,
                 'franjas' => $franjas,
-                'tareas' => $tareas,
-                'calificaciones' => $calificaciones,
-                'participaciones' => $participaciones
+                'tareas' => $delDia['tareas'],
+                'calificaciones' => $delDia['calificaciones'],
+                'participaciones' => $delDia['participaciones']
             ]);
         } catch (Exception $e) {
             error_log('Error en getVistaCalificacionRapida(): ' . $e->getMessage());
@@ -1431,10 +1356,361 @@ class Calificaciones
     }
 
     /**
-     * Guarda en bloque la calificacion rapida de un grupo en una fecha.
+     * Tareas del sprint actual de un grupo o de un curso extracurricular, con
+     * lo calificado en la fecha. Lo usan las dos vistas de la calificacion
+     * rapida.
+     *
+     * $columna dice contra que se filtra la tarea: 'id_grupo' o 'id_curso_extra'.
+     *
+     * Devuelve:
+     *  - tareas: las pendientes, mas las que se ejecutaron (o se iniciaron) en
+     *    esa fecha, para poder corregirlas. es_del_dia marca estas ultimas.
+     *  - calificaciones: la mas reciente por estudiante, tarea y parametro de
+     *    las tareas del dia (por los duplicados viejos, igual que en
+     *    anidarCalificaciones).
+     *  - participaciones: los registros de tareas_x_sprints_x_estudiante de las
+     *    tareas del dia, para saber a quien se le asigno la actividad aunque
+     *    no tenga nota.
+     */
+    private static function tareasDelDiaRapida($db, $columna, $idDestino, $sprint, $fecha)
+    {
+        // La columna nunca viene del cliente, pero se valida por si acaso
+        if (!in_array($columna, ['id_grupo', 'id_curso_extra'], true)) {
+            throw new InvalidArgumentException('Destino de calificacion no valido');
+        }
+        $idTenant = TenantContext::id();
+
+        // La fecha del dia es la de ejecucion o, si aun no se finalizo, la de inicio.
+        $stmt = $db->prepare("SELECT
+                txs.id AS id_tarea_x_sprint,
+                txs.id_area_academica,
+                txs.id_estado_tarea,
+                txs.orden_ejecucion,
+                txs.id_docente,
+                txs.id_docente_inicia,
+                txs.id_horario,
+                txs.hora_inicial_horario,
+                txs.hora_final_horario,
+                txs.fecha_ejecucion,
+                txs.fecha_ejecucion_inicia,
+                aa.id AS id_actividad_academica,
+                aa.titulo,
+                aa.minutos_duracion,
+                CASE WHEN DATE(COALESCE(txs.fecha_ejecucion, txs.fecha_ejecucion_inicia)) = :fecha_flag
+                     THEN 1 ELSE 0 END AS es_del_dia
+            FROM tareas_x_sprints txs
+            INNER JOIN actividades_academicas aa ON aa.id = txs.id_actividad_academica
+            WHERE txs.$columna = :id_destino
+              AND txs.id_sprint = :id_sprint
+              AND txs.id_tenant = :id_tenant
+              AND (txs.id_estado_tarea = 1
+                   OR (txs.id_estado_tarea = 2
+                       AND DATE(COALESCE(txs.fecha_ejecucion, txs.fecha_ejecucion_inicia)) = :fecha_ejec))
+            ORDER BY txs.orden_ejecucion ASC, aa.titulo ASC");
+        $stmt->bindValue(':fecha_flag', $fecha);
+        $stmt->bindValue(':fecha_ejec', $fecha);
+        $stmt->bindValue(':id_destino', $idDestino);
+        $stmt->bindValue(':id_sprint', $sprint['id']);
+        $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+        $stmt->execute();
+        $tareas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $idsTareasDia = [];
+        foreach ($tareas as &$tarea) {
+            $tarea['id_estado_tarea'] = (int) $tarea['id_estado_tarea'];
+            $tarea['es_del_dia'] = (int) $tarea['es_del_dia'];
+            if ($tarea['es_del_dia'] === 1) {
+                $idsTareasDia[] = $tarea['id_tarea_x_sprint'];
+            }
+        }
+        unset($tarea);
+
+        // 4. Calificaciones y participaciones de las tareas del dia
+        $calificaciones = [];
+        $participaciones = [];
+        if (!empty($idsTareasDia)) {
+            $marcas = implode(',', array_fill(0, count($idsTareasDia), '?'));
+
+            $stmt = $db->prepare("SELECT
+                    c.id,
+                    c.id_tarea_x_sprint,
+                    c.id_estudiante,
+                    c.id_parametro_calificacion,
+                    c.id_valor_parametro_calificacion
+                FROM calificaciones c
+                WHERE c.id_tarea_x_sprint IN ($marcas)
+                  AND c.id_tenant = ?
+                  AND NOT EXISTS (
+                        SELECT 1 FROM calificaciones c2
+                        WHERE c2.id_tarea_x_sprint = c.id_tarea_x_sprint
+                          AND c2.id_estudiante = c.id_estudiante
+                          AND c2.id_parametro_calificacion = c.id_parametro_calificacion
+                          AND c2.id_tenant = c.id_tenant
+                          AND (c2.fecha_registro > c.fecha_registro
+                               OR (c2.fecha_registro = c.fecha_registro AND c2.id > c.id))
+                  )");
+            $stmt->execute(array_merge($idsTareasDia, [$idTenant]));
+            $calificaciones = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $stmt = $db->prepare("SELECT id, id_tarea_x_sprint, id_estudiante
+                FROM tareas_x_sprints_x_estudiante
+                WHERE id_tarea_x_sprint IN ($marcas)
+                  AND id_tenant = ?");
+            $stmt->execute(array_merge($idsTareasDia, [$idTenant]));
+            $participaciones = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        return [
+            'tareas' => $tareas,
+            'calificaciones' => $calificaciones,
+            'participaciones' => $participaciones
+        ];
+    }
+
+    /**
+     * Grupos y cursos extracurriculares que tienen algo para calificar. La
+     * pantalla muestra el selector de tipo solo cuando hay de los dos; si hay
+     * de uno solo entra directo a ese.
+     *  - grupos: calificables con al menos un estudiante activo.
+     *  - cursos_extra: activos, con area academica (de ahi sale la malla) y
+     *    con al menos un estudiante inscrito activo.
+     */
+    public static function getOpcionesCalificacionRapida()
+    {
+        try {
+            $db = Flight::db();
+            $idTenant = TenantContext::id();
+
+            $stmt = $db->prepare("SELECT g.id, g.nombre
+                FROM grupos g
+                WHERE g.calificable = 1
+                  AND g.id_tenant = :id_tenant
+                  AND EXISTS (SELECT 1 FROM estudiantes_x_grupos exg
+                               INNER JOIN estudiantes e ON e.id = exg.id_estudiante
+                               WHERE exg.id_grupo = g.id
+                                 AND exg.activo = 1
+                                 AND e.activo = 1
+                                 AND exg.id_tenant = g.id_tenant)
+                ORDER BY g.orden, g.nombre");
+            $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $stmt->execute();
+            $grupos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $stmt = $db->prepare("SELECT
+                    ce.id,
+                    ce.nombre,
+                    ce.id_area_academica,
+                    a.nombre AS nombre_area,
+                    a.color AS color_area,
+                    a.icono AS icono_area
+                FROM cursos_extra ce
+                INNER JOIN areas_academicas a ON a.id = ce.id_area_academica
+                WHERE ce.activo = 1
+                  AND ce.id_tenant = :id_tenant
+                  AND EXISTS (SELECT 1 FROM estudiantes_x_cursos_extra exce
+                               INNER JOIN estudiantes e ON e.id = exce.id_estudiante
+                               WHERE exce.id_curso_extra = ce.id
+                                 AND exce.activo = 1
+                                 AND e.activo = 1
+                                 AND exce.id_tenant = ce.id_tenant)
+                ORDER BY ce.nombre");
+            $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $stmt->execute();
+            $cursos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            Flight::json([
+                'grupos' => $grupos,
+                'cursos_extra' => $cursos
+            ]);
+        } catch (Exception $e) {
+            error_log('Error en getOpcionesCalificacionRapida(): ' . $e->getMessage());
+            Flight::json(['error' => 'Error al obtener los grupos y cursos para calificar'], 500);
+        }
+    }
+
+    /**
+     * Vista de la calificacion rapida de un curso extracurricular en una fecha
+     * (?fecha=YYYY-MM-DD). Devuelve lo mismo que la de grupo, con estas
+     * diferencias:
+     *  - curso: el curso con su area.
+     *  - franjas: las clases del curso en la fecha que no esten canceladas,
+     *    con el area del curso y el docente de la clase (el titular primero;
+     *    si la clase no tiene, el titular del curso). id_horario va nulo e
+     *    id_sesion trae la clase.
+     *  - estudiantes: los inscritos activos que quedaron como Asistio en esas
+     *    clases. sesiones trae las clases a las que asistio cada uno, para
+     *    que solo se le califique en esas.
+     */
+    public static function getVistaCalificacionRapidaCursoExtra($id_curso_extra)
+    {
+        try {
+            $db = Flight::db();
+            $idTenant = TenantContext::id();
+            $fecha = Flight::request()->query['fecha'] ?? '';
+
+            $sprint = self::sprintActualRapida($db);
+            if (!$sprint) {
+                Flight::json(['error' => 'No hay un sprint actual configurado'], 400);
+                return;
+            }
+
+            $errorFecha = self::validarFechaRapida($fecha, $sprint);
+            if ($errorFecha) {
+                Flight::json(['error' => $errorFecha, 'sprint' => $sprint], 400);
+                return;
+            }
+
+            $stmt = $db->prepare("SELECT
+                    ce.id,
+                    ce.nombre,
+                    ce.id_area_academica,
+                    a.nombre AS nombre_area,
+                    a.color AS color_area,
+                    a.icono AS icono_area
+                FROM cursos_extra ce
+                LEFT JOIN areas_academicas a ON a.id = ce.id_area_academica
+                WHERE ce.id = :id_curso_extra
+                  AND ce.id_tenant = :id_tenant");
+            $stmt->bindValue(':id_curso_extra', $id_curso_extra);
+            $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $stmt->execute();
+            $curso = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$curso) {
+                Flight::json(['error' => 'El curso no existe'], 404);
+                return;
+            }
+            if (empty($curso['id_area_academica'])) {
+                Flight::json(['error' => 'El curso no tiene un area academica asignada: asignasela para poder calificarlo'], 400);
+                return;
+            }
+
+            // Docente titular del curso, por si la clase no tiene docente asignado
+            $stmt = $db->prepare("SELECT id_docente
+                FROM docentes_x_cursos_extra
+                WHERE id_curso_extra = :id_curso_extra
+                  AND activo = 1
+                  AND id_tenant = :id_tenant
+                ORDER BY es_titular DESC, fecha_asignacion ASC
+                LIMIT 1");
+            $stmt->bindValue(':id_curso_extra', $id_curso_extra);
+            $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $stmt->execute();
+            $docenteCurso = $stmt->fetchColumn() ?: null;
+
+            // 1. Clases del curso en la fecha
+            $stmt = $db->prepare("SELECT
+                    s.id AS id_sesion,
+                    s.hora_inicial,
+                    s.hora_final,
+                    TIMESTAMPDIFF(MINUTE, s.hora_inicial, s.hora_final) AS total_minutos,
+                    (SELECT dxs.id_docente FROM docentes_x_sesiones_cursos_extra dxs
+                      WHERE dxs.id_sesion_curso_extra = s.id
+                        AND dxs.id_tenant = s.id_tenant
+                      ORDER BY dxs.es_titular DESC
+                      LIMIT 1) AS id_docente_sesion
+                FROM sesiones_cursos_extra s
+                INNER JOIN estados_sesiones_cursos_extra es ON es.id = s.id_estado_sesion_curso_extra
+                WHERE s.id_curso_extra = :id_curso_extra
+                  AND s.fecha = :fecha
+                  AND s.id_tenant = :id_tenant
+                  AND es.codigo <> 'CANCELADA'
+                ORDER BY s.hora_inicial, s.hora_final");
+            $stmt->bindValue(':id_curso_extra', $id_curso_extra);
+            $stmt->bindValue(':fecha', $fecha);
+            $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $stmt->execute();
+
+            $franjas = [];
+            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $sesion) {
+                $franjas[] = [
+                    'id_horario' => null,
+                    'id_sesion' => $sesion['id_sesion'],
+                    'id_area_academica' => $curso['id_area_academica'],
+                    'nombre_area' => $curso['nombre_area'],
+                    'color_area' => $curso['color_area'],
+                    'icono_area' => $curso['icono_area'],
+                    'nombre_franja' => null,
+                    'hora_inicial' => $sesion['hora_inicial'],
+                    'hora_final' => $sesion['hora_final'],
+                    'total_minutos' => $sesion['total_minutos'],
+                    'id_docente_area' => $sesion['id_docente_sesion'] ?: $docenteCurso
+                ];
+            }
+
+            // 2. Inscritos activos que asistieron a esas clases
+            $stmt = $db->prepare("SELECT
+                    e.id AS id_estudiante,
+                    p.primer_nombre,
+                    p.segundo_nombre,
+                    p.primer_apellido,
+                    p.segundo_apellido,
+                    s.id AS id_sesion,
+                    s.hora_inicial
+                FROM reservas_sesiones_cursos_extra r
+                INNER JOIN estados_reservas_cursos_extra er ON er.id = r.id_estado_reserva_curso_extra
+                INNER JOIN sesiones_cursos_extra s ON s.id = r.id_sesion_curso_extra AND s.id_tenant = r.id_tenant
+                INNER JOIN estados_sesiones_cursos_extra es ON es.id = s.id_estado_sesion_curso_extra
+                INNER JOIN estudiantes_x_cursos_extra exce ON exce.id = r.id_estudiante_x_curso_extra AND exce.id_tenant = r.id_tenant
+                INNER JOIN estudiantes e ON e.id = exce.id_estudiante
+                INNER JOIN personas p ON p.id = e.id_persona
+                WHERE s.id_curso_extra = :id_curso_extra
+                  AND s.fecha = :fecha
+                  AND r.id_tenant = :id_tenant
+                  AND er.codigo = 'ASISTIO'
+                  AND es.codigo <> 'CANCELADA'
+                  AND exce.id_curso_extra = s.id_curso_extra
+                  AND exce.activo = 1
+                  AND e.activo = 1
+                ORDER BY p.primer_nombre, p.primer_apellido, s.hora_inicial");
+            $stmt->bindValue(':id_curso_extra', $id_curso_extra);
+            $stmt->bindValue(':fecha', $fecha);
+            $stmt->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
+            $stmt->execute();
+
+            // Un estudiante puede haber ido a dos clases del curso el mismo dia
+            $estudiantes = [];
+            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $fila) {
+                $id = $fila['id_estudiante'];
+                if (!isset($estudiantes[$id])) {
+                    $estudiantes[$id] = [
+                        'id_estudiante' => $id,
+                        'primer_nombre' => $fila['primer_nombre'],
+                        'segundo_nombre' => $fila['segundo_nombre'],
+                        'primer_apellido' => $fila['primer_apellido'],
+                        'segundo_apellido' => $fila['segundo_apellido'],
+                        'hora_clase' => $fila['hora_inicial'],
+                        'sesiones' => []
+                    ];
+                }
+                $estudiantes[$id]['sesiones'][] = $fila['id_sesion'];
+            }
+
+            // 3 y 4. Tareas del curso en el sprint actual, con lo calificado ese dia
+            $delDia = self::tareasDelDiaRapida($db, 'id_curso_extra', $id_curso_extra, $sprint, $fecha);
+
+            Flight::json([
+                'sprint' => $sprint,
+                'fecha' => $fecha,
+                'dia_semana' => (int) date('N', strtotime($fecha)),
+                'curso' => $curso,
+                'estudiantes' => array_values($estudiantes),
+                'franjas' => $franjas,
+                'tareas' => $delDia['tareas'],
+                'calificaciones' => $delDia['calificaciones'],
+                'participaciones' => $delDia['participaciones']
+            ]);
+        } catch (Exception $e) {
+            error_log('Error en getVistaCalificacionRapidaCursoExtra(): ' . $e->getMessage());
+            Flight::json(['error' => 'Error al obtener la vista de calificacion rapida del curso'], 500);
+        }
+    }
+
+    /**
+     * Guarda en bloque la calificacion rapida de un grupo o de un curso
+     * extracurricular en una fecha.
      *
      * Espera en el body:
-     *   fecha, id_grupo,
+     *   fecha, id_grupo o id_curso_extra (uno de los dos),
      *   franjas[]: { id_horario (null si es un area fuera del horario),
      *                id_area_academica, hora_inicial, hora_final, id_docente,
      *                celdas[]: { id_estudiante, id_tarea_x_sprint (null si se quito),
@@ -1462,9 +1738,17 @@ class Calificaciones
             $data = Flight::request()->data;
             $fecha = $data['fecha'] ?? '';
             $id_grupo = $data['id_grupo'] ?? '';
+            $id_curso_extra = $data['id_curso_extra'] ?? '';
             $franjas = $data['franjas'] ?? [];
 
-            if (!$id_grupo || !is_array($franjas) || count($franjas) === 0) {
+            // Se califica un grupo o un curso extracurricular, nunca los dos.
+            // En un curso las tareas van contra id_curso_extra y los
+            // estudiantes salen de la inscripcion al curso.
+            $esCurso = !$id_grupo && $id_curso_extra;
+            $idDestino = $esCurso ? $id_curso_extra : $id_grupo;
+            $columnaDestino = $esCurso ? 'id_curso_extra' : 'id_grupo';
+
+            if (!$idDestino || !is_array($franjas) || count($franjas) === 0) {
                 Flight::json(['error' => 'No hay nada para guardar'], 400);
                 return;
             }
@@ -1540,7 +1824,7 @@ class Calificaciones
                 }
             }
 
-            // Tareas: deben ser del grupo, del sprint actual y no estar canceladas
+            // Tareas: deben ser del grupo (o curso), del sprint actual y no estar canceladas
             $tareasValidas = [];
             if (!empty($idsTareas)) {
                 $lista = array_keys($idsTareas);
@@ -1548,11 +1832,11 @@ class Calificaciones
                 $stmt = $db->prepare("SELECT id, id_area_academica
                     FROM tareas_x_sprints
                     WHERE id IN ($marcas)
-                      AND id_grupo = ?
+                      AND $columnaDestino = ?
                       AND id_sprint = ?
                       AND id_estado_tarea IN (1, 2)
                       AND id_tenant = ?");
-                $stmt->execute(array_merge($lista, [$id_grupo, $sprint['id'], $idTenant]));
+                $stmt->execute(array_merge($lista, [$idDestino, $sprint['id'], $idTenant]));
                 foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $fila) {
                     $tareasValidas[$fila['id']] = $fila['id_area_academica'];
                 }
@@ -1569,8 +1853,26 @@ class Calificaciones
                 }
             }
 
+            // Estudiantes: inscritos activos en el curso
+            if (!empty($idsEstudiantes) && $esCurso) {
+                $lista = array_keys($idsEstudiantes);
+                $marcas = implode(',', array_fill(0, count($lista), '?'));
+                $stmt = $db->prepare("SELECT COUNT(DISTINCT exce.id_estudiante) AS total
+                    FROM estudiantes_x_cursos_extra exce
+                    WHERE exce.id_estudiante IN ($marcas)
+                      AND exce.id_curso_extra = ?
+                      AND exce.activo = 1
+                      AND exce.id_tenant = ?");
+                $stmt->execute(array_merge($lista, [$id_curso_extra, $idTenant]));
+                $fila = $stmt->fetch(PDO::FETCH_ASSOC);
+                if ((int) $fila['total'] !== count($lista)) {
+                    Flight::json(['error' => 'Algun estudiante ya no esta inscrito en el curso. Recarga la pantalla.'], 400);
+                    return;
+                }
+            }
+
             // Estudiantes: activos en el grupo
-            if (!empty($idsEstudiantes)) {
+            if (!empty($idsEstudiantes) && !$esCurso) {
                 $lista = array_keys($idsEstudiantes);
                 $marcas = implode(',', array_fill(0, count($lista), '?'));
                 $stmt = $db->prepare("SELECT COUNT(DISTINCT exg.id_estudiante) AS total
@@ -1770,12 +2072,19 @@ class Calificaciones
             // --- Las actividades usadas quedan ejecutadas en la fecha y franja ---
             $tareasEjecutadas = 0;
             if (!empty($tareaEnFranja)) {
-                $stmtTotalGrupo = $db->prepare("SELECT COUNT(*) AS total
-                    FROM estudiantes_x_grupos exg
-                    INNER JOIN estudiantes e ON exg.id_estudiante = e.id
-                    WHERE exg.id_grupo = :id_grupo AND exg.activo = 1 AND e.activo = 1
-                      AND exg.id_tenant = :id_tenant");
-                $stmtTotalGrupo->bindValue(':id_grupo', $id_grupo);
+                // En un curso el total es el de inscritos activos
+                $stmtTotalGrupo = $esCurso
+                    ? $db->prepare("SELECT COUNT(*) AS total
+                        FROM estudiantes_x_cursos_extra exce
+                        INNER JOIN estudiantes e ON exce.id_estudiante = e.id
+                        WHERE exce.id_curso_extra = :id_destino AND exce.activo = 1 AND e.activo = 1
+                          AND exce.id_tenant = :id_tenant")
+                    : $db->prepare("SELECT COUNT(*) AS total
+                        FROM estudiantes_x_grupos exg
+                        INNER JOIN estudiantes e ON exg.id_estudiante = e.id
+                        WHERE exg.id_grupo = :id_destino AND exg.activo = 1 AND e.activo = 1
+                          AND exg.id_tenant = :id_tenant");
+                $stmtTotalGrupo->bindValue(':id_destino', $idDestino);
                 $stmtTotalGrupo->bindValue(':id_tenant', $idTenant, PDO::PARAM_INT);
                 $stmtTotalGrupo->execute();
                 $totalGrupo = (int) ($stmtTotalGrupo->fetch(PDO::FETCH_ASSOC)['total'] ?? 0);
@@ -1812,7 +2121,8 @@ class Calificaciones
                     $ejecutar->bindValue(':id_docente_inicia', $franja['id_docente']);
                     $ejecutar->bindValue(':fecha_ejecucion', $fechaEjecucion);
                     $ejecutar->bindValue(':fecha_ejecucion_inicia', $fechaEjecucion);
-                    $ejecutar->bindValue(':id_horario', !empty($franja['id_horario']) ? $franja['id_horario'] : null);
+                    // Las clases de un curso no son franjas de la tabla horarios
+                    $ejecutar->bindValue(':id_horario', !$esCurso && !empty($franja['id_horario']) ? $franja['id_horario'] : null);
                     $ejecutar->bindValue(':dia_semana', $diaSemana, PDO::PARAM_INT);
                     $ejecutar->bindValue(':hora_inicial', $franja['hora_inicial']);
                     $ejecutar->bindValue(':hora_final', $franja['hora_final']);

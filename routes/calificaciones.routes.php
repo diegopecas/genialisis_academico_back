@@ -22,6 +22,9 @@ Flight::route('GET /calificaciones-tareas-sprint-estudiantes/calificaciones/@id_
 // Reporte de calificaciones por actividad entre dos fechas (?fecha_inicio=&fecha_fin=)
 Flight::route('GET /calificaciones-reporte-actividades', [Calificaciones::class, 'getReporteCalificacionesActividades']);
 // Calificacion rapida: vista de un grupo en una fecha (?fecha=YYYY-MM-DD) y guardado en bloque
+// Las opciones y la vista de curso van antes de /@id_grupo para que no se tomen como un id.
+Flight::route('GET /calificaciones-rapida/opciones', [Calificaciones::class, 'getOpcionesCalificacionRapida']);
+Flight::route('GET /calificaciones-rapida/curso-extra/@id_curso_extra', [Calificaciones::class, 'getVistaCalificacionRapidaCursoExtra']);
 Flight::route('GET /calificaciones-rapida/@id_grupo', [Calificaciones::class, 'getVistaCalificacionRapida']);
 Flight::route('POST /calificaciones-rapida', [Calificaciones::class, 'guardarCalificacionRapida']);
 
